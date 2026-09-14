@@ -1,13 +1,15 @@
 // src/content/meet-selectors.js
-// Selectores best-effort — Meet no expone una API estable para esto. Confirmar contra
-// el DOM real en la verificación manual (Task 11) y ajustar acá si no matchean; es el
-// único archivo que debería necesitar cambios cuando Meet actualice su interfaz.
+// Best-effort selectors — Meet does not expose a stable API for this. Confirm against
+// the live DOM during manual verification and adjust here when Meet changes its UI.
 export const SELECTORS = {
-  hangUpButton: '[aria-label="Salir de la llamada"]',
-  micButton: '[aria-label*="micrófono"]',
+  hangUpButton: '[aria-label="Leave call"]',
+  micButton: '[aria-label*="microphone" i]',
   micMutedAttribute: "data-is-muted",
-  captionsToggleButton: '[aria-label="Activar subtítulos"]',
-  captionsContainer: '[aria-label="Subtítulos"]',
-  captionSpeakerName: ".speaker-name",
-  captionText: ".caption-text",
+  captionsToggleButton: '[aria-label*="captions" i]',
+  // NOT yet confirmed in a live Meet DOM with captions on. Fireflies 6.6.0 finds
+  // this region, but reads captions_v2 frames rather than DOM children; these
+  // generated-class child selectors are best-effort fallbacks to re-check live.
+  captionsContainer: 'div[jsname="xySENc"][aria-live="polite"]',
+  captionSpeakerName: ".NWpY1d",
+  captionText: ".ygicle.VbkSUe",
 };
