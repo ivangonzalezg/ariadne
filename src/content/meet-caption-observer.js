@@ -34,24 +34,31 @@ function observeCaptions(onSnapshot) {
   return () => observer.disconnect();
 }
 
-function clickCaptionsToggleOnceReady({ retries, delayMs }) {
+function isCaptionsCurrentlyOn(button) {
+  const label = button.getAttribute("aria-label") || "";
+  return label.toLowerCase().includes("turn off");
+}
+
+function ensureCaptionsEnabled({ retries, delayMs }) {
   return new Promise((resolve) => {
     let attemptsLeft = retries;
-    const tryClick = () => {
+    const tryEnsure = () => {
       const button = document.querySelector(SELECTORS.captionsToggleButton);
       if (button) {
-        button.click();
+        if (!isCaptionsCurrentlyOn(button)) {
+          button.click();
+        }
         resolve(true);
         return;
       }
       attemptsLeft -= 1;
       if (attemptsLeft > 0) {
-        setTimeout(tryClick, delayMs);
+        setTimeout(tryEnsure, delayMs);
       } else {
         resolve(false);
       }
     };
-    tryClick();
+    tryEnsure();
   });
 }
 
@@ -60,7 +67,7 @@ export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delay
     return observeCaptions(onSnapshot);
   }
 
-  await clickCaptionsToggleOnceReady({ retries, delayMs });
+  await ensureCaptionsEnabled({ retries, delayMs });
 
   let attemptsLeft = retries;
   let cleanup = () => {};
