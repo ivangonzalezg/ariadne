@@ -35,8 +35,6 @@ export function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 3
     return observeCaptions(onSnapshot);
   }
 
-  document.querySelector(SELECTORS.captionsToggleButton)?.click();
-
   let attemptsLeft = retries;
   let cleanup = () => {};
 
@@ -46,6 +44,7 @@ export function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 3
       cleanup = observeCaptions(onSnapshot);
       return;
     }
+    document.querySelector(SELECTORS.captionsToggleButton)?.click();
     attemptsLeft -= 1;
     if (attemptsLeft > 0) setTimeout(tryAttach, delayMs);
   };

@@ -27,7 +27,9 @@ async function ensureOffscreenDocument() {
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "asterion:session-starting") {
     activeSessionTabIds.set(message.sessionId, sender.tab?.id ?? null);
-    ensureOffscreenDocument();
+    ensureOffscreenDocument().then(() => {
+      chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId: message.sessionId });
+    });
   } else if (message.type === "asterion:session-finalized") {
     activeSessionTabIds.delete(message.sessionId);
     appendToHistory(message);

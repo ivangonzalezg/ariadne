@@ -5,6 +5,7 @@ const sessions = new Map();
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "asterion:session-starting") {
+    if (sessions.has(message.sessionId)) return;
     const writer = new SessionWriter({ sessionId: message.sessionId, tabId: sender.tab?.id ?? null });
     sessions.set(message.sessionId, writer);
     writer.ready.catch((error) => {
