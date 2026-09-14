@@ -17,11 +17,17 @@ function postToMainWorld(message) {
 }
 
 let sessionId = null;
+let currentState = "idle";
+
+function setState(state) {
+  currentState = state;
+  updateBannerState(state);
+}
 
 function startRecording() {
   if (sessionId) return;
   sessionId = generateSessionId();
-  updateBannerState("starting");
+  setState("starting");
 
   // Avisar al service worker en paralelo (no después) para que el offscreen document
   // de storage exista antes de que lleguen los primeros chunks del bootstrap MAIN world —
@@ -52,10 +58,10 @@ window.addEventListener("message", (event) => {
   if (!message || message.source !== "asterion-main-world") return;
 
   if (message.type === "asterion:session-started") {
-    updateBannerState("recording");
+    setState("recording");
   } else if (message.type === "asterion:start-failed") {
     sessionId = null;
-    updateBannerState("error");
+    setState("error");
     console.error("[Asterion] No se pudo iniciar la sesión:", message.reason);
   } else if (message.type === "asterion:chunk") {
     chrome.runtime.sendMessage({
@@ -66,9 +72,9 @@ window.addEventListener("message", (event) => {
       buffer: message.buffer,
     });
   } else if (message.type === "asterion:video-enabled") {
-    updateBannerState("video-enabled");
+    setState("video-enabled");
   } else if (message.type === "asterion:video-enable-failed") {
-    updateBannerState("recording", { videoError: message.message });
+    updateBannerState(currentState, { videoError: message.message });
   } else if (message.type === "asterion:session-ended") {
     chrome.runtime.sendMessage({
       type: "asterion:session-ended",
@@ -76,7 +82,27 @@ window.addEventListener("message", (event) => {
       muteManifest: message.muteManifest,
     });
     sessionId = null;
-    updateBannerState("idle");
+    setState("idle");
+  }
+});
+
+// El popup (Task 10) consulta el estado de esta pestaña y puede iniciar/detener desde ahí
+// (no puede activar video: ese botón necesita el clic real en el banner de esta página —
+// ver decisión del Task 6 sobre el gesto de usuario de getDisplayMedia).
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "asterion:get-status") {
+    sendResponse({ inMeeting: isInActiveMeeting(), state: currentState });
+    return true;
+  }
+  if (message.type === "asterion:popup-start") {
+    startRecording();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === "asterion:popup-stop") {
+    stopRecording();
+    sendResponse({ ok: true });
+    return true;
   }
 });
 
