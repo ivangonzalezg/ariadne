@@ -1619,3 +1619,557 @@ Esto no se puede automatizar ni delegar — requiere una cuenta de Google y una 
 - [ ] Cerrar la pestaña de Meet a mitad de una grabación (sin usar el botón "Detener") y confirmar que los archivos igual se generaron con lo capturado hasta ese momento.
 - [ ] Selectores de `meet-selectors.js`: si algo no funcionó (banner no aparece, mute no se detecta, subtítulos no se activan), inspeccionar el DOM real de Meet con DevTools y ajustar ese archivo — es el único lugar que debería necesitar cambios.
 - [ ] Validar el punto pendiente de las Tasks 7/9: si los chunks de audio llegan corruptos o vacíos al offscreen document, cambiar la codificación de `ArrayBuffer` a base64 en el content script y decodificarla en `session-writer.js`.
+
+---
+
+## Task 13: Audio combinado en un solo archivo + selectores de subtítulos robustos (`jsname`)
+
+Cambio de diseño decidido por el usuario tras confirmar cómo lo hace Fireflies (ver PRD, secciones 4.1/5.2/5.3/6 ya actualizadas) y validado con Codex. Reemplaza los dos `MediaRecorder` separados de audio (reunión + propio) por uno solo, mezclado en tiempo real con Web Audio API; el mic se gatea con un `GainNode` (no pausando el `MediaRecorder`, que también cortaría el audio remoto). De paso corrige tres bugs reales que Codex encontró al revisar el diseño: tipo MIME incorrecto para el video, observers de mute/captions que no se limpiaban entre sesiones, y una condición de carrera donde el último chunk de audio podía no llegar a tiempo antes de finalizar la sesión.
+
+**Files:**
+- Modify: `src/webrtc-bootstrap/audio-mixer.js` (renombrar `RemoteAudioMixer` → `MeetingAudioMixer`, agregar mic + `GainNode`)
+- Modify: `src/webrtc-bootstrap/session.js` (un solo recorder de audio, esperar los últimos chunks antes de finalizar, MIME correcto para video)
+- Modify: `src/webrtc-bootstrap/bootstrap.js` (usar `MeetingAudioMixer`, pasar `initialMicMuted`)
+- Modify: `src/content/meet-detector.js` (conocer el estado inicial de mute antes de arrancar la sesión, limpiar observers al terminar)
+- Modify: `src/content/meet-caption-observer.js` (activar subtítulos una sola vez — no reintentar el clic — y ocultarlos con CSS en vez de desactivarlos)
+- Modify: `src/content/meet-selectors.js` (`captionsToggleButton` por `jsname`, más robusto que `aria-label`)
+- Modify: `src/storage/session-writer.js` (quitar el mapeo de archivo `"mic"`)
+
+- [ ] **Step 1: Rewrite `audio-mixer.js`**
+
+```js
+// src/webrtc-bootstrap/audio-mixer.js
+export class MeetingAudioMixer {
+  constructor() {
+    this.audioContext = new AudioContext();
+    this.destination = this.audioContext.createMediaStreamDestination();
+    this.remoteSourceNodesByTrackId = new Map();
+    this.micSourceNode = null;
+    this.micGainNode = null;
+  }
+
+  addRemoteTrack(track) {
+    if (this.remoteSourceNodesByTrackId.has(track.id)) return;
+    const trackStream = new MediaStream([track]);
+    const sourceNode = this.audioContext.createMediaStreamSource(trackStream);
+    sourceNode.connect(this.destination);
+    this.remoteSourceNodesByTrackId.set(track.id, sourceNode);
+    track.addEventListener("ended", () => this.removeRemoteTrack(track.id));
+  }
+
+  removeRemoteTrack(trackId) {
+    const sourceNode = this.remoteSourceNodesByTrackId.get(trackId);
+    if (!sourceNode) return;
+    sourceNode.disconnect();
+    this.remoteSourceNodesByTrackId.delete(trackId);
+  }
+
+  setMicTrack(micTrack, { initiallyMuted }) {
+    const micStream = new MediaStream([micTrack]);
+    this.micSourceNode = this.audioContext.createMediaStreamSource(micStream);
+    this.micGainNode = this.audioContext.createGain();
+    this.micGainNode.gain.value = initiallyMuted ? 0 : 1;
+    this.micSourceNode.connect(this.micGainNode);
+    this.micGainNode.connect(this.destination);
+  }
+
+  setMicMuted(muted) {
+    if (!this.micGainNode) return;
+    const now = this.audioContext.currentTime;
+    const targetGain = muted ? 0 : 1;
+    // Rampa corta en vez de asignar gain.value directo — evita un "click" audible
+    // en la transición.
+    this.micGainNode.gain.cancelScheduledValues(now);
+    this.micGainNode.gain.setValueAtTime(this.micGainNode.gain.value, now);
+    this.micGainNode.gain.linearRampToValueAtTime(targetGain, now + 0.01);
+  }
+
+  get stream() {
+    return this.destination.stream;
+  }
+
+  async close() {
+    await this.audioContext.close();
+  }
+}
+```
+
+- [ ] **Step 2: Rewrite `session.js`**
+
+```js
+// src/webrtc-bootstrap/session.js
+import { MuteManifest } from "../lib/mute-manifest.js";
+
+const CHUNK_TIMESLICE_MS = 1000;
+
+export class MainWorldSession {
+  constructor({ sessionId, mixer, postToIsolated, initialMicMuted }) {
+    this.sessionId = sessionId;
+    this.mixer = mixer;
+    this.postToIsolated = postToIsolated;
+    this.muteManifest = new MuteManifest({ startedAt: Date.now() });
+    this.seq = { meeting: 0, video: 0 };
+    this.videoRecorder = null;
+    this.videoStream = null;
+    this._meetingWrites = null;
+    this._videoWrites = null;
+
+    if (!initialMicMuted) {
+      this.muteManifest.onUnmuted(Date.now());
+    }
+  }
+
+  start() {
+    const { recorder, waitForPendingWrites } = this._startRecorder(this.mixer.stream, "meeting", "audio/webm");
+    this.meetingRecorder = recorder;
+    this._meetingWrites = waitForPendingWrites;
+  }
+
+  _startRecorder(stream, streamLabel, mimeType) {
+    const recorder = new MediaRecorder(stream, { mimeType });
+    // Cadena secuencial: cada chunk espera a que el anterior termine de procesarse
+    // y mandarse antes de seguir — evita que lleguen desordenados, y stop() puede
+    // esperar a que esta cadena termine para saber que el último chunk ya salió.
+    let writeChain = Promise.resolve();
+    recorder.ondataavailable = (event) => {
+      if (event.data.size === 0) return;
+      this.seq[streamLabel] += 1;
+      const seq = this.seq[streamLabel];
+      writeChain = writeChain.then(async () => {
+        const buffer = await event.data.arrayBuffer();
+        this.postToIsolated(
+          { type: "asterion:chunk", sessionId: this.sessionId, stream: streamLabel, seq, buffer },
+          [buffer]
+        );
+      });
+    };
+    recorder.start(CHUNK_TIMESLICE_MS);
+    return { recorder, waitForPendingWrites: () => writeChain };
+  }
+
+  onMicMuted(timestampMs) {
+    this.muteManifest.onMuted(timestampMs);
+    this.mixer.setMicMuted(true);
+  }
+
+  onMicUnmuted(timestampMs) {
+    this.muteManifest.onUnmuted(timestampMs);
+    this.mixer.setMicMuted(false);
+  }
+
+  enableVideo(displayStream) {
+    if (this.videoRecorder) return;
+    this.videoStream = displayStream;
+    // Bug corregido: antes se forzaba "audio/webm" también para el stream de video.
+    const { recorder, waitForPendingWrites } = this._startRecorder(displayStream, "video", "video/webm");
+    this.videoRecorder = recorder;
+    this._videoWrites = waitForPendingWrites;
+  }
+
+  async stop() {
+    this.muteManifest.finalize(Date.now());
+    const recorders = [this.meetingRecorder, this.videoRecorder].filter(Boolean);
+
+    const stopped = recorders.map(
+      (r) =>
+        new Promise((resolve) => {
+          r.onstop = resolve;
+        })
+    );
+    recorders.forEach((r) => r.stop());
+    await Promise.all(stopped);
+
+    // Esperar a que el último chunk (el que dispara el evento "stop") termine de
+    // procesarse y enviarse — si no, se podía señalar el fin de sesión antes de
+    // que ese último pedazo de audio/video llegara al offscreen document.
+    await Promise.all([this._meetingWrites?.(), this._videoWrites?.()].filter(Boolean));
+
+    this.videoStream?.getTracks().forEach((t) => t.stop());
+
+    this.postToIsolated({
+      type: "asterion:session-ended",
+      sessionId: this.sessionId,
+      muteManifest: this.muteManifest.toJSON(),
+    });
+  }
+}
+```
+
+- [ ] **Step 3: Rewrite `bootstrap.js`**
+
+```js
+// src/webrtc-bootstrap/bootstrap.js
+import { installRtcPatch, installGetUserMediaPatch, diagnostics } from "./rtc-patch.js";
+import { MeetingAudioMixer } from "./audio-mixer.js";
+import { MainWorldSession } from "./session.js";
+
+const mixer = new MeetingAudioMixer();
+let micTrack = null;
+let session = null;
+
+installRtcPatch({
+  onRemoteAudioTrack: (track) => mixer.addRemoteTrack(track),
+  onConnectionClosed: () => {},
+});
+
+installGetUserMediaPatch({
+  onMicStream: (stream, audioTrack) => {
+    micTrack = audioTrack;
+  },
+});
+
+function postToIsolated(message, transfer = []) {
+  window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
+}
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window) return;
+  const message = event.data;
+  if (!message || message.source !== "asterion-isolated-world") return;
+
+  if (message.type === "asterion:start-session") {
+    if (!micTrack) {
+      postToIsolated({ type: "asterion:start-failed", sessionId: message.sessionId, reason: "no-mic-stream" });
+      return;
+    }
+    mixer.setMicTrack(micTrack, { initiallyMuted: Boolean(message.initialMicMuted) });
+    session = new MainWorldSession({
+      sessionId: message.sessionId,
+      mixer,
+      postToIsolated,
+      initialMicMuted: Boolean(message.initialMicMuted),
+    });
+    session.start();
+    postToIsolated({ type: "asterion:session-started", sessionId: message.sessionId });
+  } else if (message.type === "asterion:mic-muted") {
+    session?.onMicMuted(message.timestampMs);
+  } else if (message.type === "asterion:mic-unmuted") {
+    session?.onMicUnmuted(message.timestampMs);
+  } else if (message.type === "asterion:stop-session") {
+    session?.stop();
+    session = null;
+  }
+});
+
+document.addEventListener(
+  "click",
+  async (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-asterion-enable-video]") : null;
+    if (!target || !session) return;
+
+    console.log("[Asterion] userActivation.isActive antes de getDisplayMedia:", navigator.userActivation?.isActive);
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        preferCurrentTab: true,
+      });
+      session.enableVideo(displayStream);
+      postToIsolated({ type: "asterion:video-enabled", sessionId: session.sessionId });
+    } catch (error) {
+      postToIsolated({
+        type: "asterion:video-enable-failed",
+        sessionId: session.sessionId,
+        message: error.message,
+      });
+    }
+  },
+  true
+);
+
+window.__asterionDiagnostics = diagnostics;
+```
+
+- [ ] **Step 4: Modify `meet-detector.js`** — conocer el estado inicial de mute antes de avisarle a `MAIN world` que arranque, y limpiar los observers de mute/captions al terminar la sesión (antes se descartaban sus funciones de limpieza, dejando observers vivos entre reuniones)
+
+```js
+// src/content/meet-detector.js
+import { SELECTORS } from "./meet-selectors.js";
+import { observeMuteState } from "./meet-mute-observer.js";
+import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
+import { showBanner, updateBannerState } from "./meet-banner.js";
+import { arrayBufferToBase64 } from "../lib/base64.js";
+
+function isInActiveMeeting() {
+  return document.querySelector(SELECTORS.hangUpButton) !== null;
+}
+
+function generateSessionId() {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function postToMainWorld(message) {
+  window.postMessage({ source: "asterion-isolated-world", ...message }, "*");
+}
+
+let sessionId = null;
+let currentState = "idle";
+let stopMuteObserver = () => {};
+let stopCaptionObserver = () => {};
+
+function setState(state) {
+  currentState = state;
+  updateBannerState(state);
+}
+
+function cleanupObservers() {
+  stopMuteObserver();
+  stopCaptionObserver();
+  stopMuteObserver = () => {};
+  stopCaptionObserver = () => {};
+}
+
+async function startRecording() {
+  if (sessionId) return;
+  sessionId = generateSessionId();
+  setState("starting");
+
+  chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId });
+
+  let isFirstMuteReport = true;
+
+  // observeMuteState informa el estado actual de forma síncrona en su primera
+  // llamada — se aprovecha eso para mandar "start-session" recién ahí, con el
+  // estado real de mute ya conocido (el GainNode del mic necesita arrancar en
+  // el valor correcto desde el primer instante, ver Task 13 del plan).
+  stopMuteObserver = observeMuteState((muted, timestampMs) => {
+    if (isFirstMuteReport) {
+      isFirstMuteReport = false;
+      postToMainWorld({ type: "asterion:start-session", sessionId, initialMicMuted: muted });
+      return;
+    }
+    postToMainWorld({
+      type: muted ? "asterion:mic-muted" : "asterion:mic-unmuted",
+      timestampMs,
+    });
+  });
+
+  const cleanup = await enableCaptionsAndObserve((snapshot) => {
+    chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
+  });
+  stopCaptionObserver = cleanup ?? (() => {});
+}
+
+function stopRecording() {
+  if (!sessionId) return;
+  postToMainWorld({ type: "asterion:stop-session", sessionId });
+}
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window) return;
+  const message = event.data;
+  if (!message || message.source !== "asterion-main-world") return;
+
+  if (message.type === "asterion:session-started") {
+    setState("recording");
+  } else if (message.type === "asterion:start-failed") {
+    sessionId = null;
+    setState("error");
+    cleanupObservers();
+    console.error("[Asterion] No se pudo iniciar la sesión:", message.reason);
+  } else if (message.type === "asterion:chunk") {
+    chrome.runtime.sendMessage({
+      type: "asterion:chunk",
+      sessionId: message.sessionId,
+      stream: message.stream,
+      seq: message.seq,
+      bufferBase64: arrayBufferToBase64(message.buffer),
+    });
+  } else if (message.type === "asterion:video-enabled") {
+    setState("video-enabled");
+  } else if (message.type === "asterion:video-enable-failed") {
+    updateBannerState(currentState, { videoError: message.message });
+  } else if (message.type === "asterion:session-ended") {
+    chrome.runtime.sendMessage({
+      type: "asterion:session-ended",
+      sessionId: message.sessionId,
+      muteManifest: message.muteManifest,
+    });
+    sessionId = null;
+    setState("idle");
+    cleanupObservers();
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "asterion:get-status") {
+    sendResponse({ inMeeting: isInActiveMeeting(), state: currentState });
+    return true;
+  }
+  if (message.type === "asterion:popup-start") {
+    startRecording();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === "asterion:popup-stop") {
+    stopRecording();
+    sendResponse({ ok: true });
+    return true;
+  }
+});
+
+window.addEventListener("pagehide", () => {
+  if (sessionId) postToMainWorld({ type: "asterion:stop-session", sessionId });
+});
+
+function waitForMeeting() {
+  const observer = new MutationObserver(() => {
+    if (isInActiveMeeting()) {
+      observer.disconnect();
+      chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
+        showBanner({ onStart: startRecording, onStop: stopRecording });
+        if (autoStart) startRecording();
+      });
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+waitForMeeting();
+```
+
+- [ ] **Step 5: Rewrite `meet-caption-observer.js`** — activar subtítulos una sola vez (reintentando solo hasta encontrar el botón, no re-clicándolo después de haber tenido éxito) y ocultarlos visualmente con CSS en vez de alternar el control nativo
+
+```js
+// src/content/meet-caption-observer.js
+import { SELECTORS } from "./meet-selectors.js";
+
+function findCaptionsContainer() {
+  return document.querySelector(SELECTORS.captionsContainer);
+}
+
+function readCurrentSnapshot(container) {
+  const speakerEl = container.querySelector(SELECTORS.captionSpeakerName) ?? null;
+  const textEl = container.querySelector(SELECTORS.captionText);
+  if (!textEl) return null;
+
+  return {
+    speaker: speakerEl ? speakerEl.textContent.trim() : null,
+    text: textEl.textContent.trim(),
+    timestampMs: Date.now(),
+  };
+}
+
+function observeCaptions(onSnapshot) {
+  const container = findCaptionsContainer();
+  if (!container) return () => {};
+
+  const observer = new MutationObserver(() => {
+    const snapshot = readCurrentSnapshot(container);
+    if (snapshot) onSnapshot(snapshot);
+  });
+
+  observer.observe(container, { childList: true, subtree: true, characterData: true });
+  return () => observer.disconnect();
+}
+
+const HIDE_STYLE_ID = "asterion-hide-captions";
+
+function hideCaptionsVisually() {
+  if (document.getElementById(HIDE_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = HIDE_STYLE_ID;
+  // opacity + pointer-events en vez de display:none/visibility:hidden — Meet deja
+  // de actualizar el DOM de subtítulos si el contenedor no es visible, lo que
+  // rompería el MutationObserver.
+  style.textContent = `${SELECTORS.captionsContainer} { opacity: 0 !important; pointer-events: none !important; }`;
+  document.head.appendChild(style);
+}
+
+function clickCaptionsToggleOnceReady({ retries, delayMs }) {
+  return new Promise((resolve) => {
+    let attemptsLeft = retries;
+    const tryClick = () => {
+      const button = document.querySelector(SELECTORS.captionsToggleButton);
+      if (button) {
+        button.click();
+        resolve(true);
+        return;
+      }
+      attemptsLeft -= 1;
+      if (attemptsLeft > 0) {
+        setTimeout(tryClick, delayMs);
+      } else {
+        resolve(false);
+      }
+    };
+    tryClick();
+  });
+}
+
+export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 300 } = {}) {
+  hideCaptionsVisually();
+
+  if (findCaptionsContainer()) {
+    return observeCaptions(onSnapshot);
+  }
+
+  // Clic una sola vez (reintentando solo hasta que el botón exista en el DOM,
+  // no repitiendo el clic después de haber tenido éxito — antes esto podía volver
+  // a apagar los subtítulos si el contenedor tardaba en aparecer).
+  await clickCaptionsToggleOnceReady({ retries, delayMs });
+
+  let attemptsLeft = retries;
+  let cleanup = () => {};
+
+  const tryAttach = () => {
+    const container = findCaptionsContainer();
+    if (container) {
+      cleanup = observeCaptions(onSnapshot);
+      return;
+    }
+    attemptsLeft -= 1;
+    if (attemptsLeft > 0) setTimeout(tryAttach, delayMs);
+  };
+  tryAttach();
+
+  return () => cleanup();
+}
+```
+
+- [ ] **Step 6: Modify `meet-selectors.js`** — `captionsToggleButton` por el atributo `jsname` real de Meet (de Fireflies), no por `aria-label`
+
+```js
+// src/content/meet-selectors.js
+export const SELECTORS = {
+  hangUpButton: '[aria-label="Leave call"]',
+  micButton: '[aria-label*="microphone" i]',
+  micMutedAttribute: "data-is-muted",
+  captionsToggleButton: 'button[jsname="RrG0hf"], button[jslog^="211197"]',
+  captionsContainer: 'div[jsname="xySENc"][aria-live="polite"]',
+  captionSpeakerName: ".NWpY1d",
+  captionText: ".ygicle.VbkSUe",
+};
+```
+
+- [ ] **Step 7: Modify `session-writer.js`** — quitar el mapeo de archivo `"mic"` (ya no existe ese stream)
+
+```js
+// src/storage/session-writer.js — cambiar solo esta constante, el resto del archivo no cambia
+const STREAM_FILE_NAMES = {
+  meeting: "audio-reunion.webm",
+  video: "video-reunion.webm",
+};
+```
+
+- [ ] **Step 8: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: `npm run build` compila los dos bundles sin error (confirma que las importaciones entre `audio-mixer.js`/`session.js`/`bootstrap.js` y entre `meet-detector.js`/`meet-caption-observer.js`/`meet-selectors.js` siguen resolviendo). `npm test` sigue en 13/13 — esta tarea no toca `src/lib/`.
+
+- [ ] **Step 9: Manual verification**
+
+Recargar la extensión, entrar a una reunión real de Meet, dejar que arranque sola.
+
+Expected: solo aparece un archivo de audio (`audio-reunion.webm`, sin `audio-propio.webm`) que contiene tanto el audio de los demás participantes como la voz propia, con la voz propia ausente durante los tramos en que el mic estuvo silenciado (y el audio del otro participante sin cortes durante esos mismos tramos). Los subtítulos deben seguir apareciendo en la transcripción capturada aunque el panel visual de Meet ya no se vea en pantalla (oculto por CSS). Verificar además que detener y volver a grabar una segunda vez (sin recargar la pestaña) no deja observers duplicados (por ejemplo, que la transcripción de la segunda reunión no incluya texto de la primera).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/webrtc-bootstrap/ src/content/meet-detector.js src/content/meet-caption-observer.js src/content/meet-selectors.js src/storage/session-writer.js
+git commit -m "feat: mix meeting and mic audio into a single file, harden caption selectors and session cleanup"
+```
