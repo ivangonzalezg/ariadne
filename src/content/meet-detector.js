@@ -19,33 +19,50 @@ function postToMainWorld(message) {
 
 let sessionId = null;
 let currentState = "idle";
+let stopMuteObserver = () => {};
+let stopCaptionObserver = () => {};
 
 function setState(state) {
   currentState = state;
   updateBannerState(state);
 }
 
-function startRecording() {
+function cleanupObservers() {
+  stopMuteObserver();
+  stopCaptionObserver();
+  stopMuteObserver = () => {};
+  stopCaptionObserver = () => {};
+}
+
+async function startRecording() {
   if (sessionId) return;
   sessionId = generateSessionId();
   setState("starting");
 
-  // Avisar al service worker en paralelo (no después) para que el offscreen document
-  // de storage exista antes de que lleguen los primeros chunks del bootstrap MAIN world —
-  // si se esperara al primer "asterion:chunk" para crearlo, ese primer chunk se perdería.
   chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId });
-  postToMainWorld({ type: "asterion:start-session", sessionId });
 
-  observeMuteState((muted, timestampMs) => {
+  let isFirstMuteReport = true;
+
+  // observeMuteState informa el estado actual de forma síncrona en su primera
+  // llamada — se aprovecha eso para mandar "start-session" recién ahí, con el
+  // estado real de mute ya conocido (el GainNode del mic necesita arrancar en
+  // el valor correcto desde el primer instante, ver Task 13 del plan).
+  stopMuteObserver = observeMuteState((muted, timestampMs) => {
+    if (isFirstMuteReport) {
+      isFirstMuteReport = false;
+      postToMainWorld({ type: "asterion:start-session", sessionId, initialMicMuted: muted });
+      return;
+    }
     postToMainWorld({
       type: muted ? "asterion:mic-muted" : "asterion:mic-unmuted",
       timestampMs,
     });
   });
 
-  enableCaptionsAndObserve((snapshot) => {
+  const cleanup = await enableCaptionsAndObserve((snapshot) => {
     chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
   });
+  stopCaptionObserver = cleanup ?? (() => {});
 }
 
 function stopRecording() {
@@ -63,6 +80,7 @@ window.addEventListener("message", (event) => {
   } else if (message.type === "asterion:start-failed") {
     sessionId = null;
     setState("error");
+    cleanupObservers();
     console.error("[Asterion] No se pudo iniciar la sesión:", message.reason);
   } else if (message.type === "asterion:chunk") {
     chrome.runtime.sendMessage({
@@ -84,12 +102,10 @@ window.addEventListener("message", (event) => {
     });
     sessionId = null;
     setState("idle");
+    cleanupObservers();
   }
 });
 
-// El popup (Task 10) consulta el estado de esta pestaña y puede iniciar/detener desde ahí
-// (no puede activar video: ese botón necesita el clic real en el banner de esta página —
-// ver decisión del Task 6 sobre el gesto de usuario de getDisplayMedia).
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "asterion:get-status") {
     sendResponse({ inMeeting: isInActiveMeeting(), state: currentState });
@@ -107,8 +123,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// Si la pestaña se cierra o navega fuera con una sesión activa, avisarle al bootstrap
-// MAIN world para que finalice y emita lo que alcanzó a grabar (PRD 5.8).
 window.addEventListener("pagehide", () => {
   if (sessionId) postToMainWorld({ type: "asterion:stop-session", sessionId });
 });

@@ -17,7 +17,7 @@ function readCurrentSnapshot(container) {
   };
 }
 
-export function observeCaptions(onSnapshot) {
+function observeCaptions(onSnapshot) {
   const container = findCaptionsContainer();
   if (!container) return () => {};
 
@@ -30,10 +30,51 @@ export function observeCaptions(onSnapshot) {
   return () => observer.disconnect();
 }
 
-export function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 300 } = {}) {
+const HIDE_STYLE_ID = "asterion-hide-captions";
+
+function hideCaptionsVisually() {
+  if (document.getElementById(HIDE_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = HIDE_STYLE_ID;
+  // opacity + pointer-events en vez de display:none/visibility:hidden — Meet deja
+  // de actualizar el DOM de subtítulos si el contenedor no es visible, lo que
+  // rompería el MutationObserver.
+  style.textContent = `${SELECTORS.captionsContainer} { opacity: 0 !important; pointer-events: none !important; }`;
+  document.head.appendChild(style);
+}
+
+function clickCaptionsToggleOnceReady({ retries, delayMs }) {
+  return new Promise((resolve) => {
+    let attemptsLeft = retries;
+    const tryClick = () => {
+      const button = document.querySelector(SELECTORS.captionsToggleButton);
+      if (button) {
+        button.click();
+        resolve(true);
+        return;
+      }
+      attemptsLeft -= 1;
+      if (attemptsLeft > 0) {
+        setTimeout(tryClick, delayMs);
+      } else {
+        resolve(false);
+      }
+    };
+    tryClick();
+  });
+}
+
+export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 300 } = {}) {
+  hideCaptionsVisually();
+
   if (findCaptionsContainer()) {
     return observeCaptions(onSnapshot);
   }
+
+  // Clic una sola vez (reintentando solo hasta que el botón exista en el DOM,
+  // no repitiendo el clic después de haber tenido éxito — antes esto podía volver
+  // a apagar los subtítulos si el contenedor tardaba en aparecer).
+  await clickCaptionsToggleOnceReady({ retries, delayMs });
 
   let attemptsLeft = retries;
   let cleanup = () => {};
@@ -44,7 +85,6 @@ export function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 3
       cleanup = observeCaptions(onSnapshot);
       return;
     }
-    document.querySelector(SELECTORS.captionsToggleButton)?.click();
     attemptsLeft -= 1;
     if (attemptsLeft > 0) setTimeout(tryAttach, delayMs);
   };

@@ -1,20 +1,20 @@
 // src/webrtc-bootstrap/bootstrap.js
 import { installRtcPatch, installGetUserMediaPatch, diagnostics } from "./rtc-patch.js";
-import { RemoteAudioMixer } from "./audio-mixer.js";
+import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
 
-const mixer = new RemoteAudioMixer();
-let micStream = null;
+const mixer = new MeetingAudioMixer();
+let micTrack = null;
 let session = null;
 
 installRtcPatch({
-  onRemoteAudioTrack: (track) => mixer.addTrack(track),
+  onRemoteAudioTrack: (track) => mixer.addRemoteTrack(track),
   onConnectionClosed: () => {},
 });
 
 installGetUserMediaPatch({
-  onMicStream: (stream) => {
-    micStream = stream;
+  onMicStream: (stream, audioTrack) => {
+    micTrack = audioTrack;
   },
 });
 
@@ -28,15 +28,16 @@ window.addEventListener("message", (event) => {
   if (!message || message.source !== "asterion-isolated-world") return;
 
   if (message.type === "asterion:start-session") {
-    if (!micStream) {
+    if (!micTrack) {
       postToIsolated({ type: "asterion:start-failed", sessionId: message.sessionId, reason: "no-mic-stream" });
       return;
     }
+    mixer.setMicTrack(micTrack, { initiallyMuted: Boolean(message.initialMicMuted) });
     session = new MainWorldSession({
       sessionId: message.sessionId,
-      remoteAudioStream: mixer.stream,
-      micStream,
+      mixer,
       postToIsolated,
+      initialMicMuted: Boolean(message.initialMicMuted),
     });
     session.start();
     postToIsolated({ type: "asterion:session-started", sessionId: message.sessionId });
@@ -50,8 +51,6 @@ window.addEventListener("message", (event) => {
   }
 });
 
-// El clic de "activar video" se maneja acá, no vía postMessage desde el mundo ISOLATED
-// (ver decisión de Task 6): así el gesto de usuario llega intacto a getDisplayMedia().
 document.addEventListener(
   "click",
   async (event) => {

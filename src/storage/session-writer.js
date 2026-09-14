@@ -4,7 +4,6 @@ import { CaptionParser } from "../lib/caption-parser.js";
 
 const STREAM_FILE_NAMES = {
   meeting: "audio-reunion.webm",
-  mic: "audio-propio.webm",
   video: "video-reunion.webm",
 };
 
