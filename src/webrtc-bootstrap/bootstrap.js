@@ -4,6 +4,7 @@ import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
 
 const mixer = new MeetingAudioMixer();
+mixer.resume().catch(() => {});
 let micTrack = null;
 let session = null;
 
@@ -22,7 +23,7 @@ function postToIsolated(message, transfer = []) {
   window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
 }
 
-window.addEventListener("message", (event) => {
+window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
   const message = event.data;
   if (!message || message.source !== "asterion-isolated-world") return;
@@ -33,6 +34,9 @@ window.addEventListener("message", (event) => {
       return;
     }
     mixer.setMicTrack(micTrack, { initiallyMuted: Boolean(message.initialMicMuted) });
+    console.log("[Asterion] AudioContext state antes de resume():", mixer.audioContext.state);
+    await mixer.resume();
+    console.log("[Asterion] AudioContext state después de resume():", mixer.audioContext.state);
     session = new MainWorldSession({
       sessionId: message.sessionId,
       mixer,

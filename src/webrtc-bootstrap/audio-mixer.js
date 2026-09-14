@@ -48,6 +48,12 @@ export class MeetingAudioMixer {
     return this.destination.stream;
   }
 
+  async resume() {
+    if (this.audioContext.state === "suspended") {
+      await this.audioContext.resume();
+    }
+  }
+
   async close() {
     await this.audioContext.close();
   }
