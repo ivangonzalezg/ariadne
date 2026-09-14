@@ -1,0 +1,17 @@
+{
+  "name": "asterion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build:content": "esbuild src/content/meet-detector.js --bundle --outfile=dist/content.bundle.js",
+    "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
+    "build": "npm run build:content && npm run build:webrtc"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "jsdom": "^25.0.0",
+    "vitest": "^2.1.0"
+  }
+}
