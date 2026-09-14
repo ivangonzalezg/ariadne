@@ -19,27 +19,52 @@ function downloadFile(file, suggestedName) {
   });
 }
 
-async function renderMeetingFiles(li, folderName) {
-  const filesEl = document.createElement("div");
-  filesEl.className = "files";
-  li.appendChild(filesEl);
+function viewFile(file) {
+  // No se revoca el object URL acá: la pestaña nueva necesita poder seguir
+  // leyendo el archivo mientras el usuario lo mira/escucha/reproduce.
+  const url = URL.createObjectURL(file);
+  chrome.tabs.create({ url });
+}
 
+async function renderMeetingFiles(container, folderName) {
   const root = await navigator.storage.getDirectory();
   const meetingHandle = await root.getDirectoryHandle(folderName);
 
   for await (const [name, handle] of meetingHandle.entries()) {
     if (handle.kind !== "file") continue;
-    const button = document.createElement("button");
-    button.textContent = `Descargar ${name}`;
-    button.addEventListener("click", async () => {
-      const file = await handle.getFile();
-      downloadFile(file, `${folderName}/${name}`);
-    });
-    filesEl.appendChild(button);
+    const file = await handle.getFile();
+
+    const viewButton = document.createElement("button");
+    viewButton.textContent = `Ver ${name}`;
+    viewButton.addEventListener("click", () => viewFile(file));
+    container.appendChild(viewButton);
+
+    const downloadButton = document.createElement("button");
+    downloadButton.textContent = `Descargar ${name}`;
+    downloadButton.addEventListener("click", () => downloadFile(file, `${folderName}/${name}`));
+    container.appendChild(downloadButton);
   }
 }
 
-chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
+async function deleteMeeting(folderName) {
+  if (!confirm(`¿Eliminar la reunión "${folderName}"? Esto borra sus archivos y no se puede deshacer.`)) {
+    return;
+  }
+
+  const root = await navigator.storage.getDirectory();
+  await root.removeEntry(folderName, { recursive: true }).catch(() => {});
+
+  chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
+    const updated = meetingHistory.filter((meeting) => meeting.folderName !== folderName);
+    chrome.storage.local.set({ meetingHistory: updated }, () => {
+      render(updated);
+    });
+  });
+}
+
+function render(meetingHistory) {
+  listEl.innerHTML = "";
+
   if (meetingHistory.length === 0) {
     listEl.innerHTML = "<li>Todavía no hay reuniones grabadas.</li>";
     return;
@@ -51,12 +76,25 @@ chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
     const flags = [meeting.hasTranscript ? "transcripción" : null, meeting.hasVideo ? "video" : null]
       .filter(Boolean)
       .join(", ");
+
     const label = document.createElement("div");
     label.textContent = `${date} — ${meeting.folderName}${flags ? ` (${flags})` : ""}`;
     li.appendChild(label);
 
-    renderMeetingFiles(li, meeting.folderName);
+    const deleteButton = document.createElement("button");
+    deleteButton.textContent = "Eliminar reunión";
+    deleteButton.addEventListener("click", () => deleteMeeting(meeting.folderName));
+    li.appendChild(deleteButton);
+
+    const filesEl = document.createElement("div");
+    filesEl.className = "files";
+    li.appendChild(filesEl);
+    renderMeetingFiles(filesEl, meeting.folderName);
 
     listEl.appendChild(li);
   }
+}
+
+chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
+  render(meetingHistory);
 });
