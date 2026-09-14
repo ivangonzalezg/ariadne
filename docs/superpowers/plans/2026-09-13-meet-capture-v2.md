@@ -2823,3 +2823,67 @@ Recargar la extensión, entrar a una reunión real con al menos otra persona hab
 git add src/content/meet-selectors.js src/content/meet-caption-observer.js src/storage/session-writer.js
 git commit -m "fix: use the real Meet captions container, read the latest utterance block, add timestamps to transcript"
 ```
+
+---
+
+## Task 17: No apagar los subtítulos si ya estaban activados
+
+Bug real: `enableCaptionsAndObserve` decide si hace falta activar los subtítulos según si **encuentra el panel** en el DOM — pero si los subtítulos ya estaban activados de una sesión anterior de Meet (se recuerda esa preferencia por cuenta) y el panel tarda un instante en montarse, el código de todos modos hace clic en el botón, **apagando los subtítulos que ya estaban prendidos**. Fix: revisar el estado real del botón (`aria-label` dice "Turn on captions" cuando están apagados, "Turn off captions" cuando están prendidos) y solo hacer clic si confirma que están apagados.
+
+**Files:**
+- Modify: `src/content/meet-caption-observer.js`
+
+- [ ] **Step 1: Modify `clickCaptionsToggleOnceReady`** — renombrar a `ensureCaptionsEnabled` y revisar el estado del botón antes de clicar
+
+```js
+// src/content/meet-caption-observer.js — reemplazar la función clickCaptionsToggleOnceReady
+function isCaptionsCurrentlyOn(button) {
+  const label = button.getAttribute("aria-label") || "";
+  return label.toLowerCase().includes("turn off");
+}
+
+function ensureCaptionsEnabled({ retries, delayMs }) {
+  return new Promise((resolve) => {
+    let attemptsLeft = retries;
+    const tryEnsure = () => {
+      const button = document.querySelector(SELECTORS.captionsToggleButton);
+      if (button) {
+        if (!isCaptionsCurrentlyOn(button)) {
+          button.click();
+        }
+        resolve(true);
+        return;
+      }
+      attemptsLeft -= 1;
+      if (attemptsLeft > 0) {
+        setTimeout(tryEnsure, delayMs);
+      } else {
+        resolve(false);
+      }
+    };
+    tryEnsure();
+  });
+}
+```
+
+Y en `enableCaptionsAndObserve`, cambiar la llamada `await clickCaptionsToggleOnceReady({ retries, delayMs });` por `await ensureCaptionsEnabled({ retries, delayMs });`. El resto de la función (y del archivo) no cambia.
+
+- [ ] **Step 2: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 13/13.
+
+- [ ] **Step 3: Manual verification**
+
+Entrar a una reunión donde los subtítulos ya estén activados de antemano (de una sesión previa). Confirmar que el botón de subtítulos sigue diciendo "Turn off captions" (o sea, siguen activados) después de que arranca la grabación — antes se apagaban en este escenario. Confirmar que `transcripcion.txt` se genera con contenido real.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/content/meet-caption-observer.js
+git commit -m "fix: don't toggle off captions that were already enabled from a previous session"
+```
