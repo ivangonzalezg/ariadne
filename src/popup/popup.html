@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Asterion</title>
+    <style>
+      body { font-family: sans-serif; width: 320px; padding: 12px; }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      section { margin-bottom: 12px; }
+      #transcript {
+        white-space: pre-wrap;
+        max-height: 160px;
+        overflow-y: auto;
+        background: #f2f2f2;
+        padding: 8px;
+        font-size: 12px;
+      }
+      button { margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Asterion</h1>
+
+    <section>
+      <div id="meeting-status">Consultando estado…</div>
+      <button id="start-recording">Iniciar grabación</button>
+      <button id="stop-recording">Detener</button>
+      <p><small>El video se activa desde el aviso dentro de la página de Meet, no desde acá.</small></p>
+    </section>
+
+    <section>
+      <strong>Transcripción en vivo (mejor esfuerzo, solo desde que se abrió el popup)</strong>
+      <div id="transcript"></div>
+    </section>
+
+    <section>
+      <label><input type="checkbox" id="auto-start" /> Iniciar grabación automáticamente</label>
+    </section>
+
+    <section>
+      <button id="choose-folder">Elegir carpeta de grabaciones</button>
+      <button id="open-history">Ver historial</button>
+      <p id="folder-status"></p>
+    </section>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
