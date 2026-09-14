@@ -2661,3 +2661,165 @@ Abrir el historial con al menos dos reuniones grabadas. "Ver" debe abrir el arch
 git add src/history/history.js
 git commit -m "feat: add view-in-new-tab and delete-meeting actions to history"
 ```
+
+---
+
+## Task 16: Selector real del panel de subtítulos + leer el último bloque, no el primero + timestamps en la transcripción
+
+Diagnóstico real contra el DOM de Meet (ver conversación de esta sesión) reveló dos cosas: (1) el selector del contenedor de subtítulos (`div[jsname="xySENc"][aria-live="polite"]`, tomado de Fireflies sin confirmar) está mal — el real es `[role="region"][aria-label="Captions"]`; (2) Meet acumula **un bloque de DOM por cada intervención** (`div.nMcdL.bj4p3b`, uno por hablante), no un solo nodo que se reemplaza — nuestra lectura usaba `querySelector` (agarra el primer bloque, siempre el más viejo) en vez de leer el último bloque (el que realmente se está actualizando en vivo). Los selectores de hablante (`.NWpY1d`) y texto (`.ygicle.VbkSUe`) sí eran correctos. De paso: se saca el CSS que ocultaba visualmente los subtítulos (pedido explícito del usuario — no hace falta ocultarlos en esta versión) y se agregan timestamps `mm:ss` a cada línea de `transcripcion.txt`, aprovechando que `CaptionParser` ya calcula `startMs`/`endMs` por intervención.
+
+**Files:**
+- Modify: `src/content/meet-selectors.js`
+- Modify: `src/content/meet-caption-observer.js`
+- Modify: `src/storage/session-writer.js`
+
+- [ ] **Step 1: Modify `meet-selectors.js`** — corregir `captionsContainer` y agregar `captionUtteranceBlock`
+
+```js
+// src/content/meet-selectors.js
+export const SELECTORS = {
+  hangUpButton: '[aria-label="Leave call"]',
+  micButton: '[aria-label*="microphone" i]',
+  micMutedAttribute: "data-is-muted",
+  captionsToggleButton: 'button[jsname="RrG0hf"], button[jslog^="211197"]',
+  captionsContainer: '[role="region"][aria-label="Captions"]',
+  captionUtteranceBlock: ".nMcdL.bj4p3b",
+  captionSpeakerName: ".NWpY1d",
+  captionText: ".ygicle.VbkSUe",
+};
+```
+
+- [ ] **Step 2: Rewrite `meet-caption-observer.js`** — leer el último bloque de intervención (no el primer match del contenedor entero), y sacar el CSS que oculta los subtítulos
+
+```js
+// src/content/meet-caption-observer.js
+import { SELECTORS } from "./meet-selectors.js";
+
+function findCaptionsContainer() {
+  return document.querySelector(SELECTORS.captionsContainer);
+}
+
+function readLatestSnapshot(container) {
+  const blocks = container.querySelectorAll(SELECTORS.captionUtteranceBlock);
+  if (blocks.length === 0) return null;
+  const latest = blocks[blocks.length - 1];
+
+  const speakerEl = latest.querySelector(SELECTORS.captionSpeakerName);
+  const textEl = latest.querySelector(SELECTORS.captionText);
+  if (!textEl) return null;
+
+  return {
+    speaker: speakerEl ? speakerEl.textContent.trim() : null,
+    text: textEl.textContent.trim(),
+    timestampMs: Date.now(),
+  };
+}
+
+function observeCaptions(onSnapshot) {
+  const container = findCaptionsContainer();
+  if (!container) return () => {};
+
+  const observer = new MutationObserver(() => {
+    const snapshot = readLatestSnapshot(container);
+    if (snapshot) onSnapshot(snapshot);
+  });
+
+  observer.observe(container, { childList: true, subtree: true, characterData: true });
+  return () => observer.disconnect();
+}
+
+function clickCaptionsToggleOnceReady({ retries, delayMs }) {
+  return new Promise((resolve) => {
+    let attemptsLeft = retries;
+    const tryClick = () => {
+      const button = document.querySelector(SELECTORS.captionsToggleButton);
+      if (button) {
+        button.click();
+        resolve(true);
+        return;
+      }
+      attemptsLeft -= 1;
+      if (attemptsLeft > 0) {
+        setTimeout(tryClick, delayMs);
+      } else {
+        resolve(false);
+      }
+    };
+    tryClick();
+  });
+}
+
+export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 300 } = {}) {
+  if (findCaptionsContainer()) {
+    return observeCaptions(onSnapshot);
+  }
+
+  await clickCaptionsToggleOnceReady({ retries, delayMs });
+
+  let attemptsLeft = retries;
+  let cleanup = () => {};
+
+  const tryAttach = () => {
+    const container = findCaptionsContainer();
+    if (container) {
+      cleanup = observeCaptions(onSnapshot);
+      return;
+    }
+    attemptsLeft -= 1;
+    if (attemptsLeft > 0) setTimeout(tryAttach, delayMs);
+  };
+  tryAttach();
+
+  return () => cleanup();
+}
+```
+
+Nota: se quitó por completo `hideCaptionsVisually()` y su estilo inyectado — el usuario pidió dejar los subtítulos visibles, no hace falta ocultarlos con CSS en esta versión.
+
+- [ ] **Step 3: Modify `session-writer.js`** — agregar timestamps `mm:ss` a cada línea de la transcripción
+
+```js
+// src/storage/session-writer.js — agregar esta función arriba de la clase SessionWriter
+function formatTimestamp(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+```
+
+Y cambiar, dentro de `finalize()`, la línea que arma `transcriptText`:
+
+```js
+// antes:
+      const transcriptText = this.captionParser.finishedSegments
+        .map((segment) => `[${segment.speaker}] ${segment.text}`)
+        .join("\n");
+
+// después:
+      const transcriptText = this.captionParser.finishedSegments
+        .map((segment) => `[${formatTimestamp(segment.startMs)}] [${segment.speaker}] ${segment.text}`)
+        .join("\n");
+```
+
+El resto de `session-writer.js` (todo lo del Task 14: OPFS, cola de escritura por stream, etc.) no cambia.
+
+- [ ] **Step 4: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 13/13 tests (esta tarea no toca `src/lib/`).
+
+- [ ] **Step 5: Manual verification**
+
+Recargar la extensión, entrar a una reunión real con al menos otra persona hablando (o narrar en voz alta un buen rato para generar varias intervenciones). Confirmar que el panel de subtítulos de Meet se ve normal en pantalla (ya no se oculta). Detener la grabación y abrir `transcripcion.txt` desde el historial ("Ver") — debe tener una línea por intervención con formato `[mm:ss] [hablante] texto`, reflejando lo que efectivamente se dijo (no solo la primera intervención repetida).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/content/meet-selectors.js src/content/meet-caption-observer.js src/storage/session-writer.js
+git commit -m "fix: use the real Meet captions container, read the latest utterance block, add timestamps to transcript"
+```
