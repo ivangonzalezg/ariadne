@@ -22,6 +22,11 @@ function startRecording() {
   if (sessionId) return;
   sessionId = generateSessionId();
   updateBannerState("starting");
+
+  // Avisar al service worker en paralelo (no después) para que el offscreen document
+  // de storage exista antes de que lleguen los primeros chunks del bootstrap MAIN world —
+  // si se esperara al primer "asterion:chunk" para crearlo, ese primer chunk se perdería.
+  chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId });
   postToMainWorld({ type: "asterion:start-session", sessionId });
 
   observeMuteState((muted, timestampMs) => {
