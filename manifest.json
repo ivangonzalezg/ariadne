@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Asterion — Captura de Reuniones",
+  "version": "0.1.0",
+  "description": "Captura local automática de transcripción, audio y video de reuniones de Google Meet.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "offscreen", "scripting"],
+  "host_permissions": ["https://meet.google.com/*"],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["dist/webrtc-bootstrap.bundle.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["dist/content.bundle.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html"
+  }
+}
