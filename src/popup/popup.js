@@ -1,10 +1,6 @@
 // src/popup/popup.js
-import { saveRootDirectoryHandle, loadRootDirectoryHandle } from "../storage/directory-handle-store.js";
 import { CaptionParser } from "../lib/caption-parser.js";
 
-const folderButtonEl = document.getElementById("choose-folder");
-const reauthorizeButtonEl = document.getElementById("reauthorize-folder");
-const folderStatusEl = document.getElementById("folder-status");
 const autoStartCheckboxEl = document.getElementById("auto-start");
 const meetingStatusEl = document.getElementById("meeting-status");
 const startButtonEl = document.getElementById("start-recording");
@@ -13,38 +9,6 @@ const transcriptEl = document.getElementById("transcript");
 
 const captionParser = new CaptionParser();
 let activeTabId = null;
-
-async function refreshFolderStatus() {
-  const handle = await loadRootDirectoryHandle();
-  if (!handle) {
-    folderStatusEl.textContent = "Ninguna carpeta elegida todavía.";
-    reauthorizeButtonEl.style.display = "none";
-    return;
-  }
-
-  const permission = await handle.queryPermission({ mode: "readwrite" });
-  if (permission === "granted") {
-    folderStatusEl.textContent = `Carpeta actual: ${handle.name}`;
-    reauthorizeButtonEl.style.display = "none";
-  } else {
-    folderStatusEl.textContent = `Carpeta elegida (${handle.name}) — el permiso ya no está activo.`;
-    reauthorizeButtonEl.style.display = "inline-block";
-  }
-}
-
-folderButtonEl.addEventListener("click", async () => {
-  const handle = await window.showDirectoryPicker();
-  await handle.requestPermission({ mode: "readwrite" });
-  await saveRootDirectoryHandle(handle);
-  await refreshFolderStatus();
-});
-
-reauthorizeButtonEl.addEventListener("click", async () => {
-  const handle = await loadRootDirectoryHandle();
-  if (!handle) return;
-  await handle.requestPermission({ mode: "readwrite" });
-  await refreshFolderStatus();
-});
 
 chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
   autoStartCheckboxEl.checked = autoStart;
@@ -115,6 +79,5 @@ document.getElementById("open-history").addEventListener("click", () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("src/history/history.html") });
 });
 
-refreshFolderStatus();
 refreshMeetingStatus();
 setInterval(refreshMeetingStatus, 2000);

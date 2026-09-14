@@ -1,17 +1,41 @@
 // src/history/history.js
-import { loadRootDirectoryHandle } from "../storage/directory-handle-store.js";
-
 const listEl = document.getElementById("history-list");
 
-async function openMeetingFolder(folderName) {
-  const rootHandle = await loadRootDirectoryHandle();
-  if (!rootHandle) return;
-  const meetingHandle = await rootHandle.getDirectoryHandle(folderName);
+function downloadFile(file, suggestedName) {
+  const url = URL.createObjectURL(file);
+  chrome.downloads.download({ url, filename: suggestedName, saveAs: true }, (downloadId) => {
+    if (chrome.runtime.lastError || downloadId === undefined) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    const onChanged = (delta) => {
+      if (delta.id !== downloadId) return;
+      if (delta.state?.current === "complete" || delta.state?.current === "interrupted") {
+        URL.revokeObjectURL(url);
+        chrome.downloads.onChanged.removeListener(onChanged);
+      }
+    };
+    chrome.downloads.onChanged.addListener(onChanged);
+  });
+}
+
+async function renderMeetingFiles(li, folderName) {
+  const filesEl = document.createElement("div");
+  filesEl.className = "files";
+  li.appendChild(filesEl);
+
+  const root = await navigator.storage.getDirectory();
+  const meetingHandle = await root.getDirectoryHandle(folderName);
+
   for await (const [name, handle] of meetingHandle.entries()) {
     if (handle.kind !== "file") continue;
-    const file = await handle.getFile();
-    const url = URL.createObjectURL(file);
-    window.open(url, "_blank");
+    const button = document.createElement("button");
+    button.textContent = `Descargar ${name}`;
+    button.addEventListener("click", async () => {
+      const file = await handle.getFile();
+      downloadFile(file, `${folderName}/${name}`);
+    });
+    filesEl.appendChild(button);
   }
 }
 
@@ -27,12 +51,11 @@ chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
     const flags = [meeting.hasTranscript ? "transcripción" : null, meeting.hasVideo ? "video" : null]
       .filter(Boolean)
       .join(", ");
-    li.textContent = `${date} — ${meeting.folderName}${flags ? ` (${flags})` : ""}`;
+    const label = document.createElement("div");
+    label.textContent = `${date} — ${meeting.folderName}${flags ? ` (${flags})` : ""}`;
+    li.appendChild(label);
 
-    const openButton = document.createElement("button");
-    openButton.textContent = "Abrir archivos";
-    openButton.addEventListener("click", () => openMeetingFolder(meeting.folderName));
-    li.appendChild(openButton);
+    renderMeetingFiles(li, meeting.folderName);
 
     listEl.appendChild(li);
   }

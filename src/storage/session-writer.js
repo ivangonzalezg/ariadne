@@ -1,5 +1,4 @@
 // src/storage/session-writer.js
-import { loadRootDirectoryHandle } from "./directory-handle-store.js";
 import { CaptionParser } from "../lib/caption-parser.js";
 
 const STREAM_FILE_NAMES = {
@@ -18,6 +17,7 @@ export class SessionWriter {
     this.tabId = tabId;
     this.startedAt = Date.now();
     this.writablesByStream = new Map();
+    this.writeQueueByStream = new Map();
     this.captionParser = new CaptionParser();
     this.hasCaption = false;
     this.streamsUsed = new Set();
@@ -25,15 +25,8 @@ export class SessionWriter {
   }
 
   async _init() {
-    const rootHandle = await loadRootDirectoryHandle();
-    if (!rootHandle) {
-      throw new Error("No hay carpeta raíz configurada. Abrí el popup de Asterion y elegila.");
-    }
-    const permission = await rootHandle.queryPermission({ mode: "readwrite" });
-    if (permission !== "granted") {
-      throw new Error("El permiso de la carpeta raíz ya no está activo. Volvé a elegirla desde el popup.");
-    }
-    this.meetingHandle = await rootHandle.getDirectoryHandle(meetingFolderName(this.startedAt), {
+    const root = await navigator.storage.getDirectory();
+    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt), {
       create: true,
     });
   }
@@ -51,9 +44,17 @@ export class SessionWriter {
     return writable;
   }
 
-  async writeChunk(streamLabel, buffer) {
-    const writable = await this._getWritable(streamLabel);
-    await writable.write(buffer);
+  writeChunk(streamLabel, buffer) {
+    // Encadenar por stream: una escritura no arranca antes de que termine la
+    // anterior del mismo archivo, y finalize() espera a que esta cola se vacíe
+    // antes de cerrar los streams (si no, se podía cortar el último chunk).
+    const previous = this.writeQueueByStream.get(streamLabel) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const writable = await this._getWritable(streamLabel);
+      await writable.write(buffer);
+    });
+    this.writeQueueByStream.set(streamLabel, next);
+    return next;
   }
 
   onCaptionSnapshot(snapshot) {
@@ -64,6 +65,8 @@ export class SessionWriter {
   async finalize({ muteManifest }) {
     await this.ready;
     this.captionParser.finalizeCurrent(Date.now());
+
+    await Promise.all(this.writeQueueByStream.values());
 
     for (const writable of this.writablesByStream.values()) {
       await writable.close();
