@@ -24,6 +24,10 @@ async function ensureOffscreenDocument() {
   await offscreenCreationPromise;
 }
 
+// El offscreen document se deja vivo entre reuniones a propósito: el permiso de
+// File System Access sobre la carpeta raíz parece estar atado a la instancia del
+// documento, no al origen de la extensión. Así, persiste hasta reiniciar el
+// navegador o recargar la extensión.
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "asterion:session-starting") {
     activeSessionTabIds.set(message.sessionId, sender.tab?.id ?? null);
@@ -33,9 +37,6 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   } else if (message.type === "asterion:session-finalized") {
     activeSessionTabIds.delete(message.sessionId);
     appendToHistory(message);
-    if (activeSessionTabIds.size === 0) {
-      chrome.offscreen.closeDocument().catch(() => {});
-    }
   }
 });
 
