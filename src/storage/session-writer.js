@@ -11,6 +11,13 @@ function meetingFolderName(startedAt) {
   return `reunion-${iso}`;
 }
 
+function formatTimestamp(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export class SessionWriter {
   constructor({ sessionId, tabId }) {
     this.sessionId = sessionId;
@@ -74,7 +81,7 @@ export class SessionWriter {
 
     if (this.hasCaption) {
       const transcriptText = this.captionParser.finishedSegments
-        .map((segment) => `[${segment.speaker}] ${segment.text}`)
+        .map((segment) => `[${formatTimestamp(segment.startMs)}] [${segment.speaker}] ${segment.text}`)
         .join("\n");
       const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.txt", { create: true });
       const writable = await fileHandle.createWritable();

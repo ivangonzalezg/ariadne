@@ -5,9 +5,13 @@ function findCaptionsContainer() {
   return document.querySelector(SELECTORS.captionsContainer);
 }
 
-function readCurrentSnapshot(container) {
-  const speakerEl = container.querySelector(SELECTORS.captionSpeakerName) ?? null;
-  const textEl = container.querySelector(SELECTORS.captionText);
+function readLatestSnapshot(container) {
+  const blocks = container.querySelectorAll(SELECTORS.captionUtteranceBlock);
+  if (blocks.length === 0) return null;
+  const latest = blocks[blocks.length - 1];
+
+  const speakerEl = latest.querySelector(SELECTORS.captionSpeakerName);
+  const textEl = latest.querySelector(SELECTORS.captionText);
   if (!textEl) return null;
 
   return {
@@ -22,25 +26,12 @@ function observeCaptions(onSnapshot) {
   if (!container) return () => {};
 
   const observer = new MutationObserver(() => {
-    const snapshot = readCurrentSnapshot(container);
+    const snapshot = readLatestSnapshot(container);
     if (snapshot) onSnapshot(snapshot);
   });
 
   observer.observe(container, { childList: true, subtree: true, characterData: true });
   return () => observer.disconnect();
-}
-
-const HIDE_STYLE_ID = "asterion-hide-captions";
-
-function hideCaptionsVisually() {
-  if (document.getElementById(HIDE_STYLE_ID)) return;
-  const style = document.createElement("style");
-  style.id = HIDE_STYLE_ID;
-  // opacity + pointer-events en vez de display:none/visibility:hidden — Meet deja
-  // de actualizar el DOM de subtítulos si el contenedor no es visible, lo que
-  // rompería el MutationObserver.
-  style.textContent = `${SELECTORS.captionsContainer} { opacity: 0 !important; pointer-events: none !important; }`;
-  document.head.appendChild(style);
 }
 
 function clickCaptionsToggleOnceReady({ retries, delayMs }) {
@@ -65,15 +56,10 @@ function clickCaptionsToggleOnceReady({ retries, delayMs }) {
 }
 
 export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 300 } = {}) {
-  hideCaptionsVisually();
-
   if (findCaptionsContainer()) {
     return observeCaptions(onSnapshot);
   }
 
-  // Clic una sola vez (reintentando solo hasta que el botón exista en el DOM,
-  // no repitiendo el clic después de haber tenido éxito — antes esto podía volver
-  // a apagar los subtítulos si el contenedor tardaba en aparecer).
   await clickCaptionsToggleOnceReady({ retries, delayMs });
 
   let attemptsLeft = retries;
