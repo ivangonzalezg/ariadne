@@ -3,6 +3,7 @@ import { saveRootDirectoryHandle, loadRootDirectoryHandle } from "../storage/dir
 import { CaptionParser } from "../lib/caption-parser.js";
 
 const folderButtonEl = document.getElementById("choose-folder");
+const reauthorizeButtonEl = document.getElementById("reauthorize-folder");
 const folderStatusEl = document.getElementById("folder-status");
 const autoStartCheckboxEl = document.getElementById("auto-start");
 const meetingStatusEl = document.getElementById("meeting-status");
@@ -15,13 +16,33 @@ let activeTabId = null;
 
 async function refreshFolderStatus() {
   const handle = await loadRootDirectoryHandle();
-  folderStatusEl.textContent = handle ? `Carpeta actual: ${handle.name}` : "Ninguna carpeta elegida todavía.";
+  if (!handle) {
+    folderStatusEl.textContent = "Ninguna carpeta elegida todavía.";
+    reauthorizeButtonEl.style.display = "none";
+    return;
+  }
+
+  const permission = await handle.queryPermission({ mode: "readwrite" });
+  if (permission === "granted") {
+    folderStatusEl.textContent = `Carpeta actual: ${handle.name}`;
+    reauthorizeButtonEl.style.display = "none";
+  } else {
+    folderStatusEl.textContent = `Carpeta elegida (${handle.name}) — el permiso ya no está activo.`;
+    reauthorizeButtonEl.style.display = "inline-block";
+  }
 }
 
 folderButtonEl.addEventListener("click", async () => {
   const handle = await window.showDirectoryPicker();
   await handle.requestPermission({ mode: "readwrite" });
   await saveRootDirectoryHandle(handle);
+  await refreshFolderStatus();
+});
+
+reauthorizeButtonEl.addEventListener("click", async () => {
+  const handle = await loadRootDirectoryHandle();
+  if (!handle) return;
+  await handle.requestPermission({ mode: "readwrite" });
   await refreshFolderStatus();
 });
 
