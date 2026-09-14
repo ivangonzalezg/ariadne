@@ -3,6 +3,7 @@ import { SELECTORS } from "./meet-selectors.js";
 import { observeMuteState } from "./meet-mute-observer.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, updateBannerState } from "./meet-banner.js";
+import { arrayBufferToBase64 } from "../lib/base64.js";
 
 function isInActiveMeeting() {
   return document.querySelector(SELECTORS.hangUpButton) !== null;
@@ -69,7 +70,7 @@ window.addEventListener("message", (event) => {
       sessionId: message.sessionId,
       stream: message.stream,
       seq: message.seq,
-      buffer: message.buffer,
+      bufferBase64: arrayBufferToBase64(message.buffer),
     });
   } else if (message.type === "asterion:video-enabled") {
     setState("video-enabled");

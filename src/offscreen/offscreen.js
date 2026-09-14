@@ -1,5 +1,6 @@
 // src/offscreen/offscreen.js
 import { SessionWriter } from "../storage/session-writer.js";
+import { base64ToArrayBuffer } from "../lib/base64.js";
 
 const sessions = new Map();
 
@@ -13,7 +14,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     });
   } else if (message.type === "asterion:chunk") {
     const writer = sessions.get(message.sessionId);
-    writer?.writeChunk(message.stream, message.buffer).catch((error) => {
+    writer?.writeChunk(message.stream, base64ToArrayBuffer(message.bufferBase64)).catch((error) => {
       console.error("[Asterion] Error escribiendo chunk:", error);
     });
   } else if (message.type === "asterion:caption-snapshot") {
