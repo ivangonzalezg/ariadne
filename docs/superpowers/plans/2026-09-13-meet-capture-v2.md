@@ -2173,3 +2173,358 @@ Expected: solo aparece un archivo de audio (`audio-reunion.webm`, sin `audio-pro
 git add src/webrtc-bootstrap/ src/content/meet-detector.js src/content/meet-caption-observer.js src/content/meet-selectors.js src/storage/session-writer.js
 git commit -m "feat: mix meeting and mic audio into a single file, harden caption selectors and session cleanup"
 ```
+
+---
+
+## Task 14: Storage sin permisos — OPFS en vez de directorio externo, descarga bajo demanda desde el historial
+
+Decisión con Codex (ver conversación de esta sesión): el permiso sobre el directorio elegido por el usuario (File System Access API) se vencía impredeciblemente en uso real, causando pérdida silenciosa de grabaciones justo en el caso más importante (auto-inicio sin interacción previa del usuario). Se reemplaza por el almacenamiento privado de la extensión (OPFS, `navigator.storage.getDirectory()`), que no pide ningún permiso. El historial pasa a ofrecer descarga explícita por archivo en vez de "abrir en pestaña nueva" desde una carpeta ya accesible.
+
+**Files:**
+- Modify: `manifest.json` (agregar `"unlimitedStorage"` y `"downloads"`)
+- Modify: `src/storage/session-writer.js` (OPFS en vez de directorio externo, serializar escrituras por stream)
+- Delete: `src/storage/directory-handle-store.js` (ya no lo usa nadie)
+- Modify: `src/popup/popup.html` y `src/popup/popup.js` (quitar elegir/renovar carpeta)
+- Modify: `src/history/history.html` y `src/history/history.js` (leer de OPFS, botón de descarga por archivo)
+
+- [ ] **Step 1: Modify `manifest.json`** — cambiar solo el array `"permissions"`:
+
+```json
+  "permissions": ["storage", "offscreen", "scripting", "unlimitedStorage", "downloads"],
+```
+
+- [ ] **Step 2: Rewrite `session-writer.js`**
+
+```js
+// src/storage/session-writer.js
+import { CaptionParser } from "../lib/caption-parser.js";
+
+const STREAM_FILE_NAMES = {
+  meeting: "audio-reunion.webm",
+  video: "video-reunion.webm",
+};
+
+function meetingFolderName(startedAt) {
+  const iso = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
+  return `reunion-${iso}`;
+}
+
+export class SessionWriter {
+  constructor({ sessionId, tabId }) {
+    this.sessionId = sessionId;
+    this.tabId = tabId;
+    this.startedAt = Date.now();
+    this.writablesByStream = new Map();
+    this.writeQueueByStream = new Map();
+    this.captionParser = new CaptionParser();
+    this.hasCaption = false;
+    this.streamsUsed = new Set();
+    this.ready = this._init();
+  }
+
+  async _init() {
+    const root = await navigator.storage.getDirectory();
+    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt), {
+      create: true,
+    });
+  }
+
+  async _getWritable(streamLabel) {
+    await this.ready;
+    if (this.writablesByStream.has(streamLabel)) {
+      return this.writablesByStream.get(streamLabel);
+    }
+    const fileName = STREAM_FILE_NAMES[streamLabel];
+    const fileHandle = await this.meetingHandle.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    this.writablesByStream.set(streamLabel, writable);
+    this.streamsUsed.add(streamLabel);
+    return writable;
+  }
+
+  writeChunk(streamLabel, buffer) {
+    // Encadenar por stream: una escritura no arranca antes de que termine la
+    // anterior del mismo archivo, y finalize() espera a que esta cola se vacíe
+    // antes de cerrar los streams (si no, se podía cortar el último chunk).
+    const previous = this.writeQueueByStream.get(streamLabel) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const writable = await this._getWritable(streamLabel);
+      await writable.write(buffer);
+    });
+    this.writeQueueByStream.set(streamLabel, next);
+    return next;
+  }
+
+  onCaptionSnapshot(snapshot) {
+    this.hasCaption = true;
+    this.captionParser.onSnapshot(snapshot);
+  }
+
+  async finalize({ muteManifest }) {
+    await this.ready;
+    this.captionParser.finalizeCurrent(Date.now());
+
+    await Promise.all(this.writeQueueByStream.values());
+
+    for (const writable of this.writablesByStream.values()) {
+      await writable.close();
+    }
+
+    if (this.hasCaption) {
+      const transcriptText = this.captionParser.finishedSegments
+        .map((segment) => `[${segment.speaker}] ${segment.text}`)
+        .join("\n");
+      const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.txt", { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(transcriptText);
+      await writable.close();
+    }
+
+    const manifestHandle = await this.meetingHandle.getFileHandle("manifest.json", { create: true });
+    const manifestWritable = await manifestHandle.createWritable();
+    await manifestWritable.write(
+      JSON.stringify(
+        {
+          startedAt: this.startedAt,
+          hasTranscript: this.hasCaption,
+          hasVideo: this.streamsUsed.has("video"),
+          muteManifest,
+        },
+        null,
+        2
+      )
+    );
+    await manifestWritable.close();
+
+    return {
+      sessionId: this.sessionId,
+      tabId: this.tabId,
+      folderName: this.meetingHandle.name,
+      startedAt: this.startedAt,
+      hasTranscript: this.hasCaption,
+      hasVideo: this.streamsUsed.has("video"),
+    };
+  }
+}
+```
+
+`src/offscreen/offscreen.js` no necesita cambios — su llamada `writer?.writeChunk(...).catch(...)` sigue funcionando igual, `writeChunk` sigue devolviendo una promesa.
+
+- [ ] **Step 3: Delete `src/storage/directory-handle-store.js`** — ya no lo importa nada (ni `session-writer.js` ni, después del Step 4, `popup.js`).
+
+- [ ] **Step 4: Modify `popup.html`** — quitar los botones de carpeta, dejar solo el de historial con una nota:
+
+```html
+<!-- reemplazar esta sección: -->
+    <section>
+      <button id="choose-folder">Elegir carpeta de grabaciones</button>
+      <button id="reauthorize-folder" style="display: none;">Renovar permiso</button>
+      <button id="open-history">Ver historial</button>
+      <p id="folder-status"></p>
+    </section>
+
+<!-- por esta: -->
+    <section>
+      <button id="open-history">Ver historial</button>
+      <p><small>Las grabaciones se guardan dentro de la extensión. Descargalas desde el historial cuando quieras.</small></p>
+    </section>
+```
+
+- [ ] **Step 5: Modify `popup.js`** — quitar todo lo relacionado a la carpeta
+
+```js
+// src/popup/popup.js
+import { CaptionParser } from "../lib/caption-parser.js";
+
+const autoStartCheckboxEl = document.getElementById("auto-start");
+const meetingStatusEl = document.getElementById("meeting-status");
+const startButtonEl = document.getElementById("start-recording");
+const stopButtonEl = document.getElementById("stop-recording");
+const transcriptEl = document.getElementById("transcript");
+
+const captionParser = new CaptionParser();
+let activeTabId = null;
+
+chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
+  autoStartCheckboxEl.checked = autoStart;
+});
+autoStartCheckboxEl.addEventListener("change", () => {
+  chrome.storage.local.set({ autoStart: autoStartCheckboxEl.checked });
+});
+
+const STATUS_LABELS = {
+  idle: "Sin grabar.",
+  starting: "Iniciando…",
+  recording: "Grabando.",
+  "video-enabled": "Grabando con video.",
+  error: "Error al iniciar.",
+};
+
+function renderMeetingStatus(status) {
+  if (!status || !status.inMeeting) {
+    meetingStatusEl.textContent = "No hay una reunión de Meet activa en esta pestaña.";
+    startButtonEl.style.display = "none";
+    stopButtonEl.style.display = "none";
+    return;
+  }
+  meetingStatusEl.textContent = STATUS_LABELS[status.state] ?? status.state;
+  startButtonEl.style.display = status.state === "idle" || status.state === "error" ? "inline-block" : "none";
+  stopButtonEl.style.display =
+    status.state === "recording" || status.state === "video-enabled" ? "inline-block" : "none";
+}
+
+async function refreshMeetingStatus() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url?.startsWith("https://meet.google.com/")) {
+    activeTabId = null;
+    renderMeetingStatus(null);
+    return;
+  }
+  activeTabId = tab.id;
+  chrome.tabs.sendMessage(tab.id, { type: "asterion:get-status" }, (response) => {
+    if (chrome.runtime.lastError) {
+      renderMeetingStatus(null);
+      return;
+    }
+    renderMeetingStatus(response);
+  });
+}
+
+startButtonEl.addEventListener("click", () => {
+  if (activeTabId) chrome.tabs.sendMessage(activeTabId, { type: "asterion:popup-start" });
+});
+stopButtonEl.addEventListener("click", () => {
+  if (activeTabId) chrome.tabs.sendMessage(activeTabId, { type: "asterion:popup-stop" });
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "asterion:caption-snapshot") {
+    captionParser.onSnapshot(message.snapshot);
+    renderTranscript();
+  }
+});
+
+function renderTranscript() {
+  const lines = captionParser.finishedSegments.map((s) => `[${s.speaker}] ${s.text}`);
+  if (captionParser.current) lines.push(`[${captionParser.current.speaker}] ${captionParser.current.text}`);
+  transcriptEl.textContent = lines.join("\n") || "(sin transcripción todavía)";
+}
+
+document.getElementById("open-history").addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("src/history/history.html") });
+});
+
+refreshMeetingStatus();
+setInterval(refreshMeetingStatus, 2000);
+```
+
+- [ ] **Step 6: Rewrite `history.html`**
+
+```html
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Asterion — Historial</title>
+    <style>
+      body { font-family: sans-serif; padding: 16px; max-width: 640px; }
+      li { margin-bottom: 16px; }
+      .files { margin-top: 4px; }
+      .files button { margin-right: 8px; margin-bottom: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Historial de reuniones</h1>
+    <ul id="history-list"></ul>
+    <script type="module" src="history.js"></script>
+  </body>
+</html>
+```
+
+- [ ] **Step 7: Rewrite `history.js`** — lee de OPFS, ofrece descargar cada archivo con `chrome.downloads.download({..., saveAs: true})`, revocando el object URL recién cuando la descarga termina o se interrumpe (no apenas se dispara, para no cortar archivos grandes)
+
+```js
+// src/history/history.js
+const listEl = document.getElementById("history-list");
+
+function downloadFile(file, suggestedName) {
+  const url = URL.createObjectURL(file);
+  chrome.downloads.download({ url, filename: suggestedName, saveAs: true }, (downloadId) => {
+    if (chrome.runtime.lastError || downloadId === undefined) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    const onChanged = (delta) => {
+      if (delta.id !== downloadId) return;
+      if (delta.state?.current === "complete" || delta.state?.current === "interrupted") {
+        URL.revokeObjectURL(url);
+        chrome.downloads.onChanged.removeListener(onChanged);
+      }
+    };
+    chrome.downloads.onChanged.addListener(onChanged);
+  });
+}
+
+async function renderMeetingFiles(li, folderName) {
+  const filesEl = document.createElement("div");
+  filesEl.className = "files";
+  li.appendChild(filesEl);
+
+  const root = await navigator.storage.getDirectory();
+  const meetingHandle = await root.getDirectoryHandle(folderName);
+
+  for await (const [name, handle] of meetingHandle.entries()) {
+    if (handle.kind !== "file") continue;
+    const button = document.createElement("button");
+    button.textContent = `Descargar ${name}`;
+    button.addEventListener("click", async () => {
+      const file = await handle.getFile();
+      downloadFile(file, `${folderName}/${name}`);
+    });
+    filesEl.appendChild(button);
+  }
+}
+
+chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
+  if (meetingHistory.length === 0) {
+    listEl.innerHTML = "<li>Todavía no hay reuniones grabadas.</li>";
+    return;
+  }
+
+  for (const meeting of meetingHistory) {
+    const li = document.createElement("li");
+    const date = new Date(meeting.startedAt).toLocaleString();
+    const flags = [meeting.hasTranscript ? "transcripción" : null, meeting.hasVideo ? "video" : null]
+      .filter(Boolean)
+      .join(", ");
+    const label = document.createElement("div");
+    label.textContent = `${date} — ${meeting.folderName}${flags ? ` (${flags})` : ""}`;
+    li.appendChild(label);
+
+    renderMeetingFiles(li, meeting.folderName);
+
+    listEl.appendChild(li);
+  }
+});
+```
+
+- [ ] **Step 8: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, `npm test` sigue en 13/13 (esta tarea no toca `src/lib/`).
+
+- [ ] **Step 9: Manual verification**
+
+Recargar la extensión (importante: los permisos del manifest cambiaron, Chrome puede pedir confirmarlos de nuevo al recargar). Entrar a una reunión con auto-inicio, **sin abrir el popup antes** (para probar justamente el caso que fallaba), dejar que grabe unos segundos, detener. Abrir el historial y descargar cada archivo — confirmar que el diálogo nativo de Chrome para elegir dónde guardar aparece, y que los archivos descargados abren bien.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add manifest.json src/storage/session-writer.js src/popup/popup.html src/popup/popup.js src/history/history.html src/history/history.js
+git rm src/storage/directory-handle-store.js
+git commit -m "feat: switch storage to OPFS (no permission prompts) with on-demand download from history"
+```
