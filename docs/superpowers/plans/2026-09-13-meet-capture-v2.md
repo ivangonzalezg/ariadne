@@ -1307,6 +1307,12 @@ Expected: aparece una subcarpeta `reunion-<timestamp>` con `audio-reunion.webm` 
 
 **Punto pendiente de Task 7 a re-confirmar acá:** si los `ArrayBuffer` de los chunks llegan corruptos o vacíos a `writeChunk`, es el riesgo de serialización de `chrome.runtime.sendMessage` ya anotado — la salida es codificar a base64 en el content script y decodificar acá.
 
+## Bugs encontrados en verificación real con Meet (post-Task 12), ya corregidos
+
+- **Selectores en inglés, no español** (commit `e79c9ee`): la UI real de Meet del usuario está en inglés. Se corrigieron `hangUpButton`, `micButton` y `captionsToggleButton` contra un diagnóstico real del DOM. `captionsContainer` se tomó del código fuente de Fireflies (`div[jsname="xySENc"][aria-live="polite"]`, alta confianza); `captionSpeakerName`/`captionText` siguen siendo best-effort sin confirmar (Fireflies no los necesita — lee el canal de datos WebRTC `captions_v2` de Meet directamente en vez de escrapear el DOM, algo a evaluar como mejora futura dado que ya tenemos la arquitectura de interceptación de WebRTC para el audio).
+- **Los subtítulos no se activaban en auto-inicio** (commit `41d0ef1`): el clic al botón de subtítulos en `enableCaptionsAndObserve` ocurría una sola vez, antes del bucle de reintentos — si el botón no existía todavía en el DOM en ese instante (típico en auto-inicio, que dispara muy temprano), el clic se perdía y nunca se reintentaba. Corregido: el clic ahora se reintenta en cada vuelta del bucle.
+- **Nada se guardaba / historial vacío** (commit `41d0ef1`): condición de carrera real, no un caso raro — el offscreen document se crea recién al llegar el primer `asterion:session-starting`, pero ese mensaje es un *broadcast*; si el offscreen document todavía no terminó de registrar su listener, nunca lo recibe, y ninguno de los mensajes siguientes (chunks, fin de sesión) encuentra una sesión de escritura activa. Corregido: el service worker ahora reenvía `session-starting` explícitamente después de confirmar que el offscreen document ya existe, y el offscreen document es idempotente ante recibir ese mensaje dos veces.
+
 - [ ] **Step 6: Commit**
 
 ```bash
