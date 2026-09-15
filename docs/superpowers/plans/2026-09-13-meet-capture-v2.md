@@ -3097,3 +3097,352 @@ Entrar a una reunión real de Meet (con nombre de calendario si es posible, y ta
 git add src/content/meet-detector.js src/background/service-worker.js src/offscreen/offscreen.js src/storage/session-writer.js
 git commit -m "feat: use the real Meet meeting title instead of a timestamp-only name"
 ```
+
+---
+
+## Task 20: Rediseño del popup
+
+Implementa el diseño de Pencil (frame `jk68F`, ver captura en `/private/tmp/claude-501/-Users-ivangonzalez-Documents-projects-personal-asterion/7ade1242-5606-4c2a-98b2-c5ea485078c6/scratchpad/pencil-export/jk68F.png`). Usa `src/shared/theme.css` (Task 18, variables de color) y `src/shared/icons.js` (Task 18, función `icon(name, {size, color})`).
+
+**Estados a implementar** (uno visible a la vez, según `state` que ya devuelve `asterion:get-status`, más los datos nuevos del Step 1):
+
+- **Listo** (`state === "idle"`, auto-inicio activado): punto verde (`--accent-green`), título "Listo", texto "Abre una reunión de Google Meet para comenzar."
+- **Inactivo** (`state === "idle"`, auto-inicio **desactivado**): punto gris (`--text-muted`), título "Inactivo", texto "La extensión está deshabilitada."
+- **Reunión detectada** (`state === "idle"` pero `inMeeting === true` — pasa cuando el auto-inicio está desactivado y hay una reunión sin grabar): punto azul (`--accent-blue`), título "Reunión detectada", texto "Puedes iniciar la captura desde la reunión.", tarjeta con ícono `monitor`, texto "Reunión en curso", el `meetingTitle`, y botón "Ir a la reunión ↗" (ícono `arrow-up-right`) que hace `chrome.tabs.update(activeTabId, {active: true})` y `chrome.windows.update` para enfocar esa pestaña/ventana.
+- **Grabando** (`state === "recording"` o `"video-enabled"`): punto rojo, título "Grabando", `meetingTitle` en grande, timer `mm:ss` corriendo (actualizado cada segundo con `setInterval`, calculado desde `startedAt`), y 4 filas de fuente con ícono + label + punto de color + texto de estado a la derecha:
+  - "Transcripción" (ícono `file-text`) — verde "Activa" si `hasTranscript` es true, gris "No disponible" si no.
+  - "Audio de la reunión" (ícono `volume-2`) — siempre verde "Activo" mientras se está grabando.
+  - "Mi voz" (ícono `mic`) — verde "Activa" si `!micMuted`, gris "Silenciada" si `micMuted`.
+  - "Video de la pestaña" (ícono `app-window`) — verde "Activo" si `videoEnabled`, gris "No activo" si no.
+- **Error** (`state === "error"`): punto rojo, título "Error", texto "No se pudo iniciar la grabación. Volvé a intentarlo."
+
+**Persistente en todos los estados:**
+- Header: ícono `audio-lines` + "Asterion" en negrita, ícono `settings` a la derecha (por ahora sin acción — dejar el toggle de auto-inicio siempre visible en el cuerpo, no hace falta una pantalla de ajustes separada).
+- Fila de auto-inicio: ícono `monitor` + "Conectarse automáticamente" + interruptor (usar `--accent-blue` cuando está activo, `--toggle-off` cuando no), con texto de ayuda "Inicia la captura al entrar a una llamada de Meet." debajo.
+- Fila "Ver historial": ícono `history` + "Ver historial" + ícono `chevron-right`, abre `history.html` en pestaña nueva (`chrome.tabs.create`).
+
+**Explícitamente fuera de este rediseño:** no hay ningún texto de transcripción en vivo — se quita por completo el `<div id="transcript">`, `CaptionParser`, y `renderTranscript()` que existían antes. El popup solo necesita saber SI hay actividad de transcripción (booleano), no el contenido.
+
+**Files:**
+- Modify: `src/content/meet-detector.js` (extender el estado expuesto a `asterion:get-status`)
+- Rewrite: `src/popup/popup.html`
+- Rewrite: `src/popup/popup.js`
+
+- [ ] **Step 1: Modify `meet-detector.js`** — trackear y exponer `meetingTitle`, `startedAt`, `hasTranscript`, `micMuted`, `videoEnabled`
+
+Agregar variables de módulo junto a `sessionId`/`currentState`:
+
+```js
+let meetingTitle = null;
+let startedAt = null;
+let hasTranscript = false;
+let micMuted = true;
+let videoEnabled = false;
+```
+
+En `startRecording()`, junto con calcular `meetingTitle` (ya existe del Task 19), agregar `startedAt = Date.now();`, `hasTranscript = false;`, `videoEnabled = false;`.
+
+En el callback de `observeMuteState`, actualizar `micMuted = muted;` (además de lo que ya hace).
+
+En el callback de `enableCaptionsAndObserve`, dentro de la función que arma el snapshot y llama `chrome.runtime.sendMessage({type:"asterion:caption-snapshot",...})`, agregar `hasTranscript = true;` antes de mandar el mensaje.
+
+En el listener de mensajes de `MAIN world`, en la rama `"asterion:video-enabled"`, agregar `videoEnabled = true;`.
+
+En el listener de `chrome.runtime.onMessage` que responde `"asterion:get-status"`, cambiar el `sendResponse` para incluir los nuevos campos:
+
+```js
+sendResponse({
+  inMeeting: isInActiveMeeting(),
+  state: currentState,
+  meetingTitle,
+  startedAt,
+  hasTranscript,
+  micMuted,
+  videoEnabled,
+});
+```
+
+Al volver a `"idle"` (en la rama `"asterion:session-ended"` del listener de `MAIN world`), resetear `meetingTitle = null; startedAt = null; hasTranscript = false; videoEnabled = false;`.
+
+- [ ] **Step 2: Rewrite `popup.html`**
+
+```html
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Asterion</title>
+    <link rel="stylesheet" href="../shared/theme.css" />
+    <style>
+      body { width: 320px; padding: 16px; background: var(--bg); }
+      .card { display: flex; flex-direction: column; gap: 16px; }
+      .header { display: flex; justify-content: space-between; align-items: center; }
+      .brand { display: flex; align-items: center; gap: 8px; color: var(--text-primary); font-weight: 600; font-size: 15px; }
+      .status-row { display: flex; align-items: center; gap: 8px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+      .status-title { color: var(--text-primary); font-weight: 600; font-size: 14px; }
+      .status-copy { color: var(--text-secondary); font-size: 13px; line-height: 1.4; }
+      .meeting-name { color: var(--text-primary); font-weight: 600; font-size: 18px; }
+      .timer { color: var(--text-secondary); font-size: 13px; }
+      .source-row { display: flex; justify-content: space-between; align-items: center; }
+      .source-left { display: flex; align-items: center; gap: 10px; color: var(--text-primary); font-size: 13px; }
+      .source-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+      .toggle-row { display: flex; justify-content: space-between; align-items: center; }
+      .toggle { width: 42px; height: 24px; border-radius: 12px; padding: 3px; display: flex; align-items: center; cursor: pointer; }
+      .toggle-knob { width: 18px; height: 18px; border-radius: 50%; background: #FFFFFF; transition: transform 0.15s; }
+      .helper { color: var(--text-muted); font-size: 12px; line-height: 1.35; }
+      .link-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; color: var(--text-primary); font-size: 14px; }
+      .card-box { background: var(--bg-elevated); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+      button.primary { width: 100%; background: var(--bg-button); color: var(--text-primary); border: none; border-radius: 10px; padding: 10px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="app" class="card"></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
+```
+
+(Todo el contenido de `#app` se arma en JS por estado — no hay markup fijo de estado acá, para no duplicar estructura entre los 5 estados.)
+
+- [ ] **Step 3: Rewrite `popup.js`**
+
+Estructura general (sin transcripción en vivo, sin `CaptionParser`):
+
+```js
+// src/popup/popup.js
+import { icon } from "../shared/icons.js";
+
+const appEl = document.getElementById("app");
+let activeTabId = null;
+let timerInterval = null;
+
+function formatElapsed(startedAt) {
+  const totalSeconds = Math.floor((Date.now() - startedAt) / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function sourceRow(iconName, label, active, activeLabel, inactiveLabel) {
+  return `<div class="source-row">
+    <div class="source-left">${icon(iconName, { size: 16, color: "var(--text-secondary)" })}<span>${label}</span></div>
+    <div class="source-status" style="color:${active ? "var(--accent-green)" : "var(--text-muted)"}">
+      <span class="dot" style="width:6px;height:6px;background:${active ? "var(--accent-green)" : "var(--text-muted)"}"></span>
+      ${active ? activeLabel : inactiveLabel}
+    </div>
+  </div>`;
+}
+
+function footer(autoStart) {
+  return `
+    <div class="toggle-row">
+      <div class="source-left">${icon("monitor", { size: 16, color: "var(--text-secondary)" })}<span style="color:var(--text-primary)">Conectarse automáticamente</span></div>
+      <div id="auto-start-toggle" class="toggle" style="background:${autoStart ? "var(--accent-blue)" : "var(--toggle-off)"};justify-content:${autoStart ? "flex-end" : "flex-start"}">
+        <div class="toggle-knob"></div>
+      </div>
+    </div>
+    <div class="helper">Inicia la captura al entrar a una llamada de Meet.</div>
+    <div id="history-link" class="link-row">
+      <div class="source-left">${icon("history", { size: 16, color: "var(--text-secondary)" })}<span>Ver historial</span></div>
+      ${icon("chevron-right", { size: 16, color: "var(--text-secondary)" })}
+    </div>
+  `;
+}
+
+function header() {
+  return `<div class="header">
+    <div class="brand">${icon("audio-lines", { size: 18, color: "var(--text-primary)" })}Asterion</div>
+    ${icon("settings", { size: 18, color: "var(--text-secondary)" })}
+  </div>`;
+}
+
+function render(status, autoStart) {
+  if (timerInterval) clearInterval(timerInterval);
+
+  if (!status || !status.inMeeting) {
+    const inactive = !autoStart;
+    appEl.innerHTML = `${header()}
+      <div class="status-row"><span class="dot" style="background:${inactive ? "var(--text-muted)" : "var(--accent-green)"}"></span><span class="status-title">${inactive ? "Inactivo" : "Listo"}</span></div>
+      <div class="status-copy">${inactive ? "La extensión está deshabilitada." : "Abre una reunión de Google Meet para comenzar."}</div>
+      ${footer(autoStart)}`;
+    wireFooter(autoStart);
+    return;
+  }
+
+  if (status.state === "idle") {
+    appEl.innerHTML = `${header()}
+      <div class="status-row"><span class="dot" style="background:var(--accent-blue)"></span><span class="status-title">Reunión detectada</span></div>
+      <div class="status-copy">Puedes iniciar la captura desde la reunión.</div>
+      <div class="card-box">
+        <div class="source-left">${icon("monitor", { size: 16, color: "var(--accent-blue)" })}<span style="color:var(--text-secondary);font-size:12px">Reunión en curso</span></div>
+        <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
+        <button class="primary" id="go-to-meeting">Ir a la reunión ${icon("arrow-up-right", { size: 14 })}</button>
+      </div>
+      ${footer(autoStart)}`;
+    document.getElementById("go-to-meeting").addEventListener("click", () => {
+      chrome.tabs.update(activeTabId, { active: true });
+    });
+    wireFooter(autoStart);
+    return;
+  }
+
+  if (status.state === "error") {
+    appEl.innerHTML = `${header()}
+      <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Error</span></div>
+      <div class="status-copy">No se pudo iniciar la grabación. Volvé a intentarlo.</div>
+      ${footer(autoStart)}`;
+    wireFooter(autoStart);
+    return;
+  }
+
+  // recording / video-enabled
+  appEl.innerHTML = `${header()}
+    <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Grabando</span></div>
+    <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
+    <div class="timer" id="timer">00:00</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${sourceRow("file-text", "Transcripción", status.hasTranscript, "Activa", "No disponible")}
+      ${sourceRow("volume-2", "Audio de la reunión", true, "Activo", "")}
+      ${sourceRow("mic", "Mi voz", !status.micMuted, "Activa", "Silenciada")}
+      ${sourceRow("app-window", "Video de la pestaña", status.videoEnabled, "Activo", "No activo")}
+    </div>
+    ${footer(autoStart)}`;
+  wireFooter(autoStart);
+
+  const timerEl = document.getElementById("timer");
+  const tick = () => { timerEl.textContent = formatElapsed(status.startedAt); };
+  tick();
+  timerInterval = setInterval(tick, 1000);
+}
+
+function wireFooter(autoStart) {
+  document.getElementById("auto-start-toggle").addEventListener("click", () => {
+    chrome.storage.local.set({ autoStart: !autoStart }, () => refresh());
+  });
+  document.getElementById("history-link").addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("src/history/history.html") });
+  });
+}
+
+async function refresh() {
+  const { autoStart } = await chrome.storage.local.get({ autoStart: true });
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url?.startsWith("https://meet.google.com/")) {
+    activeTabId = null;
+    render(null, autoStart);
+    return;
+  }
+  activeTabId = tab.id;
+  chrome.tabs.sendMessage(tab.id, { type: "asterion:get-status" }, (response) => {
+    render(chrome.runtime.lastError ? null : response, autoStart);
+  });
+}
+
+refresh();
+setInterval(refresh, 2000);
+```
+
+- [ ] **Step 4: Build + tests**
+
+```bash
+npm test
+```
+
+Expected: 13/13 (esta tarea no toca `src/lib/`; `popup.js`/`popup.html` no se bundlean, se cargan como módulos nativos).
+
+- [ ] **Step 5: Manual verification**
+
+Cargar la extensión, probar cada estado: sin reunión (con auto-inicio activado y desactivado → Listo/Inactivo), con reunión detectada sin grabar (auto-inicio desactivado), grabando (confirmar timer corriendo y las 4 filas reflejando mute/video real), y forzar un error (por ejemplo revocando algún permiso) para ver el estado rojo. Confirmar que no aparece ningún texto de transcripción en el popup, y que el tema cambia solo al cambiar el tema del sistema operativo (`prefers-color-scheme`).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/content/meet-detector.js src/popup/popup.html src/popup/popup.js
+git commit -m "feat: redesign popup per Pencil design (states, timer, source status, no live transcript)"
+```
+
+---
+
+## Task 21: Rediseño del menú flotante en la página de Meet
+
+Implementa el diseño de Pencil (frame `j2S9Y`, ver captura en `.../scratchpad/pencil-export/j2S9Y.png`). Usa Shadow DOM para aislar los estilos del banner de los de la propia página de Meet (evita colisiones de CSS con las clases internas de Meet).
+
+**Estados:** Reunión detectada (botón azul "Iniciar captura" con ícono `play`), Grabando colapsado (punto rojo + "Asterion"/timer + ícono `video` para activar cámara — sigue siendo el único lugar donde se engancha el clic real de `getDisplayMedia()` vía `data-asterion-enable-video`, no tocar esa restricción del Task 6 — + botón rojo "Detener" + chevron para expandir/contraer), Grabando expandido (mismo top bar + separador + las mismas 4 filas de fuente que el popup + texto informativo con ícono `info`: "Se está grabando la reunión. Puedes detener la captura en cualquier momento."), Captura finalizada (ícono de check verde, "Captura finalizada"/"La reunión se guardó correctamente.", botón "Ver grabación" con ícono `arrow-up-right`, ícono `x` para cerrar), Error (mismo patrón colapsado con punto rojo, "Error"/"No se pudo iniciar").
+
+**Files:**
+- Rewrite: `src/content/meet-banner.js`
+- Modify: `src/content/meet-detector.js` (wiring del nuevo banner)
+
+- [ ] **Step 1: Rewrite `meet-banner.js`** con Shadow DOM
+
+Estructura general: un `<div id="asterion-banner-host">` en `document.body`, con `attachShadow({mode:"open"})`; dentro del shadow root, un `<link rel="stylesheet" href="${chrome.runtime.getURL('src/shared/theme.css')}">` (el manifest ya lo declara `web_accessible_resources` en la Task 18) más un `<style>` con las clases propias del banner (pill totalmente redondeada, `border-radius: 999px` para el estado colapsado, `border-radius: 20px` para el expandido/finalizada), y un contenedor `#content` donde se renderiza cada estado, con la misma función `icon()` de `src/shared/icons.js`.
+
+Mantener la misma API pública que usa `meet-detector.js` hoy: `showBanner({ onStart, onStop })` y `updateBannerState(state, meta)` — pero `updateBannerState` ahora también necesita recibir `meetingTitle`/`startedAt` para el timer y el nombre, y una función para expandir/contraer que se guarda en un estado interno del módulo (no hace falta exponerla afuera). El botón con `data-asterion-enable-video` debe existir siempre que el estado sea "recording"/"video-enabled" (dentro del shadow root — el bootstrap `MAIN world` sigue reconociendo el atributo `data-asterion-enable-video` sin importar si está dentro de un shadow root, `document.addEventListener("click", ..., true)` con `event.target.closest(...)` no atraviesa shadow boundaries por defecto — **validar esto explícitamente en la verificación manual**, y si `closest` no encuentra el botón por estar dentro del shadow root, usar `event.composedPath()` para buscarlo ahí en vez de `event.target.closest(...)`).
+
+Agregar el estado "Captura finalizada": se muestra cuando `meet-detector.js` recibe la confirmación de que se guardó (ver Step 2), con un botón "Ver grabación" que abre el archivo de audio de esa reunión — como el nombre de carpeta ahora incluye el título (Task 19) pero el content script no tiene acceso directo a OPFS del offscreen document, alcanza con abrir el historial (`chrome.tabs.create` a `history.html`) en vez de intentar abrir el archivo directo desde acá.
+
+- [ ] **Step 2: Modify `meet-detector.js`** — mostrar "Captura finalizada" tras confirmar el guardado
+
+El content script hoy solo sabe que terminó la sesión (`asterion:session-ended`), no que el offscreen document efectivamente terminó de escribir los archivos (`asterion:session-finalized`, que hoy solo lo escucha el service worker). Agregar un listener para ese mensaje también acá:
+
+```js
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "asterion:session-finalized") {
+    showFinishedBanner();
+  }
+});
+```
+
+(`showFinishedBanner` es una función nueva exportada por `meet-banner.js` en el Step 1, que muestra el estado "Captura finalizada" durante unos segundos o hasta que el usuario lo cierre.)
+
+- [ ] **Step 3: Build + tests**
+
+```bash
+npm run build:content
+npm test
+```
+
+Expected: build limpio, 13/13.
+
+- [ ] **Step 4: Manual verification**
+
+Entrar a una reunión real. Confirmar: el banner se ve como una píldora redondeada consistente con el diseño, sin heredar ningún estilo de Meet (probar en modo claro y oscuro del sistema operativo); el botón de activar video sigue disparando el diálogo nativo de Chrome (validar específicamente que `data-asterion-enable-video` sigue siendo detectado desde el bootstrap `MAIN world` a través del Shadow DOM — si no, aplicar el fix de `composedPath()` mencionado arriba); expandir/contraer funciona; al detener, aparece brevemente "Captura finalizada" con el botón "Ver grabación" abriendo el historial.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/content/meet-banner.js src/content/meet-detector.js
+git commit -m "feat: redesign in-page banner per Pencil design with Shadow DOM isolation"
+```
+
+---
+
+## Task 22: Restyle del historial
+
+**Files:**
+- Rewrite: `src/history/history.html`
+- Modify: `src/history/history.js`
+
+- [ ] **Step 1: Rewrite `history.html`** — mismo lenguaje visual que el popup (usar `src/shared/theme.css`), con un header "← Historial" (ícono `chevron-left` + "Historial", el ícono navega hacia atrás con `history.back()` o simplemente cierra la pestaña) en vez del header con logo, y una lista de tarjetas por reunión.
+
+- [ ] **Step 2: Modify `history.js`** — usar `meetingTitle` (ya viene en `chrome.storage.local.meetingHistory` desde la Task 19) como título principal de cada tarjeta en vez de `folderName`, con la fecha relativa al estilo del diseño ("Hoy · 18 min", "Ayer · 42 min", usando `startedAt` y la duración — calcular duración real a partir del archivo `audio-reunion.webm` con `file.size`/bitrate estimado no es preciso; más simple: guardar la duración real en el manifiesto en un futuro ajuste, por ahora usar el tiempo transcurrido entre `startedAt` y cuando se recibió `session-finalized`, que se puede aproximar con `Date.now()` al momento de guardar en `appendToHistory` del service worker — si no está disponible con precisión, mostrar solo la fecha sin duración en vez de inventar un número). Mantener las acciones Ver/Descargar/Eliminar ya implementadas (Tasks 14-15), solo restyleadas visualmente.
+
+- [ ] **Step 3: Build + tests**
+
+```bash
+npm test
+```
+
+- [ ] **Step 4: Manual verification**
+
+Abrir el historial con reuniones ya grabadas, confirmar que el título mostrado es el título real de la reunión (no el nombre de carpeta), que el tema claro/oscuro se aplica igual que en el popup, y que Ver/Descargar/Eliminar siguen funcionando.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/history/history.html src/history/history.js
+git commit -m "feat: restyle history view to match Pencil design and show real meeting titles"
+```
