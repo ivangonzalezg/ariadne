@@ -2,7 +2,7 @@
 import { SELECTORS } from "./meet-selectors.js";
 import { observeMuteState } from "./meet-mute-observer.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
-import { showBanner, updateBannerState } from "./meet-banner.js";
+import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
 import { arrayBufferToBase64 } from "../lib/base64.js";
 
 function isInActiveMeeting() {
@@ -27,9 +27,13 @@ let videoEnabled = false;
 let stopMuteObserver = () => {};
 let stopCaptionObserver = () => {};
 
-function setState(state) {
+function bannerMeta(extra = {}) {
+  return { meetingTitle, startedAt, hasTranscript, micMuted, videoEnabled, ...extra };
+}
+
+function setState(state, meta = {}) {
   currentState = state;
-  updateBannerState(state);
+  updateBannerState(state, bannerMeta(meta));
 }
 
 function cleanupObservers() {
@@ -60,6 +64,7 @@ async function startRecording() {
   // el valor correcto desde el primer instante, ver Task 13 del plan).
   stopMuteObserver = observeMuteState((muted, timestampMs) => {
     micMuted = muted;
+    updateBannerState(currentState, bannerMeta());
     if (isFirstMuteReport) {
       isFirstMuteReport = false;
       postToMainWorld({ type: "asterion:start-session", sessionId, initialMicMuted: muted });
@@ -73,6 +78,7 @@ async function startRecording() {
 
   const cleanup = await enableCaptionsAndObserve((snapshot) => {
     hasTranscript = true;
+    updateBannerState(currentState, bannerMeta());
     chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
   });
   stopCaptionObserver = cleanup ?? (() => {});
@@ -107,7 +113,7 @@ window.addEventListener("message", (event) => {
     videoEnabled = true;
     setState("video-enabled");
   } else if (message.type === "asterion:video-enable-failed") {
-    updateBannerState(currentState, { videoError: message.message });
+    updateBannerState(currentState, bannerMeta({ videoError: message.message }));
   } else if (message.type === "asterion:session-ended") {
     chrome.runtime.sendMessage({
       type: "asterion:session-ended",
@@ -146,6 +152,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     stopRecording();
     sendResponse({ ok: true });
     return true;
+  }
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "asterion:session-finalized") {
+    showFinishedBanner();
   }
 });
 

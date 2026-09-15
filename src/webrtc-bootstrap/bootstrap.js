@@ -58,7 +58,7 @@ window.addEventListener("message", async (event) => {
 document.addEventListener(
   "click",
   async (event) => {
-    const target = event.target instanceof Element ? event.target.closest("[data-asterion-enable-video]") : null;
+    const target = event.composedPath().find((el) => el instanceof Element && el.matches("[data-asterion-enable-video]"));
     if (!target || !session) return;
 
     console.log("[Asterion] userActivation.isActive antes de getDisplayMedia:", navigator.userActivation?.isActive);
