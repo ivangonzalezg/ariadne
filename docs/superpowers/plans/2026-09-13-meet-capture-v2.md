@@ -2887,3 +2887,213 @@ Entrar a una reunión donde los subtítulos ya estén activados de antemano (de 
 git add src/content/meet-caption-observer.js
 git commit -m "fix: don't toggle off captions that were already enabled from a previous session"
 ```
+
+---
+
+## Task 18: Fundamento de diseño — tokens CSS + set de íconos compartido
+
+Base para el rediseño visual del popup, el banner y el historial, tomado del diseño en Pencil (`/Users/ivangonzalez/.pencil/documents/58caa882-4cde-412b-a2df-a5d8e385c4bb/pencil-new.pen`, frames `jk68F`/`j2S9Y` y sus variantes `· Claro`). Ver capturas de referencia en `/private/tmp/claude-501/-Users-ivangonzalez-Documents-projects-personal-asterion/7ade1242-5606-4c2a-98b2-c5ea485078c6/scratchpad/pencil-export/{jk68F,j2S9Y,b1kjw8,rngkH}.png`.
+
+**Files:**
+- Create: `src/shared/theme.css`
+- Create: `src/shared/icons.js`
+- Modify: `manifest.json` (agregar `src/shared/theme.css` a `web_accessible_resources` para `https://meet.google.com/*`, y `lucide-static` como devDependency en `package.json`)
+
+- [ ] **Step 1: Instalar `lucide-static`**
+
+```bash
+npm install --save-dev lucide-static
+```
+
+- [ ] **Step 2: Write `src/shared/theme.css`** — variables CSS con soporte claro/oscuro vía `prefers-color-scheme`, tomadas de `GetVariables()` del archivo de Pencil (dark es la base, light es el override — el producto es dark-first visualmente):
+
+```css
+:root {
+  --bg: #1A1D24;
+  --bg-elevated: #232734;
+  --bg-button: #2B303C;
+  --text-primary: #F5F7FA;
+  --text-secondary: #8B93A7;
+  --text-muted: #6A7386;
+  --accent-blue: #3B82F6;
+  --accent-green: #22C55E;
+  --accent-red: #EF4444;
+  --toggle-off: #3A4050;
+  --border: #2C313C;
+  --shadow: #00000040;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #FFFFFF;
+    --bg-elevated: #F4F6F8;
+    --bg-button: #ECEFF3;
+    --text-primary: #1A1D24;
+    --text-secondary: #5B6472;
+    --text-muted: #8A93A3;
+    --accent-blue: #2563EB;
+    --accent-green: #16A34A;
+    --accent-red: #DC2626;
+    --toggle-off: #D5DAE2;
+    --border: #E6E8EE;
+    --shadow: #0F172A1F;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  font-family: "Inter", system-ui, sans-serif;
+}
+```
+
+- [ ] **Step 3: Write `src/shared/icons.js`**
+
+Copiar el contenido `<path>`/`<svg>` real de los siguientes 17 íconos desde los archivos ya instalados en `node_modules/lucide-static/icons/` (cada ícono es un archivo `.svg` individual ahí — leerlos directamente, no adivinar el path data): `file-text`, `monitor`, `history`, `chevron-right`, `chevron-left`, `audio-lines`, `settings`, `arrow-up-right`, `volume-2`, `mic`, `app-window`, `play`, `chevron-down`, `chevron-up`, `video`, `info`, `x`.
+
+Exportar una función que arme el SVG con tamaño/color configurables:
+
+```js
+// src/shared/icons.js
+const ICONS = {
+  "file-text": `<contenido real del path de node_modules/lucide-static/icons/file-text.svg>`,
+  monitor: `...`,
+  history: `...`,
+  "chevron-right": `...`,
+  "chevron-left": `...`,
+  "audio-lines": `...`,
+  settings: `...`,
+  "arrow-up-right": `...`,
+  "volume-2": `...`,
+  mic: `...`,
+  "app-window": `...`,
+  play: `...`,
+  "chevron-down": `...`,
+  "chevron-up": `...`,
+  video: `...`,
+  info: `...`,
+  x: `...`,
+};
+
+export function icon(name, { size = 16, color = "currentColor" } = {}) {
+  const inner = ICONS[name];
+  if (!inner) throw new Error(`Ícono desconocido: ${name}`);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+```
+
+(El valor real de cada `<contenido...>` son los elementos internos del SVG de lucide-static para ese ícono — abrir cada archivo `.svg` de `node_modules/lucide-static/icons/` y copiar su contenido interno tal cual, todos comparten el mismo `viewBox="0 0 24 24"` y atributos de stroke.)
+
+- [ ] **Step 4: Modify `manifest.json`** — agregar `web_accessible_resources` para que el content script pueda linkear el CSS dentro de la página de Meet:
+
+```json
+  "web_accessible_resources": [
+    {
+      "resources": ["src/shared/theme.css"],
+      "matches": ["https://meet.google.com/*"]
+    }
+  ]
+```
+
+- [ ] **Step 5: Build + tests**
+
+```bash
+npm test
+```
+
+Expected: 13/13 (esta tarea no toca `src/lib/`; `theme.css`/`icons.js` no se bundlean todavía — eso lo consumen las Tasks 20-22).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add package.json package-lock.json manifest.json src/shared/
+git commit -m "feat: add shared design tokens (light/dark) and lucide icon module"
+```
+
+---
+
+## Task 19: Título real de la reunión (Fireflies-style) en vez de nombre por timestamp
+
+**Files:**
+- Modify: `src/content/meet-detector.js`
+- Modify: `src/background/service-worker.js`
+- Modify: `src/offscreen/offscreen.js`
+- Modify: `src/storage/session-writer.js`
+
+- [ ] **Step 1: Modify `meet-detector.js`** — leer `document.title` al iniciar y mandarlo en `asterion:session-starting`
+
+En `startRecording()`, cambiar la línea `chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId });` por:
+
+```js
+  const meetingTitle = document.title && document.title.trim() && document.title.trim() !== "Meet"
+    ? document.title.trim()
+    : "Reunión sin título";
+  chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
+```
+
+**Nota para la verificación manual (Step 5):** confirmar en una reunión real qué contiene realmente `document.title` — si Meet antepone algo tipo "Meet - " o pone solo el nombre, ajustar el `.trim()`/condición de fallback acá. No asumir el formato exacto sin confirmarlo.
+
+- [ ] **Step 2: Modify `service-worker.js`** — pasar `meetingTitle` al reenviar `session-starting`, y guardarlo junto al `tabId`
+
+```js
+// service-worker.js: cambiar la rama asterion:session-starting
+if (message.type === "asterion:session-starting") {
+    activeSessionTabIds.set(message.sessionId, sender.tab?.id ?? null);
+    ensureOffscreenDocument().then(() => {
+      chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId: message.sessionId, meetingTitle: message.meetingTitle });
+    });
+}
+```
+
+Y en `appendToHistory(meta)`, agregar `meetingTitle: meta.meetingTitle` al objeto que se guarda en `meetingHistory`.
+
+- [ ] **Step 3: Modify `offscreen.js`** — pasar `meetingTitle` al crear el `SessionWriter`
+
+```js
+// offscreen.js: cambiar la rama asterion:session-starting
+if (message.type === "asterion:session-starting") {
+    if (sessions.has(message.sessionId)) return;
+    const writer = new SessionWriter({ sessionId: message.sessionId, tabId: sender.tab?.id ?? null, meetingTitle: message.meetingTitle });
+    sessions.set(message.sessionId, writer);
+    writer.ready.catch((error) => {
+      console.error("[Asterion] No se pudo iniciar el storage de la sesión:", error);
+    });
+}
+```
+
+- [ ] **Step 4: Modify `session-writer.js`** — usar el título para el nombre de carpeta y agregarlo a `manifest.json`/al retorno de `finalize()`
+
+```js
+// arriba del archivo, agregar:
+function sanitizeForFolderName(text) {
+  return text.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80).trim() || "Reunión";
+}
+
+function meetingFolderName(startedAt, meetingTitle) {
+  const iso = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
+  return `${sanitizeForFolderName(meetingTitle)} — ${iso}`;
+}
+```
+
+En el constructor de `SessionWriter`, agregar `this.meetingTitle = meetingTitle || "Reunión sin título";` y cambiar la llamada dentro de `_init()` de `meetingFolderName(this.startedAt)` a `meetingFolderName(this.startedAt, this.meetingTitle)`.
+
+En `finalize()`, agregar `meetingTitle: this.meetingTitle` tanto al objeto que se escribe en `manifest.json` como al objeto que se retorna (para que `session-finalized` → `meetingHistory` lo reciba).
+
+- [ ] **Step 5: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 13/13.
+
+- [ ] **Step 6: Manual verification**
+
+Entrar a una reunión real de Meet (con nombre de calendario si es posible, y también probar una reunión ad-hoc sin nombre asignado) y confirmar qué contiene `document.title` en cada caso (ajustar el fallback del Step 1 si hace falta). Grabar y confirmar que la carpeta, `manifest.json` y la entrada de `chrome.storage.local.meetingHistory` reflejan el título real.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/content/meet-detector.js src/background/service-worker.js src/offscreen/offscreen.js src/storage/session-writer.js
+git commit -m "feat: use the real Meet meeting title instead of a timestamp-only name"
+```
