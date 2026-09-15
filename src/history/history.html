@@ -2,17 +2,111 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Asterion — Historial</title>
+    <link rel="stylesheet" href="../shared/theme.css" />
     <style>
-      body { font-family: sans-serif; padding: 16px; max-width: 640px; }
-      li { margin-bottom: 16px; }
-      .files { margin-top: 4px; }
-      .files button { margin-right: 8px; margin-bottom: 4px; }
+      body {
+        margin: 0;
+        min-width: 360px;
+        background: var(--bg);
+        color: var(--text-primary);
+      }
+
+      main {
+        width: min(100%, 720px);
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .page-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+
+      .back-button {
+        display: inline-grid;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        place-items: center;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .back-button:hover { background: var(--bg-button); }
+      .back-button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+
+      #history-list {
+        display: grid;
+        gap: 12px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .meeting-card,
+      .empty-state {
+        padding: 18px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--bg-elevated);
+        box-shadow: 0 6px 18px var(--shadow);
+      }
+
+      .meeting-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 1.4;
+      }
+
+      .meeting-date {
+        margin: 4px 0 16px;
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+
+      .files {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .action-button {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg-button);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .action-button:hover { filter: brightness(1.08); }
+      .delete-button { color: var(--accent-red); }
+      .empty-state { color: var(--text-secondary); }
     </style>
   </head>
   <body>
-    <h1>Historial de reuniones</h1>
-    <ul id="history-list"></ul>
+    <main>
+      <header class="page-header">
+        <button id="back-button" class="back-button" type="button" aria-label="Volver"></button>
+        <h1>Historial</h1>
+      </header>
+      <ul id="history-list"></ul>
+    </main>
     <script type="module" src="history.js"></script>
   </body>
 </html>

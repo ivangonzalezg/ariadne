@@ -1,5 +1,17 @@
 // src/history/history.js
+import { icon } from "../shared/icons.js";
+
 const listEl = document.getElementById("history-list");
+const backButton = document.getElementById("back-button");
+
+backButton.innerHTML = icon("chevron-left", { size: 18, color: "var(--text-secondary)" });
+backButton.addEventListener("click", () => {
+  if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    window.close();
+  }
+});
 
 function downloadFile(file, suggestedName) {
   const url = URL.createObjectURL(file);
@@ -35,11 +47,13 @@ async function renderMeetingFiles(container, folderName) {
     const file = await handle.getFile();
 
     const viewButton = document.createElement("button");
+    viewButton.className = "action-button";
     viewButton.textContent = `Ver ${name}`;
     viewButton.addEventListener("click", () => viewFile(file));
     container.appendChild(viewButton);
 
     const downloadButton = document.createElement("button");
+    downloadButton.className = "action-button";
     downloadButton.textContent = `Descargar ${name}`;
     downloadButton.addEventListener("click", () => downloadFile(file, `${folderName}/${name}`));
     container.appendChild(downloadButton);
@@ -66,22 +80,27 @@ function render(meetingHistory) {
   listEl.innerHTML = "";
 
   if (meetingHistory.length === 0) {
-    listEl.innerHTML = "<li>Todavía no hay reuniones grabadas.</li>";
+    listEl.innerHTML = '<li class="empty-state">Todavía no hay reuniones grabadas.</li>';
     return;
   }
 
   for (const meeting of meetingHistory) {
     const li = document.createElement("li");
+    li.className = "meeting-card";
     const date = new Date(meeting.startedAt).toLocaleString();
-    const flags = [meeting.hasTranscript ? "transcripción" : null, meeting.hasVideo ? "video" : null]
-      .filter(Boolean)
-      .join(", ");
 
-    const label = document.createElement("div");
-    label.textContent = `${date} — ${meeting.folderName}${flags ? ` (${flags})` : ""}`;
-    li.appendChild(label);
+    const title = document.createElement("h2");
+    title.className = "meeting-title";
+    title.textContent = meeting.meetingTitle || meeting.folderName;
+    li.appendChild(title);
+
+    const dateLabel = document.createElement("p");
+    dateLabel.className = "meeting-date";
+    dateLabel.textContent = date;
+    li.appendChild(dateLabel);
 
     const deleteButton = document.createElement("button");
+    deleteButton.className = "action-button delete-button";
     deleteButton.textContent = "Eliminar reunión";
     deleteButton.addEventListener("click", () => deleteMeeting(meeting.folderName));
     li.appendChild(deleteButton);
