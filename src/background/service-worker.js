@@ -32,7 +32,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "asterion:session-starting") {
     activeSessionTabIds.set(message.sessionId, sender.tab?.id ?? null);
     ensureOffscreenDocument().then(() => {
-      chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId: message.sessionId });
+      chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId: message.sessionId, meetingTitle: message.meetingTitle });
     });
   } else if (message.type === "asterion:session-finalized") {
     activeSessionTabIds.delete(message.sessionId);
@@ -45,6 +45,7 @@ function appendToHistory(meta) {
     meetingHistory.unshift({
       sessionId: meta.sessionId,
       folderName: meta.folderName,
+      meetingTitle: meta.meetingTitle,
       startedAt: meta.startedAt,
       hasTranscript: meta.hasTranscript,
       hasVideo: meta.hasVideo,

@@ -39,7 +39,10 @@ async function startRecording() {
   sessionId = generateSessionId();
   setState("starting");
 
-  chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId });
+  const meetingTitle = document.title && document.title.trim() && document.title.trim() !== "Meet"
+    ? document.title.trim()
+    : "Reunión sin título";
+  chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
 
   let isFirstMuteReport = true;
 

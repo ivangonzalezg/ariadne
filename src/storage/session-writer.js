@@ -6,9 +6,13 @@ const STREAM_FILE_NAMES = {
   video: "video-reunion.webm",
 };
 
-function meetingFolderName(startedAt) {
+function sanitizeForFolderName(text) {
+  return text.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80).trim() || "Reunión";
+}
+
+function meetingFolderName(startedAt, meetingTitle) {
   const iso = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
-  return `reunion-${iso}`;
+  return `${sanitizeForFolderName(meetingTitle)} — ${iso}`;
 }
 
 function formatTimestamp(ms) {
@@ -19,9 +23,10 @@ function formatTimestamp(ms) {
 }
 
 export class SessionWriter {
-  constructor({ sessionId, tabId }) {
+  constructor({ sessionId, tabId, meetingTitle }) {
     this.sessionId = sessionId;
     this.tabId = tabId;
+    this.meetingTitle = meetingTitle || "Reunión sin título";
     this.startedAt = Date.now();
     this.writablesByStream = new Map();
     this.writeQueueByStream = new Map();
@@ -33,7 +38,7 @@ export class SessionWriter {
 
   async _init() {
     const root = await navigator.storage.getDirectory();
-    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt), {
+    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt, this.meetingTitle), {
       create: true,
     });
   }
@@ -95,6 +100,7 @@ export class SessionWriter {
       JSON.stringify(
         {
           startedAt: this.startedAt,
+          meetingTitle: this.meetingTitle,
           hasTranscript: this.hasCaption,
           hasVideo: this.streamsUsed.has("video"),
           muteManifest,
@@ -110,6 +116,7 @@ export class SessionWriter {
       tabId: this.tabId,
       folderName: this.meetingHandle.name,
       startedAt: this.startedAt,
+      meetingTitle: this.meetingTitle,
       hasTranscript: this.hasCaption,
       hasVideo: this.streamsUsed.has("video"),
     };
