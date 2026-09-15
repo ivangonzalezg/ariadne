@@ -3420,6 +3420,77 @@ git commit -m "feat: redesign in-page banner per Pencil design with Shadow DOM i
 
 ---
 
+## Task 23: El banner sale sin fondo — `:root` no existe dentro de un Shadow DOM
+
+Bug real encontrado al probar el banner rediseñado (Task 21): sale sin fondo (transparente). Causa: `src/shared/theme.css` define las variables de color con el selector `:root`, pero `:root` solo matchea el elemento raíz del documento (`<html>`) — **no matchea nada dentro de un Shadow DOM**, que es donde vive el contenido del banner desde la Task 21. Como resultado, ninguna variable (`--bg`, `--text-primary`, etc.) queda definida dentro del banner, y todos los `var(--bg)` etc. caen al valor inicial (transparente).
+
+**Files:**
+- Modify: `src/shared/theme.css`
+
+- [ ] **Step 1: Cambiar `:root` por `:root, :host` en ambos bloques**
+
+```css
+:root, :host {
+  --bg: #1A1D24;
+  --bg-elevated: #232734;
+  --bg-button: #2B303C;
+  --text-primary: #F5F7FA;
+  --text-secondary: #8B93A7;
+  --text-muted: #6A7386;
+  --accent-blue: #3B82F6;
+  --accent-green: #22C55E;
+  --accent-red: #EF4444;
+  --toggle-off: #3A4050;
+  --border: #2C313C;
+  --shadow: #00000040;
+}
+
+@media (prefers-color-scheme: light) {
+  :root, :host {
+    --bg: #FFFFFF;
+    --bg-elevated: #F4F6F8;
+    --bg-button: #ECEFF3;
+    --text-primary: #1A1D24;
+    --text-secondary: #5B6472;
+    --text-muted: #8A93A3;
+    --accent-blue: #2563EB;
+    --accent-green: #16A34A;
+    --accent-red: #DC2626;
+    --toggle-off: #D5DAE2;
+    --border: #E6E8EE;
+    --shadow: #0F172A1F;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  font-family: "Inter", system-ui, sans-serif;
+}
+```
+
+(`:host` no hace nada fuera de un Shadow DOM, y `:root` no hace nada dentro de uno — combinarlos en la misma regla hace que el mismo archivo sirva para el popup/historial (documentos normales) y para el banner (Shadow DOM) sin duplicar el archivo.)
+
+- [ ] **Step 2: Build + tests**
+
+```bash
+npm test
+```
+
+Expected: 13/13 (este archivo no se bundlea ni tiene tests propios).
+
+- [ ] **Step 3: Manual verification**
+
+Recargar la extensión, entrar a una reunión, confirmar que el banner ahora sí tiene fondo (oscuro por defecto, claro si el sistema operativo está en modo claro) igual que el popup.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/shared/theme.css
+git commit -m "fix: define theme.css tokens on :host too so they apply inside the banner's Shadow DOM"
+```
+
+---
+
 ## Task 22: Restyle del historial
 
 **Files:**
