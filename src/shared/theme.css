@@ -1,4 +1,4 @@
-:root {
+:root, :host {
   --bg: #1A1D24;
   --bg-elevated: #232734;
   --bg-button: #2B303C;
@@ -14,7 +14,7 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root, :host {
     --bg: #FFFFFF;
     --bg-elevated: #F4F6F8;
     --bg-button: #ECEFF3;
