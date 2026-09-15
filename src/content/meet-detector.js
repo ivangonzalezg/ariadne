@@ -19,6 +19,11 @@ function postToMainWorld(message) {
 
 let sessionId = null;
 let currentState = "idle";
+let meetingTitle = null;
+let startedAt = null;
+let hasTranscript = false;
+let micMuted = true;
+let videoEnabled = false;
 let stopMuteObserver = () => {};
 let stopCaptionObserver = () => {};
 
@@ -39,9 +44,12 @@ async function startRecording() {
   sessionId = generateSessionId();
   setState("starting");
 
-  const meetingTitle = document.title && document.title.trim() && document.title.trim() !== "Meet"
+  meetingTitle = document.title && document.title.trim() && document.title.trim() !== "Meet"
     ? document.title.trim()
     : "Reunión sin título";
+  startedAt = Date.now();
+  hasTranscript = false;
+  videoEnabled = false;
   chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
 
   let isFirstMuteReport = true;
@@ -51,6 +59,7 @@ async function startRecording() {
   // estado real de mute ya conocido (el GainNode del mic necesita arrancar en
   // el valor correcto desde el primer instante, ver Task 13 del plan).
   stopMuteObserver = observeMuteState((muted, timestampMs) => {
+    micMuted = muted;
     if (isFirstMuteReport) {
       isFirstMuteReport = false;
       postToMainWorld({ type: "asterion:start-session", sessionId, initialMicMuted: muted });
@@ -63,6 +72,7 @@ async function startRecording() {
   });
 
   const cleanup = await enableCaptionsAndObserve((snapshot) => {
+    hasTranscript = true;
     chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
   });
   stopCaptionObserver = cleanup ?? (() => {});
@@ -94,6 +104,7 @@ window.addEventListener("message", (event) => {
       bufferBase64: arrayBufferToBase64(message.buffer),
     });
   } else if (message.type === "asterion:video-enabled") {
+    videoEnabled = true;
     setState("video-enabled");
   } else if (message.type === "asterion:video-enable-failed") {
     updateBannerState(currentState, { videoError: message.message });
@@ -104,6 +115,10 @@ window.addEventListener("message", (event) => {
       muteManifest: message.muteManifest,
     });
     sessionId = null;
+    meetingTitle = null;
+    startedAt = null;
+    hasTranscript = false;
+    videoEnabled = false;
     setState("idle");
     cleanupObservers();
   }
@@ -111,7 +126,15 @@ window.addEventListener("message", (event) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "asterion:get-status") {
-    sendResponse({ inMeeting: isInActiveMeeting(), state: currentState });
+    sendResponse({
+      inMeeting: isInActiveMeeting(),
+      state: currentState,
+      meetingTitle,
+      startedAt,
+      hasTranscript,
+      micMuted,
+      videoEnabled,
+    });
     return true;
   }
   if (message.type === "asterion:popup-start") {
