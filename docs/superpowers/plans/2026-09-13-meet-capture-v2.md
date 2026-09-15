@@ -3491,6 +3491,57 @@ git commit -m "fix: define theme.css tokens on :host too so they apply inside th
 
 ---
 
+## Task 24: El video grabado debe incluir audio (la misma mezcla ya existente)
+
+Pedido del usuario: hoy `video-reunion.webm` se graba sin audio (`getDisplayMedia({video: true, preferCurrentTab: true})` nunca pide audio). Debe incluir audio — pero no una captura nueva: la **misma pista ya mezclada** (audio de los demás participantes + voz propia, con el `GainNode` de mute ya aplicado) que ya alimenta el archivo de audio separado. Una pista de `MediaStreamTrack` puede agregarse a más de un `MediaStream` a la vez sin problema, así que alcanza con combinarla con la pista de video al armar el stream que graba el `MediaRecorder` de video.
+
+**Files:**
+- Modify: `src/webrtc-bootstrap/session.js`
+
+- [ ] **Step 1: Modify `enableVideo`** — combinar la pista de video de `displayStream` con la pista de audio de `this.mixer.stream`
+
+```js
+// src/webrtc-bootstrap/session.js
+  enableVideo(displayStream) {
+    if (this.videoRecorder) return;
+    this.videoStream = displayStream;
+
+    const videoTrack = displayStream.getVideoTracks()[0];
+    const audioTrack = this.mixer.stream.getAudioTracks()[0];
+    const recordedStream = new MediaStream(
+      audioTrack ? [videoTrack, audioTrack] : [videoTrack]
+    );
+
+    const { recorder, waitForPendingWrites } = this._startRecorder(recordedStream, "video", "video/webm");
+    this.videoRecorder = recorder;
+    this._videoWrites = waitForPendingWrites;
+  }
+```
+
+No cambia nada más del archivo — en particular, `stop()` sigue deteniendo las pistas de `this.videoStream` (que sigue siendo solo el stream de `getDisplayMedia`, sin la pista de audio agregada), así que detener el video no corta accidentalmente la pista de audio que sigue alimentando el archivo de audio combinado.
+
+- [ ] **Step 2: Build + tests**
+
+```bash
+npm run build:webrtc
+npm test
+```
+
+Expected: build limpio, 13/13.
+
+- [ ] **Step 3: Manual verification**
+
+Activar video durante una grabación real, hablar (propio y de otro participante), detener, y confirmar que `video-reunion.webm` tiene audio sincronizado con el video (no solo el archivo `audio-reunion.webm` por separado).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/webrtc-bootstrap/session.js
+git commit -m "feat: include the combined meeting+mic audio track in the recorded video file"
+```
+
+---
+
 ## Task 22: Restyle del historial
 
 **Files:**
