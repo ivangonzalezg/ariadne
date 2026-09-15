@@ -61,8 +61,14 @@ export class MainWorldSession {
   enableVideo(displayStream) {
     if (this.videoRecorder) return;
     this.videoStream = displayStream;
-    // Bug corregido: antes se forzaba "audio/webm" también para el stream de video.
-    const { recorder, waitForPendingWrites } = this._startRecorder(displayStream, "video", "video/webm");
+
+    const videoTrack = displayStream.getVideoTracks()[0];
+    const audioTrack = this.mixer.stream.getAudioTracks()[0];
+    const recordedStream = new MediaStream(
+      audioTrack ? [videoTrack, audioTrack] : [videoTrack]
+    );
+
+    const { recorder, waitForPendingWrites } = this._startRecorder(recordedStream, "video", "video/webm");
     this.videoRecorder = recorder;
     this._videoWrites = waitForPendingWrites;
   }
