@@ -43,7 +43,7 @@ function footer(autoStart) {
 function header() {
   return `<div class="header">
     <div class="brand">${icon("audio-lines", { size: 18, color: "var(--text-primary)" })}Asterion</div>
-    ${icon("settings", { size: 18, color: "var(--text-secondary)" })}
+    <span id="settings-link" role="button" tabindex="0" aria-label="Configuración" style="display:inline-flex;cursor:pointer">${icon("settings", { size: 18, color: "var(--text-secondary)" })}</span>
   </div>`;
 }
 
@@ -112,6 +112,9 @@ function wireFooter(autoStart) {
   });
   document.getElementById("history-link").addEventListener("click", () => {
     chrome.tabs.create({ url: chrome.runtime.getURL("src/history/history.html") });
+  });
+  document.getElementById("settings-link").addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("src/settings/settings.html") });
   });
 }
 

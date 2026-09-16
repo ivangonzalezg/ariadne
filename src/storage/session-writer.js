@@ -166,13 +166,16 @@ export class SessionWriter {
     }
 
     if (this.hasVideo) {
+      const { videoPreset } = globalThis.chrome
+        ? await chrome.storage.local.get({ videoPreset: "medium" })
+        : { videoPreset: "medium" };
       try {
         await this._convertStream({
           sourceFileName: STREAM_FILE_NAMES.video,
           targetFileName: "video-reunion.mp4",
           inputExt: "webm",
           outputExt: "mp4",
-          args: ["-fps_mode", "vfr"],
+          args: ["-fps_mode", "vfr", "-preset", videoPreset],
         });
         videoConversionStatus = "succeeded";
         hasVideoMp4 = true;

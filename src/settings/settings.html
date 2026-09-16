@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Asterion — Configuración</title>
+    <link rel="stylesheet" href="../shared/theme.css" />
+    <style>
+      body {
+        margin: 0;
+        min-width: 360px;
+        background: var(--bg);
+        color: var(--text-primary);
+      }
+
+      main {
+        width: min(100%, 720px);
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .page-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+
+      .back-button {
+        display: inline-grid;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        place-items: center;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .back-button:hover { background: var(--bg-button); }
+      .back-button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+
+      .setting-card {
+        padding: 18px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--bg-elevated);
+        box-shadow: 0 6px 18px var(--shadow);
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg-button);
+        color: var(--text-primary);
+        font-size: 14px;
+      }
+
+      .helper {
+        margin: 10px 0 0;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="page-header">
+        <button id="back-button" class="back-button" type="button" aria-label="Volver"></button>
+        <h1>Configuración</h1>
+      </header>
+      <section class="setting-card">
+        <label for="video-preset">Velocidad y calidad del video</label>
+        <select id="video-preset">
+          <option value="ultrafast">Ultrafast</option>
+          <option value="superfast">Superfast</option>
+          <option value="veryfast">Veryfast</option>
+          <option value="faster">Faster</option>
+          <option value="fast">Fast</option>
+          <option value="medium">Medium</option>
+          <option value="slow">Slow</option>
+          <option value="slower">Slower</option>
+          <option value="veryslow">Veryslow</option>
+        </select>
+        <p class="helper">Más rápido = menos calidad/compresión, más lento = mejor compresión.</p>
+      </section>
+    </main>
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>

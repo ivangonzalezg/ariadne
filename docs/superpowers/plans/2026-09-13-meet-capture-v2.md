@@ -4043,3 +4043,71 @@ Expected: todos los tests en verde, incluyendo los 13 ya existentes.
 git add src/offscreen/ffmpeg-client.test.js src/storage/session-writer.test.js
 git commit -m "test: cover the ffmpeg job queue and the finalize/conversion control flow"
 ```
+
+---
+
+## Task 31: Pantalla de configuración — preset de velocidad/calidad del video (MP4)
+
+Nota post-implementación de Tasks 25-30: probando en real, la conversión de video con `-fps_mode vfr` (fix aplicado fuera de este plan, commit `ba31845`) sigue usando el preset por defecto de `libx264` (`medium`, sin especificar `-preset`). Para una reunión con mucho movimiento en pantalla esto puede tardar bastante (visto en pruebas: ~0.5x de velocidad respecto a la duración real del contenido cambiante). El usuario pidió hacer esto configurable: agregar una pantalla de "Configuración" (el ícono de engranaje del popup existe pero hoy es un SVG inerte, sin `id` ni listener — ver `src/popup/popup.js`, función `header()`) con un selector del preset de `libx264` a usar (`ultrafast`/`superfast`/`veryfast`/`faster`/`fast`/`medium`/`slow`/`slower`/`veryslow` — trade-off velocidad vs. compresión/calidad, por defecto `medium`, que es el mismo default que usa la librería si no se especifica `-preset`). El valor debe poder cambiarse **incluso durante una grabación en curso**, y la conversión debe usar el valor vigente **en el momento de ejecutarse** (no el que estaba al iniciar la grabación) — como la conversión ya corre como paso separado en segundo plano después de `finalize()` (Task 29), alcanza con leer `chrome.storage.local` justo antes de lanzar el job de ffmpeg, sin necesidad de pasar el valor por ningún mensaje de sesión.
+
+**Files:**
+- Create: `src/settings/settings.html`
+- Create: `src/settings/settings.js`
+- Modify: `src/popup/popup.js`
+- Modify: `src/storage/session-writer.js`
+- Modify: `manifest.json`
+
+- [ ] **Step 1: Create `src/settings/settings.html`** — página standalone siguiendo exactamente el mismo patrón que `src/history/history.html` (su propio `<html>/<head>/<body>`, carga `../shared/theme.css`, header con botón "← Configuración" que hace `history.back()`/`window.close()` igual que el de historial). Contenido: un `<select>` (o grupo de botones tipo radio, lo que mejor encaje con el lenguaje visual ya definido en `theme.css`) con las 9 opciones de preset, y una etiqueta/descripción corta aclarando el trade-off ("Más rápido = menos calidad/compresión, más lento = mejor compresión").
+
+- [ ] **Step 2: Create `src/settings/settings.js`** — al cargar, lee `chrome.storage.local.get({ videoPreset: "medium" })` y refleja el valor actual en el selector; al cambiar la selección, `chrome.storage.local.set({ videoPreset: <nuevo valor> })` inmediatamente (sin botón de "Guardar" — mismo espíritu que `autoStart` en el popup, que se guarda al toque). Seguir el patrón de imports/estructura de `src/history/history.js` (import de `icon` desde `../shared/icons.js` para el botón de volver, etc.).
+
+- [ ] **Step 3: Modify `src/popup/popup.js`** — conectar el ícono de engranaje existente. En la función `header()`, envolver el ícono de settings en un elemento con `id="settings-link"` (por ejemplo un `<button>` sin estilo propio o un `<span>`, consistente con cómo está armado `history-link`), y agregar el listener (junto a donde ya se conecta `history-link`):
+
+```js
+document.getElementById("settings-link").addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("src/settings/settings.html") });
+});
+```
+
+- [ ] **Step 4: Modify `src/storage/session-writer.js`** — en `scheduleConversions()`, justo antes de la llamada a `_convertStream` del video, leer el preset vigente y agregarlo a los `args`:
+
+```js
+// dentro de scheduleConversions(), antes del bloque `if (this.hasVideo) { ... }`
+const { videoPreset } = await chrome.storage.local.get({ videoPreset: "medium" });
+```
+
+y pasarlo en la llamada:
+
+```js
+await this._convertStream({
+  sourceFileName: STREAM_FILE_NAMES.video,
+  targetFileName: "video-reunion.mp4",
+  inputExt: "webm",
+  outputExt: "mp4",
+  args: ["-fps_mode", "vfr", "-preset", videoPreset],
+});
+```
+
+(`SessionWriter` corre dentro del offscreen document, que es una página de extensión con acceso completo a `chrome.storage` — no hace falta pasar el valor por ningún mensaje.)
+
+- [ ] **Step 5: Modify `manifest.json`** — agregar `src/settings/settings.html` como página accesible; como se abre igual que `history.html` (vía `chrome.tabs.create` + `chrome.runtime.getURL`, no como recurso web accesible a otro origen), **no** hace falta tocar `web_accessible_resources` — confirmar que no se necesita ningún cambio de manifest más allá de que el archivo exista físicamente en el paquete de la extensión (Chrome sirve cualquier archivo del paquete en `chrome-extension://<id>/...` sin declaración extra, salvo que deba ser accedido desde un origen externo).
+
+- [ ] **Step 6: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 18/18 tests siguen pasando (no hay tests nuevos automatizados para esto — la UI y la lectura de `chrome.storage` en tiempo de conversión requieren verificación manual).
+
+- [ ] **Step 7: Manual verification**
+
+Abrir el popup, click en el engranaje, confirmar que abre la pantalla de configuración en una pestaña nueva con el preset actual (`medium` por defecto) seleccionado. Cambiarlo a `ultrafast`, iniciar una grabación con video, y **mientras graba** volver a configuración y cambiarlo a `veryslow`. Detener la grabación y confirmar en la consola del offscreen document (log `[Asterion ffmpeg:core]`) que el comando de ffmpeg para el video incluye `-preset veryslow` (el valor vigente al momento de la conversión, no el que estaba al iniciar). Confirmar también que con `ultrafast` la conversión es notablemente más rápida que con `medium`/`veryslow` (a costa de un archivo más pesado/con menos compresión).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/settings/settings.html src/settings/settings.js src/popup/popup.js src/storage/session-writer.js
+git commit -m "feat: add a settings screen to configure the video encode preset (speed vs. compression trade-off)"
+```
