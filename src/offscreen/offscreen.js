@@ -22,6 +22,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   } else if (message.type === "asterion:session-ended") {
     const writer = sessions.get(message.sessionId);
     if (!writer) return;
+    writer.onConversionsFinished = () => sessions.delete(message.sessionId);
     writer
       .finalize({ muteManifest: message.muteManifest })
       .then((meta) => {
@@ -29,8 +30,6 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       })
       .catch((error) => {
         console.error("[Asterion] Error finalizando la sesión:", error);
-      })
-      .finally(() => {
         sessions.delete(message.sessionId);
       });
   }

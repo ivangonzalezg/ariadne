@@ -1,5 +1,6 @@
 // src/storage/session-writer.js
 import { CaptionParser } from "../lib/caption-parser.js";
+import { runFfmpegJob } from "../offscreen/ffmpeg-client.js";
 
 const STREAM_FILE_NAMES = {
   meeting: "audio-reunion.webm",
@@ -94,22 +95,17 @@ export class SessionWriter {
       await writable.close();
     }
 
-    const manifestHandle = await this.meetingHandle.getFileHandle("manifest.json", { create: true });
-    const manifestWritable = await manifestHandle.createWritable();
-    await manifestWritable.write(
-      JSON.stringify(
-        {
-          startedAt: this.startedAt,
-          meetingTitle: this.meetingTitle,
-          hasTranscript: this.hasCaption,
-          hasVideo: this.streamsUsed.has("video"),
-          muteManifest,
-        },
-        null,
-        2
-      )
-    );
-    await manifestWritable.close();
+    this.hasVideo = this.streamsUsed.has("video");
+    await this._writeManifest({
+      muteManifest,
+      audioConversionStatus: this.streamsUsed.has("meeting") ? "pending" : "skipped",
+      videoConversionStatus: this.hasVideo ? "pending" : "skipped",
+    });
+
+    // No se espera esta promesa — la sesión ya se considera "finalizada" con los
+    // webm originales a salvo; la conversión sigue en segundo plano y actualiza
+    // el manifest cuando termina (éxito o fallo).
+    this.scheduleConversions(muteManifest);
 
     return {
       sessionId: this.sessionId,
@@ -118,7 +114,86 @@ export class SessionWriter {
       startedAt: this.startedAt,
       meetingTitle: this.meetingTitle,
       hasTranscript: this.hasCaption,
-      hasVideo: this.streamsUsed.has("video"),
+      hasVideo: this.hasVideo,
     };
+  }
+
+  async _writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 }) {
+    const manifestHandle = await this.meetingHandle.getFileHandle("manifest.json", { create: true });
+    const manifestWritable = await manifestHandle.createWritable();
+    await manifestWritable.write(
+      JSON.stringify(
+        {
+          startedAt: this.startedAt,
+          meetingTitle: this.meetingTitle,
+          hasTranscript: this.hasCaption,
+          hasVideo: this.hasVideo,
+          muteManifest,
+          audioConversionStatus,
+          videoConversionStatus,
+          hasAudioMp3: hasAudioMp3 ?? false,
+          hasVideoMp4: hasVideoMp4 ?? false,
+        },
+        null,
+        2
+      )
+    );
+    await manifestWritable.close();
+  }
+
+  async scheduleConversions(muteManifest) {
+    let audioConversionStatus = this.streamsUsed.has("meeting") ? "pending" : "skipped";
+    let videoConversionStatus = this.hasVideo ? "pending" : "skipped";
+    let hasAudioMp3 = false;
+    let hasVideoMp4 = false;
+
+    if (this.streamsUsed.has("meeting")) {
+      try {
+        await this._convertStream({
+          sourceFileName: STREAM_FILE_NAMES.meeting,
+          targetFileName: "audio-reunion.mp3",
+          inputExt: "webm",
+          outputExt: "mp3",
+          args: ["-vn"],
+        });
+        audioConversionStatus = "succeeded";
+        hasAudioMp3 = true;
+      } catch (error) {
+        console.error("[Asterion] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
+        audioConversionStatus = "failed";
+      }
+      await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
+    }
+
+    if (this.hasVideo) {
+      try {
+        await this._convertStream({
+          sourceFileName: STREAM_FILE_NAMES.video,
+          targetFileName: "video-reunion.mp4",
+          inputExt: "webm",
+          outputExt: "mp4",
+          args: [],
+        });
+        videoConversionStatus = "succeeded";
+        hasVideoMp4 = true;
+      } catch (error) {
+        console.error("[Asterion] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
+        videoConversionStatus = "failed";
+      }
+      await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
+    }
+
+    this.onConversionsFinished?.();
+  }
+
+  async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args }) {
+    const sourceHandle = await this.meetingHandle.getFileHandle(sourceFileName);
+    const sourceFile = await sourceHandle.getFile();
+    const inputBytes = new Uint8Array(await sourceFile.arrayBuffer());
+    const outputBytes = await runFfmpegJob({ inputBytes, inputExt, outputExt, args });
+    const targetHandle = await this.meetingHandle.getFileHandle(targetFileName, { create: true });
+    const targetWritable = await targetHandle.createWritable();
+    await targetWritable.write(outputBytes);
+    await targetWritable.close();
   }
 }
