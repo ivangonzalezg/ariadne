@@ -8,6 +8,12 @@ let queueTail = Promise.resolve();
 async function getFfmpeg() {
   if (!ffmpegInstance) {
     ffmpegInstance = new FFmpeg();
+    ffmpegInstance.on("log", ({ type, message }) => {
+      console.log(`[Asterion ffmpeg:core] ${type}: ${message}`);
+    });
+    ffmpegInstance.on("progress", ({ progress, time }) => {
+      console.log(`[Asterion ffmpeg:core] progress=${progress} time=${time}`);
+    });
   }
   if (!loadPromise) {
     loadPromise = ffmpegInstance.load({

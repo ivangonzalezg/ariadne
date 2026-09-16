@@ -10,6 +10,8 @@ const ffmpegState = vi.hoisted(() => ({
 
 vi.mock("@ffmpeg/ffmpeg", () => ({
   FFmpeg: class {
+    on() {}
+
     async load(config) {
       ffmpegState.loadConfig = config;
     }
