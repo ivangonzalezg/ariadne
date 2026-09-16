@@ -166,13 +166,22 @@ window.addEventListener("pagehide", () => {
 });
 
 function waitForMeeting() {
+  const onMeetingDetected = () => {
+    chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
+      showBanner({ onStart: startRecording, onStop: stopRecording });
+      if (autoStart) startRecording();
+    });
+  };
+
+  if (isInActiveMeeting()) {
+    onMeetingDetected();
+    return;
+  }
+
   const observer = new MutationObserver(() => {
     if (isInActiveMeeting()) {
       observer.disconnect();
-      chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
-        showBanner({ onStart: startRecording, onStop: stopRecording });
-        if (autoStart) startRecording();
-      });
+      onMeetingDetected();
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
