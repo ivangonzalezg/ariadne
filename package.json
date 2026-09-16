@@ -8,7 +8,8 @@
     "build:content": "esbuild src/content/meet-detector.js --bundle --outfile=dist/content.bundle.js",
     "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
     "copy:ffmpeg": "node scripts/copy-ffmpeg-core.js",
-    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg"
+    "build:offscreen": "esbuild src/offscreen/offscreen.js --bundle --format=esm --outfile=dist/offscreen.bundle.js",
+    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
