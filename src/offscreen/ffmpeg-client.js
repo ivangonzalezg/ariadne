@@ -11,6 +11,7 @@ async function getFfmpeg() {
   }
   if (!loadPromise) {
     loadPromise = ffmpegInstance.load({
+      classWorkerURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-worker.js"),
       coreURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-core.js"),
       wasmURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-core.wasm"),
     });

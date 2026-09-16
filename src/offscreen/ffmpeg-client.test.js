@@ -5,11 +5,14 @@ const ffmpegState = vi.hoisted(() => ({
   activeExecutions: 0,
   maximumConcurrentExecutions: 0,
   execResolvers: [],
+  loadConfig: null,
 }));
 
 vi.mock("@ffmpeg/ffmpeg", () => ({
   FFmpeg: class {
-    async load() {}
+    async load(config) {
+      ffmpegState.loadConfig = config;
+    }
 
     async writeFile() {}
 
@@ -45,6 +48,7 @@ describe("runFfmpegJob", () => {
     ffmpegState.activeExecutions = 0;
     ffmpegState.maximumConcurrentExecutions = 0;
     ffmpegState.execResolvers = [];
+    ffmpegState.loadConfig = null;
     globalThis.chrome = { runtime: { getURL: (path) => path } };
   });
 
@@ -77,5 +81,10 @@ describe("runFfmpegJob", () => {
 
     expect(ffmpegState.events).toEqual(["enter", "exit", "enter", "exit"]);
     expect(ffmpegState.maximumConcurrentExecutions).toBe(1);
+    expect(ffmpegState.loadConfig).toEqual({
+      classWorkerURL: "dist/ffmpeg/ffmpeg-worker.js",
+      coreURL: "dist/ffmpeg/ffmpeg-core.js",
+      wasmURL: "dist/ffmpeg/ffmpeg-core.wasm",
+    });
   });
 });

@@ -1,17 +1,21 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
 
-const SRC_DIR = "node_modules/@ffmpeg/core/dist/esm";
 const DEST_DIR = "dist/ffmpeg";
-const FILES = ["ffmpeg-core.js", "ffmpeg-core.wasm"];
+const FILES = [
+  { source: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js", destination: "ffmpeg-core.js" },
+  { source: "node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm", destination: "ffmpeg-core.wasm" },
+  { source: "node_modules/@ffmpeg/ffmpeg/dist/esm/worker.js", destination: "ffmpeg-worker.js" },
+  { source: "node_modules/@ffmpeg/ffmpeg/dist/esm/const.js", destination: "const.js" },
+  { source: "node_modules/@ffmpeg/ffmpeg/dist/esm/errors.js", destination: "errors.js" },
+];
 
 await mkdir(DEST_DIR, { recursive: true });
-for (const file of FILES) {
-  const src = `${SRC_DIR}/${file}`;
+for (const { source: src, destination } of FILES) {
   if (!existsSync(src)) {
-    throw new Error(`No se encontró ${src} — revisar el layout real de node_modules/@ffmpeg/core/dist`);
+    throw new Error(`No se encontró ${src} — revisar el layout real de node_modules/@ffmpeg`);
   }
-  await copyFile(src, `${DEST_DIR}/${file}`);
+  await copyFile(src, `${DEST_DIR}/${destination}`);
 }
 
-console.log(`Copiados ${FILES.length} archivos de ffmpeg-core a ${DEST_DIR}/`);
+console.log(`Copiados ${FILES.length} archivos de ffmpeg a ${DEST_DIR}/`);
