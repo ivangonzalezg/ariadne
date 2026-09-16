@@ -7,12 +7,18 @@
     "test": "vitest run",
     "build:content": "esbuild src/content/meet-detector.js --bundle --outfile=dist/content.bundle.js",
     "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
-    "build": "npm run build:content && npm run build:webrtc"
+    "copy:ffmpeg": "node scripts/copy-ffmpeg-core.js",
+    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
     "jsdom": "^25.0.0",
     "lucide-static": "^1.46.0",
     "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@ffmpeg/util": "0.12.2"
   }
 }

@@ -1,2 +1,3 @@
 node_modules/
+# dist/ incluye dist/ffmpeg/ (binarios de ffmpeg-core copiados en build-time, nunca committeados)
 dist/

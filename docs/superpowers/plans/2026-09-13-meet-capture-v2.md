@@ -3568,3 +3568,478 @@ Abrir el historial con reuniones ya grabadas, confirmar que el título mostrado 
 git add src/history/history.html src/history/history.js
 git commit -m "feat: restyle history view to match Pencil design and show real meeting titles"
 ```
+
+---
+
+## Task 25: Dependencias de ffmpeg + copia de los binarios en build-time (sin comprometerlos a git)
+
+Vamos a producir MP3/MP4 reales de la reunión (audio y video), igual que hace Fireflies (confirmado inspeccionando su extensión instalada: usa `@ffmpeg/ffmpeg` + `@ffmpeg/core` reales, no un truco liviano). Los binarios de `ffmpeg-core` (~24-31MB) nunca deben comprometerse a git: llegan a `node_modules` vía `npm install` normal (ya gitignoreado) y un script de build los copia a `dist/ffmpeg/` (dentro de `dist/`, también gitignoreado).
+
+**Files:**
+- Modify: `package.json`
+- Create: `scripts/copy-ffmpeg-core.js`
+- Modify: `.gitignore`
+
+- [ ] **Step 1: Instalar dependencias** — `@ffmpeg/ffmpeg`, `@ffmpeg/util`, `@ffmpeg/core` (pinear versiones exactas de la línea 0.12.x estable actual; usar `@ffmpeg/core` single-thread, **nunca** `@ffmpeg/core-mt` — el multi-hilo requiere `SharedArrayBuffer` + `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy`, inviable en una página `chrome-extension://`)
+
+```bash
+npm install @ffmpeg/ffmpeg @ffmpeg/util @ffmpeg/core
+```
+
+- [ ] **Step 2: Create `scripts/copy-ffmpeg-core.js`** — script Node sin red, copia los archivos ya descargados por npm hacia `dist/ffmpeg/`
+
+```js
+// scripts/copy-ffmpeg-core.js
+import { mkdir, copyFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+
+const SRC_DIR = "node_modules/@ffmpeg/core/dist/esm";
+const DEST_DIR = "dist/ffmpeg";
+const FILES = ["ffmpeg-core.js", "ffmpeg-core.wasm"];
+
+await mkdir(DEST_DIR, { recursive: true });
+for (const file of FILES) {
+  const src = `${SRC_DIR}/${file}`;
+  if (!existsSync(src)) {
+    throw new Error(`No se encontró ${src} — revisar el layout real de node_modules/@ffmpeg/core/dist`);
+  }
+  await copyFile(src, `${DEST_DIR}/${file}`);
+}
+console.log(`Copiados ${FILES.length} archivos de ffmpeg-core a ${DEST_DIR}/`);
+```
+
+Antes de dar este paso por terminado, verificar el layout real de `node_modules/@ffmpeg/core/dist/` (puede ser `esm/` o `umd/` según la versión instalada) y ajustar `SRC_DIR` — no asumir la ruta de memoria.
+
+- [ ] **Step 3: Modify `package.json`** — nuevo script `copy:ffmpeg`, agregado a la cadena de `build`
+
+```json
+"scripts": {
+  "test": "vitest run",
+  "build:content": "esbuild src/content/meet-detector.js --bundle --outfile=dist/content.bundle.js",
+  "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
+  "copy:ffmpeg": "node scripts/copy-ffmpeg-core.js",
+  "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg"
+}
+```
+
+(El target `build:offscreen` de la Task 27 se agrega después, al final de esta misma cadena.)
+
+- [ ] **Step 4: Modify `.gitignore`** — comentario aclaratorio (el binario ya queda cubierto por `dist/`, esto es solo para que quede explícito que es deliberado)
+
+```
+node_modules/
+dist/ # incluye dist/ffmpeg/ (binarios de ffmpeg-core copiados en build-time, nunca committeados)
+```
+
+- [ ] **Step 5: Verificación**
+
+```bash
+npm install
+npm run build
+ls dist/ffmpeg/
+```
+
+Expected: `ffmpeg-core.js` y `ffmpeg-core.wasm` presentes en `dist/ffmpeg/`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add package.json package-lock.json scripts/copy-ffmpeg-core.js .gitignore
+git commit -m "build: add ffmpeg.wasm dependencies with a build-time copy step (no binaries committed)"
+```
+
+---
+
+## Task 26: CSP de la extensión para permitir WASM en el offscreen document
+
+`ffmpeg.wasm` necesita instanciar WebAssembly, y el CSP default de Manifest V3 (`script-src 'self'; object-src 'self'`) no lo permite. Hay que agregar `'wasm-unsafe-eval'` explícitamente — es la única relajación que Chrome permite para `extension_pages` en este caso.
+
+**Files:**
+- Modify: `manifest.json`
+
+- [ ] **Step 1: Modify `manifest.json`** — agregar la clave `content_security_policy` (no existe hoy)
+
+```json
+{
+  "manifest_version": 3,
+  "name": "Asterion — Captura de Reuniones",
+  "version": "0.1.0",
+  "description": "Captura local automática de transcripción, audio y video de reuniones de Google Meet.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "offscreen", "scripting", "unlimitedStorage", "downloads"],
+  "host_permissions": ["https://meet.google.com/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/shared/theme.css"],
+      "matches": ["https://meet.google.com/*"]
+    }
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["dist/webrtc-bootstrap.bundle.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["dist/content.bundle.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html"
+  }
+}
+```
+
+No se toca `web_accessible_resources` — los archivos de `ffmpeg-core` se consumen desde el propio origen del offscreen document (`chrome-extension://<id>/dist/ffmpeg/...`) vía `chrome.runtime.getURL`, no necesitan exponerse a otro origen (eso solo aplica para recursos que un origen externo, como `meet.google.com`, necesite cargar).
+
+- [ ] **Step 2: Verificación**
+
+Cargar la extensión sin empaquetar en `chrome://extensions` (modo desarrollador) y confirmar que no aparece ningún error de manifest inválido.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add manifest.json
+git commit -m "fix: allow wasm-unsafe-eval on extension pages for ffmpeg.wasm"
+```
+
+---
+
+## Task 27: Build (bundling) del offscreen document
+
+Hoy `offscreen.js` se carga como módulo ES nativo sin bundling (`<script type="module" src="offscreen.js">`). Los paquetes de ffmpeg.wasm son dependencias de `node_modules` con su propio grafo de imports — hace falta bundlearlos con esbuild como ya se hace con `content.bundle.js`/`webrtc-bootstrap.bundle.js`.
+
+**Files:**
+- Modify: `package.json`
+- Modify: `src/offscreen/offscreen.html`
+
+- [ ] **Step 1: Modify `package.json`** — nuevo script `build:offscreen`, agregado al final de la cadena de `build`
+
+```json
+"scripts": {
+  "test": "vitest run",
+  "build:content": "esbuild src/content/meet-detector.js --bundle --outfile=dist/content.bundle.js",
+  "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
+  "build:offscreen": "esbuild src/offscreen/offscreen.js --bundle --format=esm --outfile=dist/offscreen.bundle.js",
+  "copy:ffmpeg": "node scripts/copy-ffmpeg-core.js",
+  "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen"
+}
+```
+
+- [ ] **Step 2: Modify `src/offscreen/offscreen.html`** — apuntar al bundle en vez del módulo nativo
+
+```html
+<!-- src/offscreen/offscreen.html -->
+<script type="module" src="../../dist/offscreen.bundle.js"></script>
+```
+
+- [ ] **Step 3: Build + smoke test manual**
+
+```bash
+npm run build
+```
+
+Expected: `dist/offscreen.bundle.js` generado sin errores. Recargar la extensión y abrir la consola del offscreen document (`chrome://extensions` → detalles de Asterion → "Inspeccionar vistas" → offscreen.html) para confirmar que no hay errores de carga de módulo. Prestar atención especial a que esbuild no rompa el patrón interno de `new Worker(...)`/`new URL(..., import.meta.url)` que usa `@ffmpeg/ffmpeg` — es un riesgo conocido de bundling con paquetes que instancian Workers dinámicamente, requiere verificación manual, no solo que el build no tire error.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add package.json src/offscreen/offscreen.html
+git commit -m "build: bundle the offscreen document with esbuild"
+```
+
+---
+
+## Task 28: Cliente/cola global de ffmpeg en el offscreen document
+
+`ffmpeg.wasm` no es reentrante (un worker, un filesystem virtual interno) — no se pueden correr dos `exec()` en simultáneo sobre la misma instancia. Este módulo centraliza una única instancia de `FFmpeg`, cargada una sola vez, con una cola FIFO para serializar los trabajos.
+
+**Files:**
+- Create: `src/offscreen/ffmpeg-client.js`
+
+- [ ] **Step 1: Create `src/offscreen/ffmpeg-client.js`**
+
+```js
+// src/offscreen/ffmpeg-client.js
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+
+let ffmpegInstance = null;
+let loadPromise = null;
+let queueTail = Promise.resolve();
+
+async function getFfmpeg() {
+  if (!ffmpegInstance) {
+    ffmpegInstance = new FFmpeg();
+  }
+  if (!loadPromise) {
+    loadPromise = ffmpegInstance.load({
+      coreURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-core.js"),
+      wasmURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-core.wasm"),
+    });
+  }
+  await loadPromise;
+  return ffmpegInstance;
+}
+
+let jobCounter = 0;
+
+// Encola el trabajo detrás de cualquier otro ya en curso — nunca se corren dos
+// exec() en simultáneo sobre la misma instancia de ffmpeg.
+export function runFfmpegJob({ inputBytes, inputExt, outputExt, args }) {
+  const result = queueTail.then(() => _runJob({ inputBytes, inputExt, outputExt, args }));
+  // Si este job falla, la cola debe seguir viva para el siguiente — no propagar el
+  // rechazo hacia queueTail.
+  queueTail = result.catch(() => {});
+  return result;
+}
+
+async function _runJob({ inputBytes, inputExt, outputExt, args }) {
+  const jobId = ++jobCounter;
+  const inputName = `input_${jobId}.${inputExt}`;
+  const outputName = `output_${jobId}.${outputExt}`;
+  const startedAt = Date.now();
+  console.log(`[Asterion ffmpeg] job ${jobId}: iniciando (${inputBytes.byteLength} bytes de entrada)`);
+
+  const ffmpeg = await getFfmpeg();
+  try {
+    await ffmpeg.writeFile(inputName, inputBytes);
+    await ffmpeg.exec(["-i", inputName, ...args, outputName]);
+    const outputData = await ffmpeg.readFile(outputName);
+    if (!outputData || outputData.byteLength === 0) {
+      throw new Error("ffmpeg produjo un archivo de salida vacío");
+    }
+    console.log(
+      `[Asterion ffmpeg] job ${jobId}: terminado en ${Date.now() - startedAt}ms (${outputData.byteLength} bytes de salida)`
+    );
+    return outputData;
+  } finally {
+    await ffmpeg.deleteFile(inputName).catch(() => {});
+    await ffmpeg.deleteFile(outputName).catch(() => {});
+  }
+}
+```
+
+No se agrega ningún timeout que cancele el job — solo logging informativo de tiempos y tamaños, por decisión explícita del usuario de no limitar el cómputo que haga falta.
+
+- [ ] **Step 2: Verificación manual**
+
+No depende de OPFS ni de una reunión real. Cargar la extensión, abrir la consola del offscreen document, e invocar `runFfmpegJob` manualmente con un archivo webm pequeño de prueba (por ejemplo, uno ya grabado en `dist/` o un fixture) para confirmar que produce una salida válida antes de integrarlo con `SessionWriter` en la Task 29.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/offscreen/ffmpeg-client.js
+git commit -m "feat: add a serialized ffmpeg.wasm job queue for the offscreen document"
+```
+
+---
+
+## Task 29: Integrar la conversión de audio/video en `SessionWriter`
+
+`finalize()` no debe esperar a que termine la conversión — un video de varias horas puede tardar mucho más que la propia reunión en transcodificarse. Los webm originales quedan disponibles de inmediato (la sesión se marca "finalizada" ahí); la conversión a MP3/MP4 corre como trabajo de fondo, secuencial (primero audio, después video, nunca en paralelo — ambos comparten la única cola de `ffmpeg-client`), y actualiza `manifest.json` cuando termina. El webm original nunca se borra, sin importar el resultado.
+
+**Files:**
+- Modify: `src/storage/session-writer.js`
+- Modify: `src/offscreen/offscreen.js`
+
+- [ ] **Step 1: Modify `finalize()` en `session-writer.js`** — el manifest inicial incluye el estado de conversión "pending", y se dispara `scheduleConversions()` sin esperarlo
+
+```js
+// src/storage/session-writer.js
+  async finalize({ muteManifest }) {
+    await this.ready;
+    this.captionParser.finalizeCurrent(Date.now());
+
+    await Promise.all(this.writeQueueByStream.values());
+
+    for (const writable of this.writablesByStream.values()) {
+      await writable.close();
+    }
+
+    if (this.hasCaption) {
+      const transcriptText = this.captionParser.finishedSegments
+        .map((segment) => `[${formatTimestamp(segment.startMs)}] [${segment.speaker}] ${segment.text}`)
+        .join("\n");
+      const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.txt", { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(transcriptText);
+      await writable.close();
+    }
+
+    this.hasVideo = this.streamsUsed.has("video");
+    await this._writeManifest({
+      muteManifest,
+      audioConversionStatus: this.streamsUsed.has("meeting") ? "pending" : "skipped",
+      videoConversionStatus: this.hasVideo ? "pending" : "skipped",
+    });
+
+    // No se espera esta promesa — la sesión ya se considera "finalizada" con los
+    // webm originales a salvo; la conversión sigue en segundo plano y actualiza
+    // el manifest cuando termina (éxito o fallo).
+    this.scheduleConversions(muteManifest);
+
+    return {
+      sessionId: this.sessionId,
+      tabId: this.tabId,
+      folderName: this.meetingHandle.name,
+      startedAt: this.startedAt,
+      meetingTitle: this.meetingTitle,
+      hasTranscript: this.hasCaption,
+      hasVideo: this.hasVideo,
+    };
+  }
+
+  async _writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 }) {
+    const manifestHandle = await this.meetingHandle.getFileHandle("manifest.json", { create: true });
+    const manifestWritable = await manifestHandle.createWritable();
+    await manifestWritable.write(
+      JSON.stringify(
+        {
+          startedAt: this.startedAt,
+          meetingTitle: this.meetingTitle,
+          hasTranscript: this.hasCaption,
+          hasVideo: this.hasVideo,
+          muteManifest,
+          audioConversionStatus,
+          videoConversionStatus,
+          hasAudioMp3: hasAudioMp3 ?? false,
+          hasVideoMp4: hasVideoMp4 ?? false,
+        },
+        null,
+        2
+      )
+    );
+    await manifestWritable.close();
+  }
+
+  async scheduleConversions(muteManifest) {
+    let audioConversionStatus = this.streamsUsed.has("meeting") ? "pending" : "skipped";
+    let videoConversionStatus = this.hasVideo ? "pending" : "skipped";
+    let hasAudioMp3 = false;
+    let hasVideoMp4 = false;
+
+    if (this.streamsUsed.has("meeting")) {
+      try {
+        await this._convertStream({
+          sourceFileName: STREAM_FILE_NAMES.meeting,
+          targetFileName: "audio-reunion.mp3",
+          inputExt: "webm",
+          outputExt: "mp3",
+          args: ["-vn"],
+        });
+        audioConversionStatus = "succeeded";
+        hasAudioMp3 = true;
+      } catch (error) {
+        console.error("[Asterion] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
+        audioConversionStatus = "failed";
+      }
+      await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
+    }
+
+    if (this.hasVideo) {
+      try {
+        await this._convertStream({
+          sourceFileName: STREAM_FILE_NAMES.video,
+          targetFileName: "video-reunion.mp4",
+          inputExt: "webm",
+          outputExt: "mp4",
+          args: [],
+        });
+        videoConversionStatus = "succeeded";
+        hasVideoMp4 = true;
+      } catch (error) {
+        console.error("[Asterion] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
+        videoConversionStatus = "failed";
+      }
+      await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
+    }
+
+    this.onConversionsFinished?.();
+  }
+
+  async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args }) {
+    const sourceHandle = await this.meetingHandle.getFileHandle(sourceFileName);
+    const sourceFile = await sourceHandle.getFile();
+    const inputBytes = new Uint8Array(await sourceFile.arrayBuffer());
+    const outputBytes = await runFfmpegJob({ inputBytes, inputExt, outputExt, args });
+    const targetHandle = await this.meetingHandle.getFileHandle(targetFileName, { create: true });
+    const targetWritable = await targetHandle.createWritable();
+    await targetWritable.write(outputBytes);
+    await targetWritable.close();
+  }
+```
+
+Agregar el import correspondiente: `import { runFfmpegJob } from "../offscreen/ffmpeg-client.js";`. Nunca se borra `audio-reunion.webm` ni `video-reunion.webm` en ningún punto de este flujo, pase lo que pase con la conversión.
+
+- [ ] **Step 2: Modify `offscreen.js`** — no eliminar la sesión del `Map` hasta que `scheduleConversions()` termine
+
+```js
+// src/offscreen/offscreen.js (fragmento del handler de "asterion:session-ended")
+} else if (message.type === "asterion:session-ended") {
+  const writer = sessions.get(message.sessionId);
+  if (writer) {
+    const result = await writer.finalize({ muteManifest: message.muteManifest });
+    chrome.runtime.sendMessage({ type: "asterion:session-finalized", ...result });
+    // No se borra la entrada de `sessions` todavía: scheduleConversions() sigue
+    // corriendo en segundo plano y necesita el meetingHandle de OPFS con vida.
+    writer.onConversionsFinished = () => sessions.delete(message.sessionId);
+  }
+}
+```
+
+(Ajustar el nombre exacto de variables/estructura según el archivo real — el punto central es: la entrada del `Map` sobrevive hasta que termine la conversión, no solo hasta que termine `finalize()`.)
+
+- [ ] **Step 3: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+- [ ] **Step 4: Manual verification** (no automatizable — requiere una reunión real de Meet)
+
+Grabar unos minutos de audio+video en una reunión real, activar video, terminar la reunión. Confirmar en el historial que aparecen de inmediato `audio-reunion.webm`/`video-reunion.webm`/`transcripcion.txt`. Revisar la consola del offscreen document para ver el progreso logueado de la conversión, y confirmar que minutos después aparecen también `audio-reunion.mp3`/`video-reunion.mp4` en el historial (sin recargar código, `history.js` ya lista dinámicamente los archivos presentes en la carpeta). Descargar el mp3 y el mp4 y confirmar que se puede hacer seek/adelantar sin problema.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/storage/session-writer.js src/offscreen/offscreen.js
+git commit -m "feat: transcode audio to MP3 and video to MP4 with ffmpeg.wasm as a background job after finalize"
+```
+
+---
+
+## Task 30: Tests unitarios de la cola de ffmpeg y del flujo de conversión
+
+**Files:**
+- Create: `src/offscreen/ffmpeg-client.test.js`
+- Create: `src/storage/session-writer.test.js`
+
+- [ ] **Step 1: Create `ffmpeg-client.test.js`** — verificar que la cola serializa los jobs (dos llamadas a `runFfmpegJob` no se solapan), mockeando `@ffmpeg/ffmpeg` para no cargar el wasm real
+
+- [ ] **Step 2: Create `session-writer.test.js`** — mockear `ffmpeg-client` para verificar que `finalize()` resuelve sin esperar la conversión, que el orden es audio-luego-video, que un fallo en uno no interrumpe al otro, y que `manifest.json` queda con los campos correctos en cada combinación (éxito/fallo/sin video)
+
+- [ ] **Step 3: Run tests**
+
+```bash
+npm test
+```
+
+Expected: todos los tests en verde, incluyendo los 13 ya existentes.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/offscreen/ffmpeg-client.test.js src/storage/session-writer.test.js
+git commit -m "test: cover the ffmpeg job queue and the finalize/conversion control flow"
+```
