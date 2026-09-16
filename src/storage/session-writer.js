@@ -147,46 +147,54 @@ export class SessionWriter {
     let hasAudioMp3 = false;
     let hasVideoMp4 = false;
 
-    if (this.streamsUsed.has("meeting")) {
-      try {
-        await this._convertStream({
-          sourceFileName: STREAM_FILE_NAMES.meeting,
-          targetFileName: "audio-reunion.mp3",
-          inputExt: "webm",
-          outputExt: "mp3",
-          args: ["-vn"],
-        });
-        audioConversionStatus = "succeeded";
-        hasAudioMp3 = true;
-      } catch (error) {
-        console.error("[Asterion] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
-        audioConversionStatus = "failed";
+    try {
+      if (this.streamsUsed.has("meeting")) {
+        try {
+          await this._convertStream({
+            sourceFileName: STREAM_FILE_NAMES.meeting,
+            targetFileName: "audio-reunion.mp3",
+            inputExt: "webm",
+            outputExt: "mp3",
+            args: ["-vn"],
+          });
+          audioConversionStatus = "succeeded";
+          hasAudioMp3 = true;
+        } catch (error) {
+          console.error("[Asterion] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
+          audioConversionStatus = "failed";
+        }
+        await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
       }
-      await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
-    }
 
-    if (this.hasVideo) {
-      const { videoPreset } = globalThis.chrome
-        ? await chrome.storage.local.get({ videoPreset: "medium" })
-        : { videoPreset: "medium" };
-      try {
-        await this._convertStream({
-          sourceFileName: STREAM_FILE_NAMES.video,
-          targetFileName: "video-reunion.mp4",
-          inputExt: "webm",
-          outputExt: "mp4",
-          args: ["-fps_mode", "vfr", "-preset", videoPreset],
-        });
-        videoConversionStatus = "succeeded";
-        hasVideoMp4 = true;
-      } catch (error) {
-        console.error("[Asterion] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
-        videoConversionStatus = "failed";
+      if (this.hasVideo) {
+        try {
+          const { videoPreset } = globalThis.chrome
+            ? await chrome.storage.local.get({ videoPreset: "medium" })
+            : { videoPreset: "medium" };
+          await this._convertStream({
+            sourceFileName: STREAM_FILE_NAMES.video,
+            targetFileName: "video-reunion.mp4",
+            inputExt: "webm",
+            outputExt: "mp4",
+            args: ["-fps_mode", "vfr", "-preset", videoPreset],
+          });
+          videoConversionStatus = "succeeded";
+          hasVideoMp4 = true;
+        } catch (error) {
+          console.error("[Asterion] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
+          videoConversionStatus = "failed";
+        }
+        await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
       }
-      await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
+    } catch (error) {
+      console.error("[Asterion] Falló inesperadamente la programación de conversiones:", error);
+    } finally {
+      try {
+        await this.onConversionsFinished?.();
+      } catch (error) {
+        console.error("[Asterion] Falló el callback de finalización de conversiones:", error);
+      }
     }
-
-    this.onConversionsFinished?.();
   }
 
   async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args }) {
