@@ -172,7 +172,7 @@ export class SessionWriter {
           targetFileName: "video-reunion.mp4",
           inputExt: "webm",
           outputExt: "mp4",
-          args: [],
+          args: ["-fps_mode", "vfr"],
         });
         videoConversionStatus = "succeeded";
         hasVideoMp4 = true;
