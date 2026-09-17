@@ -5,6 +5,8 @@ import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
 import { arrayBufferToBase64 } from "../lib/base64.js";
 
+console.log("[Asterion:debug] content script (ISOLATED) cargado", { url: location.href });
+
 function isInActiveMeeting() {
   return document.querySelector(SELECTORS.hangUpButton) !== null;
 }
@@ -51,6 +53,7 @@ async function startRecording() {
   meetingTitle = document.title && document.title.trim() && document.title.trim() !== "Meet"
     ? document.title.trim()
     : "Reunión sin título";
+  console.log("[Asterion:debug] startRecording iniciado", { sessionId, meetingTitle });
   startedAt = Date.now();
   hasTranscript = false;
   videoEnabled = false;
@@ -93,6 +96,8 @@ window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const message = event.data;
   if (!message || message.source !== "asterion-main-world") return;
+
+  console.log("[Asterion:debug] mensaje recibido desde MAIN world", { type: message.type });
 
   if (message.type === "asterion:session-started") {
     setState("recording");
@@ -166,8 +171,12 @@ window.addEventListener("pagehide", () => {
 });
 
 function waitForMeeting() {
+  console.log("[Asterion:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
+
   const onMeetingDetected = () => {
+    console.log("[Asterion:debug] reunión detectada");
     chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
+      console.log("[Asterion:debug] autoStart obtenido", { autoStart });
       showBanner({ onStart: startRecording, onStop: stopRecording });
       if (autoStart) startRecording();
     });

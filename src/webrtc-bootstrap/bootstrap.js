@@ -3,6 +3,8 @@ import { installRtcPatch, installGetUserMediaPatch, diagnostics } from "./rtc-pa
 import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
 
+console.log("[Asterion:debug] bootstrap (MAIN world) cargado");
+
 const mixer = new MeetingAudioMixer();
 mixer.resume().catch(() => {});
 let micTrack = null;
@@ -28,7 +30,14 @@ window.addEventListener("message", async (event) => {
   const message = event.data;
   if (!message || message.source !== "asterion-isolated-world") return;
 
+  console.log("[Asterion:debug] mensaje recibido desde ISOLATED world", { type: message.type });
+
   if (message.type === "asterion:start-session") {
+    console.log("[Asterion:debug] asterion:start-session recibido; se intentará crear MainWorldSession e iniciar mixer", {
+      sessionId: message.sessionId,
+      mixer,
+      session,
+    });
     if (!micTrack) {
       postToIsolated({ type: "asterion:start-failed", sessionId: message.sessionId, reason: "no-mic-stream" });
       return;
