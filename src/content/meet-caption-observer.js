@@ -4,7 +4,19 @@ import { SELECTORS } from "./meet-selectors.js";
 function findCaptionsContainer() {
   const regions = document.querySelectorAll('[role="region"]');
   console.log("[Asterion:debug] findCaptionsContainer — regiones encontradas:", regions.length);
+  const captionsToggleButton = document.querySelector(SELECTORS.captionsToggleButton);
   for (const region of regions) {
+    console.log("[Asterion:debug] findCaptionsContainer — región:", {
+      id: region.id,
+      ariaLabel: region.getAttribute("aria-label"),
+      captionsToggle: captionsToggleButton
+        ? {
+            ariaControls: captionsToggleButton.getAttribute("aria-controls"),
+            ariaOwns: captionsToggleButton.getAttribute("aria-owns"),
+            ariaDescribedBy: captionsToggleButton.getAttribute("aria-describedby"),
+          }
+        : null,
+    });
     if (region.querySelector(SELECTORS.captionUtteranceBlock)) return region;
   }
   console.log("[Asterion:debug] findCaptionsContainer — ninguna región tenía captionUtteranceBlock");
@@ -75,7 +87,7 @@ function ensureCaptionsEnabled({ retries, delayMs }) {
   });
 }
 
-export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delayMs = 300 } = {}) {
+export async function enableCaptionsAndObserve(onSnapshot, { retries = 30, delayMs = 500 } = {}) {
   if (findCaptionsContainer()) {
     return observeCaptions(onSnapshot);
   }

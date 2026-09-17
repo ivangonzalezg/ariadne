@@ -167,16 +167,16 @@ export class SessionWriter {
       }
 
       if (this.hasVideo) {
+        let videoPreset = "medium";
         try {
-          console.log("[Asterion:debug] scheduleConversions — antes de leer videoPreset", {
-            hasChrome: typeof chrome !== "undefined",
-            hasChromeStorage: typeof chrome !== "undefined" && typeof chrome.storage !== "undefined",
-            hasChromeRuntime: typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined",
-            runtimeId: typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.id : undefined,
-          });
-          const { videoPreset } = globalThis.chrome
-            ? await chrome.storage.local.get({ videoPreset: "medium" })
-            : { videoPreset: "medium" };
+          if (globalThis.chrome) {
+            const stored = await chrome.storage.local.get({ videoPreset: "medium" });
+            videoPreset = stored.videoPreset;
+          }
+        } catch (error) {
+          console.error("[Asterion] No se pudo leer el preset de video guardado, se usa 'medium' por defecto:", error);
+        }
+        try {
           await this._convertStream({
             sourceFileName: STREAM_FILE_NAMES.video,
             targetFileName: "video-reunion.mp4",
