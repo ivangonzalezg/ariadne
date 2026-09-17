@@ -169,12 +169,10 @@ export class SessionWriter {
       if (this.hasVideo) {
         let videoPreset = "medium";
         try {
-          if (globalThis.chrome) {
-            const stored = await chrome.storage.local.get({ videoPreset: "medium" });
-            videoPreset = stored.videoPreset;
-          }
+          const response = await chrome.runtime.sendMessage({ type: "asterion:get-video-preset" });
+          if (response?.videoPreset) videoPreset = response.videoPreset;
         } catch (error) {
-          console.error("[Asterion] No se pudo leer el preset de video guardado, se usa 'medium' por defecto:", error);
+          console.error("[Asterion] No se pudo obtener el preset de video guardado, se usa 'medium' por defecto:", error);
         }
         try {
           await this._convertStream({

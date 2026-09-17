@@ -40,6 +40,20 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   }
 });
 
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type !== "asterion:get-video-preset") return;
+
+  chrome.storage.local
+    .get({ videoPreset: "medium" })
+    .then(({ videoPreset }) => sendResponse({ videoPreset }))
+    .catch((error) => {
+      console.error("[Asterion] No se pudo leer el preset de video guardado, se usa 'medium' por defecto:", error);
+      sendResponse({ videoPreset: "medium" });
+    });
+
+  return true;
+});
+
 function appendToHistory(meta) {
   chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
     meetingHistory.unshift({
