@@ -1,10 +1,18 @@
 // src/content/meet-selectors.js
+// Meet renders Material icon names in <i> text nodes. Unlike aria-label values,
+// those internal names are not localized (validated against Meet by Fireflies).
+export function findByIconText(name) {
+  const icons = document.querySelectorAll("i");
+  for (const icon of icons) {
+    if (icon.textContent.trim() === name) return icon;
+  }
+  return null;
+}
+
 export const SELECTORS = {
-  hangUpButton: '[aria-label="Leave call"]',
-  micButton: '[aria-label*="microphone" i]',
+  micButton: "[data-is-muted]",
   micMutedAttribute: "data-is-muted",
   captionsToggleButton: 'button[jsname="RrG0hf"], button[jslog^="211197"]',
-  captionsContainer: '[role="region"][aria-label="Captions"]',
   captionUtteranceBlock: ".nMcdL.bj4p3b",
   captionSpeakerName: ".NWpY1d",
   captionText: ".ygicle.VbkSUe",

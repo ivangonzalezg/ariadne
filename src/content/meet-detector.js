@@ -1,5 +1,5 @@
 // src/content/meet-detector.js
-import { SELECTORS } from "./meet-selectors.js";
+import { findByIconText } from "./meet-selectors.js";
 import { observeMuteState } from "./meet-mute-observer.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
@@ -8,7 +8,7 @@ import { arrayBufferToBase64 } from "../lib/base64.js";
 console.log("[Asterion:debug] content script (ISOLATED) cargado", { url: location.href });
 
 function isInActiveMeeting() {
-  return document.querySelector(SELECTORS.hangUpButton) !== null;
+  return findByIconText("call_end") !== null;
 }
 
 function generateSessionId() {

@@ -2,7 +2,11 @@
 import { SELECTORS } from "./meet-selectors.js";
 
 function findCaptionsContainer() {
-  return document.querySelector(SELECTORS.captionsContainer);
+  const regions = document.querySelectorAll('[role="region"]');
+  for (const region of regions) {
+    if (region.querySelector(SELECTORS.captionUtteranceBlock)) return region;
+  }
+  return null;
 }
 
 function readLatestSnapshot(container) {
@@ -35,8 +39,8 @@ function observeCaptions(onSnapshot) {
 }
 
 function isCaptionsCurrentlyOn(button) {
-  const label = button.getAttribute("aria-label") || "";
-  return label.toLowerCase().includes("turn off");
+  const icon = button.querySelector("i");
+  return icon?.textContent.trim() === "closed_caption";
 }
 
 function ensureCaptionsEnabled({ retries, delayMs }) {
