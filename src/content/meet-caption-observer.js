@@ -3,9 +3,11 @@ import { SELECTORS } from "./meet-selectors.js";
 
 function findCaptionsContainer() {
   const regions = document.querySelectorAll('[role="region"]');
+  console.log("[Asterion:debug] findCaptionsContainer — regiones encontradas:", regions.length);
   for (const region of regions) {
     if (region.querySelector(SELECTORS.captionUtteranceBlock)) return region;
   }
+  console.log("[Asterion:debug] findCaptionsContainer — ninguna región tenía captionUtteranceBlock");
   return null;
 }
 
@@ -39,8 +41,12 @@ function observeCaptions(onSnapshot) {
 }
 
 function isCaptionsCurrentlyOn(button) {
+  const icons = Array.from(button.querySelectorAll("i")).map((icon) => icon.textContent.trim());
+  console.log("[Asterion:debug] isCaptionsCurrentlyOn — íconos encontrados en el botón:", icons);
   const icon = button.querySelector("i");
-  return icon?.textContent.trim() === "closed_caption";
+  const result = icon?.textContent.trim() === "closed_caption";
+  console.log("[Asterion:debug] isCaptionsCurrentlyOn — resultado:", result);
+  return result;
 }
 
 function ensureCaptionsEnabled({ retries, delayMs }) {
@@ -49,8 +55,11 @@ function ensureCaptionsEnabled({ retries, delayMs }) {
     const tryEnsure = () => {
       const button = document.querySelector(SELECTORS.captionsToggleButton);
       if (button) {
-        if (!isCaptionsCurrentlyOn(button)) {
+        const alreadyOn = isCaptionsCurrentlyOn(button);
+        console.log("[Asterion:debug] ensureCaptionsEnabled — botón encontrado, alreadyOn:", alreadyOn);
+        if (!alreadyOn) {
           button.click();
+          console.log("[Asterion:debug] ensureCaptionsEnabled — click ejecutado");
         }
         resolve(true);
         return;

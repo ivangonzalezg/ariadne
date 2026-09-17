@@ -168,6 +168,12 @@ export class SessionWriter {
 
       if (this.hasVideo) {
         try {
+          console.log("[Asterion:debug] scheduleConversions — antes de leer videoPreset", {
+            hasChrome: typeof chrome !== "undefined",
+            hasChromeStorage: typeof chrome !== "undefined" && typeof chrome.storage !== "undefined",
+            hasChromeRuntime: typeof chrome !== "undefined" && typeof chrome.runtime !== "undefined",
+            runtimeId: typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.id : undefined,
+          });
           const { videoPreset } = globalThis.chrome
             ? await chrome.storage.local.get({ videoPreset: "medium" })
             : { videoPreset: "medium" };
