@@ -34,6 +34,7 @@ const ICONS = {
   <path d="M2 8h20" />
   <path d="M6 4v4" />`,
   play: `<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />`,
+  square: `<rect width="18" height="18" x="3" y="3" rx="2" />`,
   "chevron-down": `<path d="m6 9 6 6 6-6" />`,
   "chevron-up": `<path d="m18 15-6-6-6 6" />`,
   video: `<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5" />

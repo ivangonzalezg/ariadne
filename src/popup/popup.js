@@ -26,13 +26,14 @@ function sourceRow(iconName, label, active, activeLabel, inactiveLabel) {
 
 function footer(autoStart) {
   return `
+    <div class="divider"></div>
     <div class="toggle-row">
-      <div class="source-left">${icon("monitor", { size: 16, color: "var(--text-secondary)" })}<span style="color:var(--text-primary)">Conectarse automáticamente</span></div>
+      <div class="source-left">${icon("monitor", { size: 16, color: "var(--text-secondary)" })}<span style="color:var(--text-primary)">Detectar reuniones en Meet</span></div>
       <div id="auto-start-toggle" class="toggle" style="background:${autoStart ? "var(--accent-blue)" : "var(--toggle-off)"};justify-content:${autoStart ? "flex-end" : "flex-start"}">
         <div class="toggle-knob"></div>
       </div>
     </div>
-    <div class="helper">Inicia la captura al entrar a una llamada de Meet.</div>
+    <div class="helper">Inicia la captura sola al entrar a una llamada de Meet. Esto aplica a cualquier reunión, no solo a la actual.</div>
     <div id="history-link" class="link-row">
       <div class="source-left">${icon("history", { size: 16, color: "var(--text-secondary)" })}<span>Ver historial</span></div>
       ${icon("chevron-right", { size: 16, color: "var(--text-secondary)" })}
@@ -42,7 +43,7 @@ function footer(autoStart) {
 
 function header() {
   return `<div class="header">
-    <div class="brand">${icon("audio-lines", { size: 18, color: "var(--text-primary)" })}Asterion</div>
+    <div class="brand"><img src="${chrome.runtime.getURL("icons/icon32.png")}" width="18" height="18" alt="">Asterion</div>
     <span id="settings-link" role="button" tabindex="0" aria-label="Configuración" style="display:inline-flex;cursor:pointer">${icon("settings", { size: 18, color: "var(--text-secondary)" })}</span>
   </div>`;
 }
@@ -91,14 +92,19 @@ function render(status, autoStart) {
     <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Grabando</span></div>
     <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
     <div class="timer" id="timer">00:00</div>
-    <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="card-box">
       ${sourceRow("file-text", "Transcripción", status.hasTranscript, "Activa", "No disponible")}
       ${sourceRow("volume-2", "Audio de la reunión", true, "Activo", "")}
       ${sourceRow("mic", "Mi voz", !status.micMuted, "Activa", "Silenciada")}
       ${sourceRow("app-window", "Video de la pestaña", status.videoEnabled, "Activo", "No activo")}
     </div>
+    <button class="danger" id="stop-capture">${icon("square", { size: 14 })}Detener captura</button>
     ${footer(autoStart)}`;
   wireFooter(autoStart);
+  document.getElementById("stop-capture").addEventListener("click", () => {
+    chrome.tabs.sendMessage(activeTabId, { type: "asterion:popup-stop" });
+    refresh();
+  });
 
   const timerEl = document.getElementById("timer");
   const tick = () => { timerEl.textContent = formatElapsed(status.startedAt); };
