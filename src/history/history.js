@@ -84,7 +84,10 @@ function formatMeetingDate(meeting) {
   const time = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false });
   return `${date} · ${time.format(started)} – ${time.format(ended)}`;
 }
+function formatDetailDate(meeting) { return capitalize(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(meeting.startedAt))); }
+function formatTimeRange(meeting) { const formatter = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false }); return `${formatter.format(new Date(meeting.startedAt))} – ${formatter.format(new Date(endTime(meeting)))}`; }
 function formatDuration(totalMs) { const totalMinutes = Math.floor(Math.max(0, totalMs) / 60000); return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`; }
+function formatFileSize(bytes) { if (!Number.isFinite(bytes)) return ""; const units = ["B", "KB", "MB", "GB"]; let value = bytes; let index = 0; while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; } return `${value.toLocaleString("es-ES", { maximumFractionDigits: index ? 1 : 0 })} ${units[index]}`; }
 function allFiltersOff() { return Object.values(state.filters).every((active) => !active); }
 
 function renderSidebar() { renderFilters(); renderCalendar(); renderKpis(); }
@@ -165,10 +168,65 @@ function createMeetingCard(meeting) {
   card.append(header, date, chips, details); return card;
 }
 
-function renderDetail() {
-  detailPanelEl.replaceChildren(); const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder";
-  placeholder.textContent = state.selectedMeetingId ? "Detalle de reunión disponible próximamente." : "Seleccioná una reunión para ver el detalle";
-  detailPanelEl.appendChild(placeholder);
+function availableTabs(meeting) { return [[meeting.hasTranscript, "transcript", "Transcripción"], [true, "audio", "Audio"], [meeting.hasVideo, "video", "Video"], [true, "manifest", "Manifest"]].filter(([available]) => available); }
+function escapeHtml(value) { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function highlightJson(value) {
+  const escaped = escapeHtml(JSON.stringify(value, null, 2));
+  return escaped.replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi, (token, string, colon, literal) => {
+    const className = string ? (colon ? "json-key" : "json-string") : (literal ? "json-literal" : "json-number");
+    return `<span class="${className}">${token}</span>`;
+  });
+}
+async function openMeetingDirectory(meeting) { const root = await navigator.storage.getDirectory(); return root.getDirectoryHandle(meeting.folderName); }
+async function readJsonFile(directory) { const file = await (await directory.getFileHandle("manifest.json")).getFile(); return { file, value: JSON.parse(await file.text()) }; }
+async function readActiveFile(meeting, tab) {
+  const directory = await openMeetingDirectory(meeting);
+  if (tab === "transcript") { const file = await (await directory.getFileHandle("transcripcion.txt")).getFile(); return { file, name: "transcripcion.txt", text: await file.text() }; }
+  if (tab === "manifest") { const { file, value } = await readJsonFile(directory); return { file, name: "manifest.json", value }; }
+  const { value: manifest } = await readJsonFile(directory).catch(() => ({ value: {} }));
+  const isVideo = tab === "video"; const converted = isVideo ? (manifest.hasVideoMp4 || manifest.videoConversionStatus === "succeeded") : (manifest.hasAudioMp3 || manifest.audioConversionStatus === "succeeded");
+  const preferred = isVideo ? (converted ? "video-reunion.mp4" : "video-reunion.webm") : (converted ? "audio-reunion.mp3" : "audio-reunion.webm");
+  const fallback = isVideo ? (preferred.endsWith(".mp4") ? "video-reunion.webm" : "video-reunion.mp4") : (preferred.endsWith(".mp3") ? "audio-reunion.webm" : "audio-reunion.mp3");
+  try { return { file: await (await directory.getFileHandle(preferred)).getFile(), name: preferred }; } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
+}
+function parseTranscript(text) { return text.split("\n").map((line) => line.match(/^\[(\d{2}:\d{2})\] \[(.*?)\] (.*)$/)).filter(Boolean).map((match) => ({ timestamp: match[1], speaker: match[2], text: match[3] })); }
+function createFileFooter(activeFile) {
+  const footer = document.createElement("footer"); footer.className = "detail-footer";
+  const metadata = document.createElement("span"); metadata.className = "detail-file-meta"; metadata.textContent = `${activeFile.name} · ${formatFileSize(activeFile.file.size)}`;
+  const actions = document.createElement("div"); actions.className = "detail-file-actions";
+  const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.textContent = "Abrir"; view.addEventListener("click", () => viewFile(activeFile.file));
+  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.textContent = "Descargar"; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
+  const separator = document.createElement("span"); separator.className = "detail-footer-separator"; separator.setAttribute("aria-hidden", "true");
+  const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.textContent = "Eliminar reunión"; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
+  actions.append(view, download, separator, remove); footer.append(metadata, actions); return footer;
+}
+function renderTabContent(content, activeFile) {
+  if (state.selectedTab === "transcript") {
+    const list = document.createElement("div"); list.className = "transcript-list";
+    parseTranscript(activeFile.text).forEach((entry) => { const row = document.createElement("div"); row.className = "transcript-row"; const timestamp = document.createElement("time"); timestamp.className = "transcript-time"; timestamp.textContent = entry.timestamp; const spoken = document.createElement("p"); spoken.className = "transcript-spoken"; const speaker = document.createElement("strong"); speaker.textContent = entry.speaker; spoken.append(speaker, document.createTextNode(` ${entry.text}`)); row.append(timestamp, spoken); list.appendChild(row); });
+    if (!list.childElementCount) { const empty = document.createElement("p"); empty.className = "detail-empty"; empty.textContent = "No se encontraron intervenciones en la transcripción."; content.appendChild(empty); } else content.appendChild(list);
+  } else if (state.selectedTab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
+  else { const placeholder = document.createElement("p"); placeholder.className = "media-placeholder"; placeholder.textContent = "Cargando reproductor..."; content.appendChild(placeholder); }
+}
+async function renderDetail() {
+  detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
+  if (!meeting) { const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = "Seleccioná una reunión para ver el detalle"; detailPanelEl.appendChild(placeholder); return; }
+  const tabs = availableTabs(meeting); if (!tabs.some(([, key]) => key === state.selectedTab)) state.selectedTab = tabs[0][1];
+  const renderKey = `${meetingId(meeting)}:${state.selectedTab}`;
+  const detail = document.createElement("div"); detail.className = "detail-content";
+  const header = document.createElement("header"); header.className = "detail-header"; const title = document.createElement("h2"); title.className = "detail-title"; title.textContent = titleFor(meeting); const date = document.createElement("p"); date.className = "detail-date"; date.textContent = formatDetailDate(meeting); const metadata = document.createElement("p"); metadata.className = "detail-metadata"; metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`; header.append(title, date, metadata);
+  const tablist = document.createElement("div"); tablist.className = "detail-tabs"; tablist.setAttribute("role", "tablist"); tabs.forEach(([, key, label]) => { const tab = document.createElement("button"); const active = key === state.selectedTab; tab.type = "button"; tab.className = `detail-tab${active ? " is-active" : ""}`; tab.textContent = label; tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(active)); tab.addEventListener("click", () => { state.selectedTab = key; renderDetail(); }); tablist.appendChild(tab); });
+  const content = document.createElement("section"); content.className = "detail-tab-content"; content.setAttribute("role", "tabpanel"); const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = "Cargando archivo..."; content.appendChild(loading); detail.append(header, tablist, content); detailPanelEl.appendChild(detail);
+  try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = "No se pudo abrir este archivo de la reunión."; content.appendChild(unavailable); }
+}
+function showDeleteDialog(meeting, opener) {
+  if (!meeting) return;
+  const overlay = document.createElement("div"); overlay.className = "delete-modal-backdrop"; overlay.setAttribute("role", "presentation");
+  const dialog = document.createElement("section"); dialog.className = "delete-modal"; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true"); dialog.setAttribute("aria-labelledby", "delete-modal-title"); const title = document.createElement("h2"); title.id = "delete-modal-title"; title.textContent = "Eliminar reunión"; const body = document.createElement("p"); body.textContent = `Se eliminarán ${titleFor(meeting)} y todos sus archivos de este dispositivo. Esta acción es permanente y no se puede deshacer.`; const actions = document.createElement("div"); actions.className = "delete-modal-actions"; const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "modal-cancel"; cancel.textContent = "Cancelar"; const confirm = document.createElement("button"); confirm.type = "button"; confirm.className = "modal-confirm"; confirm.textContent = "Eliminar"; actions.append(cancel, confirm); dialog.append(title, body, actions); overlay.appendChild(dialog); document.body.appendChild(overlay);
+  const close = () => { document.removeEventListener("keydown", onKeydown); overlay.remove(); opener.focus(); };
+  const onKeydown = (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } if (event.key === "Tab") { const controls = [...dialog.querySelectorAll("button:not([disabled])")]; const first = controls[0]; const last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
+  cancel.addEventListener("click", close); confirm.addEventListener("click", async () => { confirm.disabled = true; try { const root = await navigator.storage.getDirectory(); await root.removeEntry(meeting.folderName, { recursive: true }); const meetingHistory = state.meetings.filter((item) => meetingId(item) !== meetingId(meeting)); await chrome.storage.local.set({ meetingHistory }); state.meetings = meetingHistory; state.selectedMeetingId = null; state.selectedTab = null; renderAllExceptDetail(); renderDetail(); close(); } catch { confirm.disabled = false; } });
+  document.addEventListener("keydown", onKeydown); cancel.focus();
 }
 function renderAllExceptDetail() { renderSidebar(); renderMeetings(); }
 
