@@ -30,15 +30,15 @@ let jobCounter = 0;
 
 // Encola el trabajo detrás de cualquier otro ya en curso — nunca se corren dos
 // exec() en simultáneo sobre la misma instancia de ffmpeg.
-export function runFfmpegJob({ inputBytes, inputExt, outputExt, args }) {
-  const result = queueTail.then(() => _runJob({ inputBytes, inputExt, outputExt, args }));
+export function runFfmpegJob({ inputBytes, inputExt, outputExt, args, onProgress }) {
+  const result = queueTail.then(() => _runJob({ inputBytes, inputExt, outputExt, args, onProgress }));
   // Si este job falla, la cola debe seguir viva para el siguiente — no propagar el
   // rechazo hacia queueTail.
   queueTail = result.catch(() => {});
   return result;
 }
 
-async function _runJob({ inputBytes, inputExt, outputExt, args }) {
+async function _runJob({ inputBytes, inputExt, outputExt, args, onProgress }) {
   const jobId = ++jobCounter;
   const inputName = `input_${jobId}.${inputExt}`;
   const outputName = `output_${jobId}.${outputExt}`;
@@ -46,8 +46,11 @@ async function _runJob({ inputBytes, inputExt, outputExt, args }) {
   console.log(`[Asterion ffmpeg] job ${jobId}: iniciando (${inputBytes.byteLength} bytes de entrada)`);
 
   const ffmpeg = await getFfmpeg();
+  let progressHandler;
   try {
     await ffmpeg.writeFile(inputName, inputBytes);
+    progressHandler = ({ time }) => onProgress?.(time / 1000);
+    ffmpeg.on("progress", progressHandler);
     await ffmpeg.exec(["-i", inputName, ...args, outputName]);
     const outputData = await ffmpeg.readFile(outputName);
     if (!outputData || outputData.byteLength === 0) {
@@ -58,6 +61,7 @@ async function _runJob({ inputBytes, inputExt, outputExt, args }) {
     );
     return outputData;
   } finally {
+    if (progressHandler) ffmpeg.off?.("progress", progressHandler);
     await ffmpeg.deleteFile(inputName).catch(() => {});
     await ffmpeg.deleteFile(outputName).catch(() => {});
   }

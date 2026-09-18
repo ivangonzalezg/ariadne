@@ -1,7 +1,21 @@
 // src/background/service-worker.js
 const OFFSCREEN_URL = "src/offscreen/offscreen.html";
 const activeSessionTabIds = new Map();
+const conversionStates = new Map();
 let offscreenCreationPromise = null;
+
+function updateBadge() {
+  let text = "";
+  if (conversionStates.size === 1) {
+    const { stream, pct } = conversionStates.values().next().value;
+    text = `${stream === "video" ? "V" : "A"}${pct}`;
+  } else if (conversionStates.size > 1) {
+    text = String(conversionStates.size);
+  }
+
+  chrome.action.setBadgeText({ text });
+  if (text) chrome.action.setBadgeBackgroundColor({ color: "#3B82F6" });
+}
 
 async function ensureOffscreenDocument() {
   const existing = await chrome.runtime.getContexts({
@@ -37,10 +51,31 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   } else if (message.type === "asterion:session-finalized") {
     activeSessionTabIds.delete(message.sessionId);
     appendToHistory(message);
+  } else if (message.type === "asterion:conversion-started") {
+    conversionStates.set(message.sessionId, {
+      meetingTitle: message.meetingTitle,
+      stream: message.stream,
+      pct: 0,
+    });
+    updateBadge();
+  } else if (message.type === "asterion:conversion-progress") {
+    const state = conversionStates.get(message.sessionId);
+    if (state) {
+      conversionStates.set(message.sessionId, { ...state, stream: message.stream, pct: message.pct });
+      updateBadge();
+    }
+  } else if (message.type === "asterion:conversion-finished") {
+    conversionStates.delete(message.sessionId);
+    updateBadge();
   }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "asterion:get-conversion-status") {
+    sendResponse({ count: conversionStates.size, entries: [...conversionStates.values()] });
+    return;
+  }
+
   if (message.type !== "asterion:get-video-preset") return;
 
   chrome.storage.local

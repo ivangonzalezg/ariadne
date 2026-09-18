@@ -4221,3 +4221,63 @@ Entrar a una reunión, arrastrar el banner a distintas zonas de la pantalla (cer
 git add src/content/meet-banner.js
 git commit -m "feat: make the in-page banner draggable with snap-to-nearest-edge and persisted position"
 ```
+
+---
+
+## Task 33: Badge de progreso en el ícono de la extensión mientras se convierte audio/video
+
+Hoy, después de terminar una reunión, la conversión a MP3/MP4 sigue corriendo en segundo plano (Task 29) sin ninguna señal visible — el usuario tiene que entrar al historial y recargar la página repetidas veces para saber si ya terminó. El usuario pidió replicar lo que hace Fireflies: un badge numérico sobre el ícono de la extensión en la barra de herramientas mientras procesa, idealmente con un porcentaje de avance, y que el popup también refleje ese estado.
+
+Diseño revisado y confirmado por Codex (no implementar nada distinto a esto sin volver a consultar):
+
+- **El badge se pinta SIEMPRE desde el service worker** (`chrome.action.setBadgeText`/`setBadgeBackgroundColor`) — confirmado que `chrome.action`, igual que `chrome.storage`, no está disponible dentro del offscreen document (los offscreen documents solo garantizan `chrome.runtime`). El offscreen document manda mensajes, nunca pinta el badge directo.
+- **El porcentaje se calcula con la duración real conocida de la grabación, no con el campo `progress` de ffmpeg.wasm** (confirmado con el código real de `@ffmpeg/ffmpeg` 0.12.15: ese campo es experimental y solo es preciso cuando la duración de entrada/salida coinciden — nuestros webm de `MediaRecorder` nunca declaran `Duration`, así que `progress` sale con valores sin sentido). Usar en cambio el campo `time` del evento (confirmado que viene en **microsegundos** de media ya procesada, revisando el código fuente instalado), dividido por la duración real de la grabación (`endedAt - startedAt`, capturada UNA SOLA VEZ al principio de `finalize()`, no con `Date.now()` recalculado en cada tick).
+- **No inventar un porcentaje combinado de audio+video** — como corren secuencialmente y pesan muy distinto, mostrar el progreso de la fase actual tal cual: `A 42` mientras convierte audio, `V 12` mientras convierte video (cambiar de fase apenas termina audio, sin dejar "A 100" colgado insinuando que ya terminó todo).
+- **El badge se limpia solo cuando NO queda ninguna conversión pendiente en absoluto**, no cuando termina una sesión individual — el offscreen document puede tener más de un `SessionWriter` corriendo conversiones en su cola global. El service worker debe mantener un `Map<sessionId, estado>` y limpiar el badge solo cuando el mapa queda vacío.
+- **Si hay más de una reunión conviertiéndose a la vez, mostrar la cantidad de reuniones pendientes** (por ejemplo `"2"`) en vez de un porcentaje que mezclaría fases distintas de sesiones distintas — con exactamente una sesión pendiente, mostrar `A nn`/`V nn` como se describió arriba.
+- El popup debe reflejar el mismo estado (no solo el badge) — como el popup ya hace polling cada 2 segundos (`refresh()` en `src/popup/popup.js`), lo más simple es agregar una consulta nueva al service worker en cada tick, en vez de armar un sistema de mensajes push separado.
+
+**Files:**
+- Modify: `src/offscreen/ffmpeg-client.js`
+- Modify: `src/storage/session-writer.js`
+- Modify: `src/background/service-worker.js`
+- Modify: `src/popup/popup.js`
+
+- [ ] **Step 1: `ffmpeg-client.js` — callback de progreso por job.** Agregar un parámetro opcional `onProgress(timeMs)` a `runFfmpegJob({ inputBytes, inputExt, outputExt, args, onProgress })`. Dentro de `_runJob()`, justo antes de `ffmpeg.exec(...)`, registrar un listener de progreso ESCOPEADO A ESE JOB (no el listener global de diagnóstico que ya existe) vía `ffmpeg.on("progress", ({ time }) => onProgress?.(time / 1000))` (convertir de microsegundos a milisegundos), y sacarlo en el `finally` con `ffmpeg.off("progress", ese mismo handler)` (confirmar el nombre exacto del método `off` contra la API real instalada — Codex ya confirmó que existe). No tocar el listener de diagnóstico global que ya está en `getFfmpeg()`.
+
+- [ ] **Step 2: `session-writer.js` — calcular el porcentaje y emitir mensajes de progreso.**
+  - En `finalize()`, capturar `const endedAt = Date.now();` una sola vez, ANTES de disparar `scheduleConversions()`, y pasarlo a `scheduleConversions(muteManifest, endedAt)`.
+  - En `scheduleConversions()`, calcular `const knownDurationMs = Math.max(1, endedAt - this.startedAt);` (evitar división por cero).
+  - Antes de cada llamada a `_convertStream()` (audio y video), mandar `chrome.runtime.sendMessage({ type: "asterion:conversion-started", sessionId: this.sessionId, meetingTitle: this.meetingTitle, stream: "meeting"|"video" })` (envolver en try/catch silencioso, esto es solo una señal de UI, nunca debe poder romper la conversión real).
+  - Pasarle a `_convertStream()` un `onProgress` que calcule `pct = Math.min(100, Math.max(0, Math.round((timeMs / knownDurationMs) * 100)))`, con throttling: solo mandar `chrome.runtime.sendMessage({ type: "asterion:conversion-progress", sessionId: this.sessionId, stream, pct })` cuando el `pct` entero cambió respecto al último mandado Y pasaron al menos 500ms desde el último mensaje (guardar `lastSentPct`/`lastSentAt` en variables locales del método). Ignorar valores de `timeMs` no finitos, negativos, o menores al último valor visto (protección ante posibles regresiones del contador de ffmpeg).
+  - Al terminar cada stream (éxito o fallo) y al final del método completo (en el `finally` existente, junto a `onConversionsFinished`), mandar `chrome.runtime.sendMessage({ type: "asterion:conversion-finished", sessionId: this.sessionId })`.
+
+- [ ] **Step 3: `service-worker.js` — mantener el estado y pintar el badge.**
+  - Agregar un `const conversionStates = new Map();` a nivel de módulo (clave: `sessionId`, valor algo como `{ meetingTitle, stream, pct }`).
+  - Listener para `asterion:conversion-started`: `conversionStates.set(sessionId, { meetingTitle, stream, pct: 0 })`, llamar a una función `updateBadge()`.
+  - Listener para `asterion:conversion-progress`: actualizar la entrada existente (`stream`, `pct`) si existe, llamar a `updateBadge()`.
+  - Listener para `asterion:conversion-finished`: `conversionStates.delete(sessionId)`, llamar a `updateBadge()`.
+  - `updateBadge()`: si `conversionStates.size === 0`, `chrome.action.setBadgeText({ text: "" })`. Si `size === 1`, tomar la única entrada y pintar `chrome.action.setBadgeText({ text: `${stream === "video" ? "V" : "A"}${pct}` })` (confirmar que el texto entra bien en el badge — Chrome trunca badges largos, `A42`/`V12` debería entrar sin problema, verificar visualmente). Si `size > 1`, pintar `chrome.action.setBadgeText({ text: String(conversionStates.size) })`. Elegí un color de fondo razonable con `chrome.action.setBadgeBackgroundColor(...)` (por ejemplo un azul o el mismo acento que ya usa el diseño, ver `var(--accent-blue)`/`var(--accent-green)` en `src/shared/theme.css` para inspirarte, aunque acá es un valor hex fijo, no puede usar variables CSS).
+  - Agregar un handler para un mensaje nuevo `asterion:get-conversion-status` que responda con un resumen del `conversionStates` actual (por ejemplo `{ count: conversionStates.size, entries: [...conversionStates.values()] }`), para que el popup lo pueda consultar.
+
+- [ ] **Step 4: `popup.js` — reflejar el estado en el popup.** En `refresh()`, además de lo que ya hace, mandar `chrome.runtime.sendMessage({ type: "asterion:get-conversion-status" })` y renderizar una fila/tarjeta chica cuando `count > 0` (independiente del estado de la reunión actual — puede estar procesando una reunión anterior mientras el usuario ya está en una reunión nueva), con un texto simple tipo "Procesando audio... 42%" / "Procesando video... 12%" (si `count === 1`) o "Procesando 2 reuniones..." (si `count > 1`). Usar tu criterio de dónde encaja mejor esa fila en cada uno de los 4 estados del popup (`Listo`, `Reunión detectada`, `Grabando`, `Error`) — probablemente arriba del todo, debajo del header, ya que es información que no depende de en qué reunión está el usuario ahora mismo.
+
+- [ ] **Step 5: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 18/18 tests siguen pasando (no hay tests automatizados nuevos para esto — se verifica manualmente).
+
+- [ ] **Step 6: Manual verification**
+
+Grabar una reunión con video, terminarla, y confirmar: (a) apenas arranca la conversión de audio aparece el badge `A 0`/similar sobre el ícono de la extensión, avanzando; (b) al pasar a video cambia a `V 0` y sube; (c) el badge desaparece cuando termina todo; (d) abrir el popup mientras tanto y confirmar que muestra el mismo progreso; (e) si es posible, probar el caso de dos reuniones convirtiéndose a la vez (grabar una segunda reunión corta mientras la primera todavía está convirtiendo el video) y confirmar que el badge pasa a mostrar la cantidad de reuniones pendientes en vez de un porcentaje.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/offscreen/ffmpeg-client.js src/storage/session-writer.js src/background/service-worker.js src/popup/popup.js
+git commit -m "feat: show a toolbar badge and popup indicator with real conversion progress"
+```

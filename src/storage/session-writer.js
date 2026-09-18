@@ -23,6 +23,14 @@ function formatTimestamp(ms) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function sendConversionMessage(message) {
+  try {
+    chrome.runtime.sendMessage(message).catch(() => {});
+  } catch {
+    // La señal de progreso no debe interrumpir la conversión real.
+  }
+}
+
 export class SessionWriter {
   constructor({ sessionId, tabId, meetingTitle }) {
     this.sessionId = sessionId;
@@ -76,6 +84,7 @@ export class SessionWriter {
   }
 
   async finalize({ muteManifest }) {
+    const endedAt = Date.now();
     await this.ready;
     this.captionParser.finalizeCurrent(Date.now());
 
@@ -105,7 +114,7 @@ export class SessionWriter {
     // No se espera esta promesa — la sesión ya se considera "finalizada" con los
     // webm originales a salvo; la conversión sigue en segundo plano y actualiza
     // el manifest cuando termina (éxito o fallo).
-    this.scheduleConversions(muteManifest);
+    this.scheduleConversions(muteManifest, endedAt);
 
     return {
       sessionId: this.sessionId,
@@ -141,14 +150,40 @@ export class SessionWriter {
     await manifestWritable.close();
   }
 
-  async scheduleConversions(muteManifest) {
+  async scheduleConversions(muteManifest, endedAt) {
     let audioConversionStatus = this.streamsUsed.has("meeting") ? "pending" : "skipped";
     let videoConversionStatus = this.hasVideo ? "pending" : "skipped";
     let hasAudioMp3 = false;
     let hasVideoMp4 = false;
+    const knownDurationMs = Math.max(1, endedAt - this.startedAt);
+
+    const createProgressReporter = (stream) => {
+      let lastSentPct = 0;
+      let lastSentAt = Date.now();
+      let lastTimeMs = -Infinity;
+
+      return (timeMs) => {
+        if (!Number.isFinite(timeMs) || timeMs < 0 || timeMs < lastTimeMs) return;
+        lastTimeMs = timeMs;
+
+        const pct = Math.min(100, Math.max(0, Math.round((timeMs / knownDurationMs) * 100)));
+        const now = Date.now();
+        if (pct === lastSentPct || now - lastSentAt < 500) return;
+
+        lastSentPct = pct;
+        lastSentAt = now;
+        sendConversionMessage({ type: "asterion:conversion-progress", sessionId: this.sessionId, stream, pct });
+      };
+    };
 
     try {
       if (this.streamsUsed.has("meeting")) {
+        sendConversionMessage({
+          type: "asterion:conversion-started",
+          sessionId: this.sessionId,
+          meetingTitle: this.meetingTitle,
+          stream: "meeting",
+        });
         try {
           await this._convertStream({
             sourceFileName: STREAM_FILE_NAMES.meeting,
@@ -156,6 +191,7 @@ export class SessionWriter {
             inputExt: "webm",
             outputExt: "mp3",
             args: ["-vn"],
+            onProgress: createProgressReporter("meeting"),
           });
           audioConversionStatus = "succeeded";
           hasAudioMp3 = true;
@@ -174,6 +210,12 @@ export class SessionWriter {
         } catch (error) {
           console.error("[Asterion] No se pudo obtener el preset de video guardado, se usa 'medium' por defecto:", error);
         }
+        sendConversionMessage({
+          type: "asterion:conversion-started",
+          sessionId: this.sessionId,
+          meetingTitle: this.meetingTitle,
+          stream: "video",
+        });
         try {
           await this._convertStream({
             sourceFileName: STREAM_FILE_NAMES.video,
@@ -181,6 +223,7 @@ export class SessionWriter {
             inputExt: "webm",
             outputExt: "mp4",
             args: ["-fps_mode", "vfr", "-preset", videoPreset],
+            onProgress: createProgressReporter("video"),
           });
           videoConversionStatus = "succeeded";
           hasVideoMp4 = true;
@@ -193,6 +236,7 @@ export class SessionWriter {
     } catch (error) {
       console.error("[Asterion] Falló inesperadamente la programación de conversiones:", error);
     } finally {
+      sendConversionMessage({ type: "asterion:conversion-finished", sessionId: this.sessionId });
       try {
         await this.onConversionsFinished?.();
       } catch (error) {
@@ -201,11 +245,11 @@ export class SessionWriter {
     }
   }
 
-  async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args }) {
+  async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args, onProgress }) {
     const sourceHandle = await this.meetingHandle.getFileHandle(sourceFileName);
     const sourceFile = await sourceHandle.getFile();
     const inputBytes = new Uint8Array(await sourceFile.arrayBuffer());
-    const outputBytes = await runFfmpegJob({ inputBytes, inputExt, outputExt, args });
+    const outputBytes = await runFfmpegJob({ inputBytes, inputExt, outputExt, args, onProgress });
     const targetHandle = await this.meetingHandle.getFileHandle(targetFileName, { create: true });
     const targetWritable = await targetHandle.createWritable();
     await targetWritable.write(outputBytes);

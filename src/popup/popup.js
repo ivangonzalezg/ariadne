@@ -48,11 +48,26 @@ function header() {
   </div>`;
 }
 
-function render(status, autoStart) {
+function conversionProgress(conversionStatus) {
+  if (!conversionStatus || conversionStatus.count === 0) return "";
+
+  if (conversionStatus.count > 1) {
+    return `<div class="card-box"><div class="source-row"><div class="source-left">${icon("audio-lines", { size: 16, color: "var(--accent-blue)" })}<span>Procesando ${conversionStatus.count} reuniones...</span></div></div></div>`;
+  }
+
+  const { stream, pct } = conversionStatus.entries[0];
+  const label = stream === "video" ? "video" : "audio";
+  const iconName = stream === "video" ? "video" : "audio-lines";
+  return `<div class="card-box"><div class="source-row"><div class="source-left">${icon(iconName, { size: 16, color: "var(--accent-blue)" })}<span>Procesando ${label}... ${pct}%</span></div></div></div>`;
+}
+
+function render(status, autoStart, conversionStatus) {
   if (timerInterval) clearInterval(timerInterval);
+  const conversionProgressHtml = conversionProgress(conversionStatus);
 
   if (!status || !status.inMeeting) {
     appEl.innerHTML = `${header()}
+      ${conversionProgressHtml}
       <div class="status-row"><span class="dot" style="background:var(--accent-green)"></span><span class="status-title">Listo</span></div>
       <div class="status-copy">Abre una reunión de Google Meet para comenzar.</div>
       ${footer(autoStart)}`;
@@ -62,6 +77,7 @@ function render(status, autoStart) {
 
   if (status.state === "idle") {
     appEl.innerHTML = `${header()}
+      ${conversionProgressHtml}
       <div class="status-row"><span class="dot" style="background:var(--accent-blue)"></span><span class="status-title">Reunión detectada</span></div>
       <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
       <button class="primary" id="start-capture">${icon("play", { size: 15 })}Iniciar captura</button>
@@ -76,6 +92,7 @@ function render(status, autoStart) {
 
   if (status.state === "error") {
     appEl.innerHTML = `${header()}
+      ${conversionProgressHtml}
       <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Error</span></div>
       <div class="status-copy">No se pudo iniciar la grabación. Volvé a intentarlo.</div>
       ${footer(autoStart)}`;
@@ -85,6 +102,7 @@ function render(status, autoStart) {
 
   // recording / video-enabled
   appEl.innerHTML = `${header()}
+    ${conversionProgressHtml}
     <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Grabando</span></div>
     <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
     <div class="timer" id="timer">00:00</div>
@@ -122,15 +140,18 @@ function wireFooter(autoStart) {
 
 async function refresh() {
   const { autoStart } = await chrome.storage.local.get({ autoStart: true });
+  const conversionStatus = await chrome.runtime
+    .sendMessage({ type: "asterion:get-conversion-status" })
+    .catch(() => ({ count: 0, entries: [] }));
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url?.startsWith("https://meet.google.com/")) {
     activeTabId = null;
-    render(null, autoStart);
+    render(null, autoStart, conversionStatus);
     return;
   }
   activeTabId = tab.id;
   chrome.tabs.sendMessage(tab.id, { type: "asterion:get-status" }, (response) => {
-    render(chrome.runtime.lastError ? null : response, autoStart);
+    render(chrome.runtime.lastError ? null : response, autoStart, conversionStatus);
   });
 }
 
