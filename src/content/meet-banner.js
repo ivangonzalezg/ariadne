@@ -65,7 +65,7 @@ function renderRecording() {
 
   return `<div class="banner ${isExpanded ? "expanded" : "pill"}">
     <div class="recording-top">
-      <div class="recording-copy"><span class="dot" style="background:var(--accent-red)"></span><strong>Asterion</strong><span class="timer">${formatElapsed(currentMeta.startedAt)}</span></div>
+      <div class="recording-copy"><img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20"><strong>Asterion</strong><span class="timer">${formatElapsed(currentMeta.startedAt)}</span></div>
       <div class="controls">${recordingControls()}</div>
     </div>
     ${sources}
