@@ -51,10 +51,9 @@ function render(status, autoStart) {
   if (timerInterval) clearInterval(timerInterval);
 
   if (!status || !status.inMeeting) {
-    const inactive = !autoStart;
     appEl.innerHTML = `${header()}
-      <div class="status-row"><span class="dot" style="background:${inactive ? "var(--text-muted)" : "var(--accent-green)"}"></span><span class="status-title">${inactive ? "Inactivo" : "Listo"}</span></div>
-      <div class="status-copy">${inactive ? "La extensión está deshabilitada." : "Abre una reunión de Google Meet para comenzar."}</div>
+      <div class="status-row"><span class="dot" style="background:var(--accent-green)"></span><span class="status-title">Listo</span></div>
+      <div class="status-copy">Abre una reunión de Google Meet para comenzar.</div>
       ${footer(autoStart)}`;
     wireFooter(autoStart);
     return;
