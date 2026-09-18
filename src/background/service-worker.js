@@ -5,13 +5,10 @@ const conversionStates = new Map();
 let offscreenCreationPromise = null;
 
 function updateBadge() {
-  let text = "";
-  if (conversionStates.size === 1) {
-    const { stream, pct } = conversionStates.values().next().value;
-    text = `${stream === "video" ? "V" : "A"}${pct}`;
-  } else if (conversionStates.size > 1) {
-    text = String(conversionStates.size);
-  }
+  // Un texto que cambia constantemente (letra de fase + porcentaje) resulta
+  // muy distractor sobre el ícono — solo mostramos cuántas reuniones se
+  // están procesando en simultáneo, que cambia poco.
+  const text = conversionStates.size > 0 ? String(conversionStates.size) : "";
 
   chrome.action.setBadgeText({ text });
   if (text) chrome.action.setBadgeBackgroundColor({ color: "#3B82F6" });

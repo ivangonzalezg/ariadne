@@ -67,21 +67,21 @@ function render(status, autoStart, conversionStatus) {
 
   if (!status || !status.inMeeting) {
     appEl.innerHTML = `${header()}
-      ${conversionProgressHtml}
       <div class="status-row"><span class="dot" style="background:var(--accent-green)"></span><span class="status-title">Listo</span></div>
       <div class="status-copy">Abre una reunión de Google Meet para comenzar.</div>
-      ${footer(autoStart)}`;
+      ${footer(autoStart)}
+      ${conversionProgressHtml}`;
     wireFooter(autoStart);
     return;
   }
 
   if (status.state === "idle") {
     appEl.innerHTML = `${header()}
-      ${conversionProgressHtml}
       <div class="status-row"><span class="dot" style="background:var(--accent-blue)"></span><span class="status-title">Reunión detectada</span></div>
       <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
       <button class="primary" id="start-capture">${icon("play", { size: 15 })}Iniciar captura</button>
-      ${footer(autoStart)}`;
+      ${footer(autoStart)}
+      ${conversionProgressHtml}`;
     document.getElementById("start-capture").addEventListener("click", () => {
       chrome.tabs.sendMessage(activeTabId, { type: "asterion:popup-start" });
       refresh();
@@ -92,17 +92,16 @@ function render(status, autoStart, conversionStatus) {
 
   if (status.state === "error") {
     appEl.innerHTML = `${header()}
-      ${conversionProgressHtml}
       <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Error</span></div>
       <div class="status-copy">No se pudo iniciar la grabación. Volvé a intentarlo.</div>
-      ${footer(autoStart)}`;
+      ${footer(autoStart)}
+      ${conversionProgressHtml}`;
     wireFooter(autoStart);
     return;
   }
 
   // recording / video-enabled
   appEl.innerHTML = `${header()}
-    ${conversionProgressHtml}
     <div class="status-row"><span class="dot" style="background:var(--accent-red)"></span><span class="status-title">Grabando</span></div>
     <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
     <div class="timer" id="timer">00:00</div>
@@ -113,7 +112,8 @@ function render(status, autoStart, conversionStatus) {
       ${sourceRow("app-window", "Video de la pestaña", status.videoEnabled, "Activo", "No activo")}
     </div>
     <button class="danger" id="stop-capture">${icon("square", { size: 14 })}Detener captura</button>
-    ${footer(autoStart)}`;
+    ${footer(autoStart)}
+    ${conversionProgressHtml}`;
   wireFooter(autoStart);
   document.getElementById("stop-capture").addEventListener("click", () => {
     chrome.tabs.sendMessage(activeTabId, { type: "asterion:popup-stop" });
