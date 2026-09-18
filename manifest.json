@@ -17,7 +17,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/shared/theme.css"],
+      "resources": ["src/shared/theme.css", "icons/icon32.png"],
       "matches": ["https://meet.google.com/*"]
     }
   ],

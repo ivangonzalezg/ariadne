@@ -45,6 +45,7 @@ function recordingControls() {
 
 function renderDetected() {
   return `<div class="banner pill detected">
+    <img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20">
     <div class="brand-copy"><strong>Asterion</strong><span>Reunión detectada</span></div>
     <button class="primary-button" id="start-capture" type="button">${icon("play", { size: 15 })}Iniciar captura</button>
   </div>`;
@@ -237,6 +238,7 @@ export function showBanner({ onStart, onStop }) {
       .expanded, .finished { border-radius: 20px; }
       .detected, .recording-top, .recording-copy, .controls, .brand-copy, .source-label, .source-status, .info-row, .finish-badge, .secondary-button, .primary-button, .danger-button, .icon-button { display: flex; align-items: center; }
       .detected, .recording-top { justify-content: space-between; gap: 12px; }
+      .brand-icon { flex: 0 0 auto; border-radius: 6px; }
       .brand-copy { min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
       strong { color: var(--text-primary); font-size: 13px; font-weight: 650; }
       .brand-copy span, .timer { color: var(--text-secondary); font-size: 12px; }
