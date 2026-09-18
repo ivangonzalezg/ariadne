@@ -45,14 +45,18 @@ function cleanupObservers() {
   stopCaptionObserver = () => {};
 }
 
+function getCurrentMeetingTitle() {
+  return document.title && document.title.trim() && document.title.trim() !== "Meet"
+    ? document.title.trim()
+    : "Reunión sin título";
+}
+
 async function startRecording() {
   if (sessionId) return;
   sessionId = generateSessionId();
   setState("starting");
 
-  meetingTitle = document.title && document.title.trim() && document.title.trim() !== "Meet"
-    ? document.title.trim()
-    : "Reunión sin título";
+  meetingTitle = getCurrentMeetingTitle();
   console.log("[Asterion:debug] startRecording iniciado", { sessionId, meetingTitle });
   startedAt = Date.now();
   hasTranscript = false;
@@ -140,7 +144,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({
       inMeeting: isInActiveMeeting(),
       state: currentState,
-      meetingTitle,
+      meetingTitle: meetingTitle ?? getCurrentMeetingTitle(),
       startedAt,
       hasTranscript,
       micMuted,
