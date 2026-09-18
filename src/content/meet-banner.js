@@ -233,7 +233,7 @@ export function showBanner({ onStart, onStop }) {
   shadowRoot.innerHTML = `<link rel="stylesheet" href="${chrome.runtime.getURL("src/shared/theme.css")}">
     <style>
       #content { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; font-family: Inter, system-ui, sans-serif; touch-action: none; }
-      .banner { min-width: 310px; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px var(--shadow); color: var(--text-primary); padding: 12px; }
+      .banner { min-width: 310px; max-width: 340px; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px var(--shadow); color: var(--text-primary); padding: 12px; }
       .pill { border-radius: 999px; }
       .expanded, .finished { border-radius: 20px; }
       .detected, .recording-top, .recording-copy, .controls, .brand-copy, .source-label, .source-status, .info-row, .finish-badge, .secondary-button, .primary-button, .danger-button, .icon-button { display: flex; align-items: center; }
@@ -258,7 +258,9 @@ export function showBanner({ onStart, onStop }) {
       .source-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
       .source-label { gap: 8px; color: var(--text-primary); font-size: 12px; }
       .source-status { gap: 5px; font-size: 11px; white-space: nowrap; }
-      .info-row { gap: 8px; margin-top: 12px; color: var(--text-secondary); font-size: 11px; line-height: 1.35; }
+      .info-row { gap: 8px; margin-top: 12px; color: var(--text-secondary); font-size: 11px; line-height: 1.35; align-items: flex-start; }
+      .info-row svg { flex: 0 0 auto; margin-top: 1px; }
+      .info-row span { min-width: 0; }
       .finished { display: flex; align-items: center; gap: 10px; min-width: 430px; }
       .finish-badge { justify-content: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; background: var(--accent-green); color: #fff; }
       .finish-copy { flex: 1; }
