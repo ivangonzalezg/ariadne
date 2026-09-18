@@ -93,6 +93,8 @@ function appendToHistory(meta) {
       folderName: meta.folderName,
       meetingTitle: meta.meetingTitle,
       startedAt: meta.startedAt,
+      endedAt: meta.endedAt,
+      durationMs: meta.durationMs,
       hasTranscript: meta.hasTranscript,
       hasVideo: meta.hasVideo,
     });

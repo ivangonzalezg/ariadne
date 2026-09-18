@@ -84,7 +84,7 @@ export class SessionWriter {
   }
 
   async finalize({ muteManifest }) {
-    const endedAt = Date.now();
+    this.endedAt = Date.now();
     await this.ready;
     this.captionParser.finalizeCurrent(Date.now());
 
@@ -114,13 +114,15 @@ export class SessionWriter {
     // No se espera esta promesa — la sesión ya se considera "finalizada" con los
     // webm originales a salvo; la conversión sigue en segundo plano y actualiza
     // el manifest cuando termina (éxito o fallo).
-    this.scheduleConversions(muteManifest, endedAt);
+    this.scheduleConversions(muteManifest, this.endedAt);
 
     return {
       sessionId: this.sessionId,
       tabId: this.tabId,
       folderName: this.meetingHandle.name,
       startedAt: this.startedAt,
+      endedAt: this.endedAt,
+      durationMs: this.endedAt - this.startedAt,
       meetingTitle: this.meetingTitle,
       hasTranscript: this.hasCaption,
       hasVideo: this.hasVideo,
@@ -134,6 +136,8 @@ export class SessionWriter {
       JSON.stringify(
         {
           startedAt: this.startedAt,
+          endedAt: this.endedAt,
+          durationMs: this.endedAt - this.startedAt,
           meetingTitle: this.meetingTitle,
           hasTranscript: this.hasCaption,
           hasVideo: this.hasVideo,

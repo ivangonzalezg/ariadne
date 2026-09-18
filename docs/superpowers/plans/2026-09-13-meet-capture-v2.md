@@ -4281,3 +4281,123 @@ Grabar una reunión con video, terminarla, y confirmar: (a) apenas arranca la co
 git add src/offscreen/ffmpeg-client.js src/storage/session-writer.js src/background/service-worker.js src/popup/popup.js
 git commit -m "feat: show a toolbar badge and popup indicator with real conversion progress"
 ```
+
+---
+
+## Task 34: Persistir `endedAt`/duración por reunión (base para el rediseño del historial)
+
+El usuario pidió rediseñar `src/history/history.html`/`history.js` para que coincida con un diseño hecho en Pencil (nodo `BwqWL` "Historial de reuniones", extraído completo con el MCP de Pencil — layout de 3 columnas: Sidebar con búsqueda/filtros/calendario/KPIs, Listado, Detalle con tabs Transcripción/Audio/Video/Manifest). Solo se implementa el **modo oscuro** (el modo claro del diseño tiene problemas de contraste, queda fuera de alcance). Antes de tocar la UI, hace falta un dato que hoy no se guarda en ningún lado: `endedAt`/duración de la reunión — se necesita para mostrar el rango horario real ("10:00 – 10:48") y para el KPI de "tiempo grabado este mes".
+
+Codex confirmó (revisión previa) un detalle importante: `manifest.json` de cada reunión se reescribe VARIAS veces durante la conversión (`_writeManifest` se llama después de audio y después de video) — si `endedAt`/`durationMs` no se guardan como estado de instancia y se incluyen en TODAS esas reescrituras, se van a perder en la segunda escritura.
+
+**Files:**
+- Modify: `src/storage/session-writer.js`
+- Modify: `src/background/service-worker.js`
+
+- [ ] **Step 1: `session-writer.js`** — en `finalize()`, guardar `this.endedAt = Date.now();` como propiedad de instancia (en vez de la variable local `endedAt` que ya existe) y seguir usándola donde ya se usa (el cálculo de `knownDurationMs` en `scheduleConversions`). En `_writeManifest(...)`, agregar al objeto que se serializa: `endedAt: this.endedAt, durationMs: this.endedAt - this.startedAt`. En el objeto que retorna `finalize()` (el que se manda como `asterion:session-finalized`), agregar también `endedAt: this.endedAt, durationMs: this.endedAt - this.startedAt`.
+
+- [ ] **Step 2: `service-worker.js`** — en `appendToHistory(meta)`, agregar `endedAt: meta.endedAt` y `durationMs: meta.durationMs` al objeto que se guarda en `chrome.storage.local.meetingHistory`.
+
+- [ ] **Step 3: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 18/18 tests siguen pasando.
+
+- [ ] **Step 4: Manual verification**
+
+Grabar una reunión corta, terminarla, y confirmar (por ejemplo abriendo el `manifest.json` de esa reunión desde el historial actual, o inspeccionando `chrome.storage.local.meetingHistory` desde la consola del service worker) que `endedAt`/`durationMs` quedan guardados y sobreviven a la reescritura posterior del manifest cuando termina la conversión de audio/video.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/storage/session-writer.js src/background/service-worker.js
+git commit -m "feat: persist endedAt/duration per meeting for the redesigned history page"
+```
+
+---
+
+## Task 35: Historial — layout de 3 columnas, sidebar funcional (búsqueda/filtros/calendario/KPIs), listado
+
+Reescritura de `src/history/history.html`/`history.js` según el diseño de Pencil (nodo `BwqWL`, variantes `l08uG`/`bXi9t`/`PYNGS`/`mjX0I` para referencia de contenido — todas comparten el mismo Sidebar/Listado). Esta tarea cubre el layout general y las dos primeras columnas; el panel de Detalle es la Task 36.
+
+**Diseño de referencia (extraído de Pencil, usar los mismos valores):**
+
+- Página completa: 1440px de ancho, 3 columnas fijas: Sidebar 280px, Listado 520px, Detalle 640px (sin scroll horizontal — definir un modo angosto/responsive razonable en vez de heredar el `min-width: 360px` que tiene hoy `history.html`, ya que este layout es mucho más ancho).
+- **Sidebar** (`fill: $bg`, `padding: 24`, `layout: vertical`, `gap: 20`):
+  - Identificación: logo (usar el ícono real de la extensión, `icons/icon32.png`, mismo criterio que en el popup/banner) + "Asterion" (15px, weight 600), título "Historial" (20px, weight 600), descripción "Reuniones guardadas localmente en este dispositivo." (12px, `$text-muted`).
+  - Buscador: input de texto sobre `$bg-elevated`, ícono de lupa, placeholder "Buscar por título" — filtra la lista por substring del título (case-insensitive).
+  - Filtros: label "Filtros" (11px, weight 600, `$text-muted`) + 5 chips combinables en 3 filas: "Todas" / "Con transcripción" (fila 1), "Con video" / "Solo audio" (fila 2), "Este mes" / "Este año" (fila 3). Chip activo: `fill: $bg-button`; inactivo: `fill: $bg`. "Todas" desactiva cualquier otro filtro de tipo de archivo. "Con transcripción"/"Con video"/"Solo audio" son mutuamente combinables entre sí pero conceptualmente: `hasTranscript`, `hasVideo`, `!hasVideo` respectivamente (no hace falta un campo `hasAudio` nuevo — el audio siempre se graba, así que "Solo audio" es simplemente `!hasVideo`, confirmado con Codex). "Este mes"/"Este año" filtran por `startedAt` en la zona horaria local del usuario.
+  - Calendario: mes/año actual con navegación ←/→, grilla de 7 columnas (Lu-Do) x hasta 6 filas, cada día es un componente con el número y un punto azul (`$accent-blue`) si hay al menos una reunión ese día (comparar por fecha local, no por timestamp crudo). Click en un día filtra el listado a esa fecha específica (toggle: click de nuevo lo deselecciona). Día seleccionado: `fill: $accent-blue`.
+  - KPIs: 4 filas "valor grande (16px) + etiqueta (12px, `$text-muted`)": "N reuniones este mes", "Nh Nm de grabación" (sumar `durationMs` de las reuniones de este mes, Task 34), "N reuniones con video", "N reuniones con transcripción" — todos calculados en el momento, síncronos, contra el array completo de `meetingHistory` (hasta 200 elementos, trivial para JS síncrono, confirmado con Codex — no hace falta memoización).
+- **Listado** (`padding: 20`, `layout: vertical`, `gap: 4`):
+  - Header: "Reuniones" (20px, weight 600) + "N resultados" (13px, `$text-secondary`, refleja el filtro activo) + selector de orden a la derecha ("Más recientes primero" / "Más antiguas primero", sobre `$bg-elevated`).
+  - Lista de tarjetas (`fill: $bg-elevated`, `radius: 12`, `padding` interno, `gap: 8` entre tarjetas): título (14px) + ícono "more" a la derecha, fecha+hora ("Jue, 17 de septiembre de 2026 · 10:00 – 10:48", 12px `$text-muted` — usar `durationMs`/`endedAt` reales de la Task 34), fila de chips chicos por archivo disponible (Transcripción/Audio/Video/Manifest — mostrar solo los que existen realmente para esa reunión), link "Ver detalles" (`$accent-blue`) que selecciona esa reunión para el panel de Detalle (Task 36).
+  - La lista completa (filtrada/ordenada/buscada) se recalcula de forma pura a partir del estado (ver arquitectura de estado abajo) — nunca dispara I/O de OPFS para renderizar las tarjetas, todos los datos vienen de `chrome.storage.local.meetingHistory` (confirmado con Codex: el problema de rendimiento actual es que `renderMeetingFiles` dispara una enumeración de OPFS por tarjeta; el rediseño NO debe hacer eso para el listado, solo para el panel de Detalle cuando se abre una reunión específica).
+
+**Arquitectura de estado (confirmada con Codex, aplica a toda la página incluyendo la Task 36):**
+- Un objeto de estado único a nivel de módulo: `{ meetings, search, filters: { transcript, video, audioOnly, thisMonth, thisYear }, calendarMonth, selectedDay, sort, selectedMeetingId, selectedTab }`.
+- Una función pura `deriveVisibleMeetings(state)` que aplica búsqueda + filtros + día seleccionado + orden sobre `state.meetings`, sin efectos secundarios.
+- Funciones de render separadas para sidebar/listado/detalle (la de detalle es la Task 36), cada una re-renderizando su propia porción del DOM cuando cambia el estado relevante — evitar volver a montar el reproductor de audio/video activo en cada tecla tipeada en el buscador (eso rompería la reproducción en curso).
+- Usar `textContent`/escape explícito para título de reunión y cualquier texto que pueda contener HTML — nunca interpolar directo en `innerHTML` sin escapar (aplica sobre todo al contenido real de transcripción/manifest en la Task 36, pero establecé el patrón acá también).
+- Escuchar `chrome.storage.onChanged` para refrescar la lista si el historial cambia mientras la página está abierta (por ejemplo, una conversión que termina en segundo plano y actualiza algo, o una reunión nueva que se agrega) — confirmado con Codex como un gap real de la página actual.
+
+**Files:**
+- Rewrite: `src/history/history.html`
+- Rewrite: `src/history/history.js`
+
+- [ ] **Step 1-N**: implementar lo descrito arriba. Dividí el trabajo en los pasos que consideres más claros (estructura HTML/CSS del layout de 3 columnas primero, después el estado y el sidebar, después el listado) — no hace falta que sea un solo paso gigante, agregá tantos `- [ ] **Step N**` como haga falta para que quede prolijo, siguiendo el mismo estilo que el resto del plan.
+- [ ] **Build + tests**: `npm run build && npm test` — build limpio, 18/18 tests siguen pasando (no hay tests automatizados nuevos para esto).
+- [ ] **Manual verification**: abrir el historial con varias reuniones reales grabadas, probar buscar por texto, cada chip de filtro individualmente y combinados, navegar el calendario y hacer click en un día con/sin reuniones, cambiar el orden, y confirmar que los KPIs coinciden con la realidad.
+- [ ] **Commit**: `git add src/history/history.html src/history/history.js` + mensaje descriptivo.
+
+---
+
+## Task 36: Historial — panel de Detalle (tabs, transcripción real, manifest real, eliminar)
+
+Continúa la Task 35 — el panel de Detalle (640px) que se abre al seleccionar una reunión del listado.
+
+**Diseño de referencia:**
+
+- Header (`padding: 24`): título de la reunión (18px, weight 600), fecha completa ("Jueves, 17 de septiembre de 2026", 13px `$text-secondary`), fila de metadata: rango horario real (`startedAt`–`endedAt` de la Task 34, 12px `$text-muted`) + punto separador + fuente ("Google Meet" — **Codex marcó que este campo no tiene respaldo de datos real hoy**; usar un texto fijo "Google Meet" ya que la extensión solo captura de ahí, no hace falta un campo nuevo).
+- File tabs (4): Transcripción / Audio / Video / Manifest — mostrar SOLO los tabs de contenido que realmente existen para esa reunión (por ejemplo, sin transcripción, no mostrar ese tab; sin video, no mostrar el tab de Video). Tab activo: `fill: $bg-button`.
+- Contenido por tab (cargar el archivo real de OPFS recién cuando se abre esa reunión/tab, no antes — confirmado con Codex, evitar I/O innecesario):
+  - **Transcripción**: leer `transcripcion.txt` real, parsear líneas `[mm:ss] [speaker] texto` y renderizar una fila por línea: timestamp (`$text-muted`, monoespaciado opcional) + nombre del hablante en negrita (`$text-primary`) + el texto (`$text-secondary`) — confirmado con el usuario, sin inventar secciones H1/Agenda/Notas como en el mockup del diseño.
+  - **Manifest**: leer `manifest.json` real de esa reunión, mostrarlo con `JSON.stringify(obj, null, 2)` resaltado con una función chica propia (tokenizar por regex: claves, strings, números, booleanos/`null`, cada uno con su color) — **IMPORTANTE, confirmado con Codex**: escapar `&`, `<`, `>` del texto ANTES de envolver los tokens en `<span>`, porque `meetingTitle` (que sí puede terminar en el manifest) viene de `document.title` de la pestaña de Meet — no es un dato 100% controlado por la extensión, así que insertarlo crudo vía `innerHTML` es un riesgo real de XSS dentro de una página de la extensión, no algo teórico.
+  - Audio/Video: placeholder en esta tarea (la Task 37 implementa los reproductores custom) — dejar el contenedor listo con un mensaje simple tipo "Cargando..." si hace falta, sin bloquear el resto de esta tarea.
+- Footer: nombre + peso del archivo del tab activo (usar `file.size` del archivo real leído de OPFS), botones "Abrir" (reusar la lógica de `viewFile` del `history.js` actual) y "Descargar" (reusar `downloadFile`), separador, link "Eliminar reunión" (`$accent-red`) que abre el diálogo de confirmación.
+- **Diálogo de eliminar**: reemplazar el `confirm()` nativo que usa `deleteMeeting()` hoy por un modal real (`fill: $bg-elevated`, `radius: 16`) con título "Eliminar reunión", cuerpo "Se eliminarán {título} y todos sus archivos de este dispositivo. Esta acción es permanente y no se puede deshacer.", botones Cancelar/Eliminar (`$accent-red`). Confirmado con Codex: el modal necesita manejar foco correctamente (atrapar el foco adentro, cerrar con Escape, devolver el foco al elemento que abrió el modal al cerrar) — no hace falta una librería, son unos pocos listeners.
+
+**Files:**
+- Modify: `src/history/history.js` (continúa sobre la Task 35, mismo archivo)
+- Modify: `src/history/history.html` (si hace falta CSS nuevo para el detalle/modal)
+
+- [ ] **Step 1-N**: implementar lo descrito arriba, tantos steps como haga falta.
+- [ ] **Build + tests**: `npm run build && npm test`.
+- [ ] **Manual verification**: abrir el detalle de varias reuniones distintas (con y sin transcripción/video), confirmar que los tabs que no aplican no aparecen, que la transcripción real se ve bien, que el manifest real se ve resaltado y sin romperse aunque el título de la reunión tenga caracteres raros (probar con una reunión cuyo título tenga `<`/`>`/`&` si es posible, para confirmar el escape), y que Eliminar reunión funciona con el modal nuevo.
+- [ ] **Commit**.
+
+---
+
+## Task 37: Historial — reproductores custom de audio y video
+
+Implementa los tabs de Audio y Video del panel de Detalle (Task 36), con controles propios en vez de los nativos del navegador — coincidiendo con el diseño de Pencil (componentes `C · Audio player` y `C · Video player`).
+
+**Diseño de referencia:**
+
+- **Audio**: label "Audio de la reunión" arriba. Fila de "fuentes" (decorativa en el diseño, no hace falta que sea funcional — es un solo archivo de audio ya mezclado, no hay selección real de fuente). Transporte: retroceder 10s, play/pausa (círculo `$accent-blue`, 52px), adelantar 10s, tiempo actual/total ("12:04 / 48:12"). Barra de progreso arrastrable (`$bg-button` de fondo, `$accent-blue` la porción reproducida). Control de volumen (ícono + barra).
+- **Video**: reproductor con esquinas redondeadas (`radius: 12`, fondo `#0E1016`), controles superpuestos abajo con fondo semitransparente (`#00000080`): play/pausa, barra de seek, tiempo, volumen, pantalla completa — todos con íconos blancos sobre el video.
+- Ambos: usar un `<audio>`/`<video>` nativo oculto (`controls: false`) manejado manualmente vía su API (`play()`, `pause()`, `currentTime`, `volume`, eventos `loadedmetadata`/`timeupdate`/`durationchange`/`ended`/`error`) — confirmado con Codex.
+- Resolver qué archivo reproducir con fallback: `audio-reunion.mp3` si existe, si no `audio-reunion.webm` (ídem `video-reunion.mp4` → `video-reunion.webm`) — la conversión a mp3/mp4 puede no haber terminado todavía (el manifest puede estar en `audioConversionStatus: "pending"` cuando el usuario abre el historial justo después de terminar una reunión).
+- **Importante (confirmado con Codex)**: NO intentar autoplay al abrir el tab (Chrome puede bloquear reproducción sin gesto del usuario) — el usuario hace click en play manualmente. Revocar el blob URL del reproductor anterior recién cuando se reemplaza/cierra, nunca mientras sigue reproduciéndose (por ejemplo, al cambiar de reunión seleccionada en el listado mientras el audio de la anterior sigue sonando — decidir con criterio si eso debe pausar/detener la reproducción anterior primero).
+
+**Files:**
+- Modify: `src/history/history.js`
+
+- [ ] **Step 1-N**: implementar lo descrito arriba.
+- [ ] **Build + tests**: `npm run build && npm test`.
+- [ ] **Manual verification**: reproducir audio y video real de una reunión grabada, probar play/pausa, arrastrar la barra de progreso, retroceder/adelantar 10s, cambiar volumen, pantalla completa del video, y confirmar que cambiar de reunión seleccionada no deja audio/video sonando de fondo sin control ni rompe la página.
+- [ ] **Commit**.
