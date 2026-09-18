@@ -63,15 +63,16 @@ function render(status, autoStart) {
   if (status.state === "idle") {
     appEl.innerHTML = `${header()}
       <div class="status-row"><span class="dot" style="background:var(--accent-blue)"></span><span class="status-title">Reunión detectada</span></div>
-      <div class="status-copy">Puedes iniciar la captura desde la reunión.</div>
+      <div class="status-copy">Iniciá la captura cuando quieras.</div>
       <div class="card-box">
         <div class="source-left">${icon("monitor", { size: 16, color: "var(--accent-blue)" })}<span style="color:var(--text-secondary);font-size:12px">Reunión en curso</span></div>
         <div class="meeting-name">${status.meetingTitle ?? "Reunión sin título"}</div>
-        <button class="primary" id="go-to-meeting">Ir a la reunión ${icon("arrow-up-right", { size: 14 })}</button>
+        <button class="primary" id="start-capture">${icon("play", { size: 15 })}Iniciar captura</button>
       </div>
       ${footer(autoStart)}`;
-    document.getElementById("go-to-meeting").addEventListener("click", () => {
-      chrome.tabs.update(activeTabId, { active: true });
+    document.getElementById("start-capture").addEventListener("click", () => {
+      chrome.tabs.sendMessage(activeTabId, { type: "asterion:popup-start" });
+      refresh();
     });
     wireFooter(autoStart);
     return;
