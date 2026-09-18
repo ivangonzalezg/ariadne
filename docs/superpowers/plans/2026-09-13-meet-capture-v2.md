@@ -4111,3 +4111,113 @@ Abrir el popup, click en el engranaje, confirmar que abre la pantalla de configu
 git add src/settings/settings.html src/settings/settings.js src/popup/popup.js src/storage/session-writer.js
 git commit -m "feat: add a settings screen to configure the video encode preset (speed vs. compression trade-off)"
 ```
+
+---
+
+## Task 32: Banner flotante arrastrable con snap al borde más cercano
+
+El banner en la página de Meet (`src/content/meet-banner.js`) hoy vive fijo en `right: 16px; bottom: 16px` dentro de un Shadow DOM, sin forma de moverlo. El usuario pidió poder arrastrarlo a cualquier zona de la pantalla y que, al soltarlo, se pegue automáticamente al borde más cercano (arriba, abajo, izquierda o derecha — los 4 lados, confirmado con el usuario), y que esa posición elegida se recuerde entre reuniones/recargas.
+
+**Files:**
+- Modify: `src/content/meet-banner.js`
+- Modify: `src/background/service-worker.js` (opcional, solo si se decide leer/escribir `bannerPosition` a través de un mensaje en vez de directo — ver Step 3)
+
+- [ ] **Step 1: Hacer arrastrable el contenedor `#content`** — agregar listeners de `pointerdown`/`pointermove`/`pointerup` sobre `#content` (el `div` fijo dentro del shadow root, definido en `showBanner()`). Reglas importantes:
+  - Ignorar el inicio del arrastre si el `pointerdown` ocurrió sobre un `button` (`event.target.closest("button")`), para no romper los clics de Iniciar/Detener/Expandir/Cerrar/Ver grabación.
+  - Usar un umbral de movimiento (~5px) antes de considerarlo un arrastre real — si el pointer se suelta sin superar el umbral, no mover nada (para no romper clics normales en zonas no interactivas del banner, como el pill colapsado).
+  - Durante el arrastre, seguir al cursor con `left`/`top` en píxeles (usar `setPointerCapture` para que el arrastre siga funcionando aunque el cursor salga del elemento), aplicando un cursor `grabbing`.
+
+```js
+// dentro de showBanner(), después de crear contentEl
+let dragState = null;
+
+contentEl.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("button")) return;
+  const rect = contentEl.getBoundingClientRect();
+  dragState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    originLeft: rect.left,
+    originTop: rect.top,
+    moved: false,
+  };
+  contentEl.setPointerCapture(event.pointerId);
+});
+
+contentEl.addEventListener("pointermove", (event) => {
+  if (!dragState) return;
+  const dx = event.clientX - dragState.startX;
+  const dy = event.clientY - dragState.startY;
+  if (!dragState.moved && Math.hypot(dx, dy) < 5) return;
+  dragState.moved = true;
+  contentEl.style.cursor = "grabbing";
+  contentEl.style.left = `${dragState.originLeft + dx}px`;
+  contentEl.style.top = `${dragState.originTop + dy}px`;
+  contentEl.style.right = "auto";
+  contentEl.style.bottom = "auto";
+});
+
+contentEl.addEventListener("pointerup", (event) => {
+  if (dragState?.moved) snapToNearestEdge();
+  dragState = null;
+  contentEl.style.cursor = "";
+});
+```
+
+(Ajustá nombres/estructura real al archivo final — esto es una guía, no código para copiar textual si el resto del archivo sugiere algo distinto.)
+
+- [ ] **Step 2: Implementar `snapToNearestEdge()`** — al soltar, calcular a qué borde del viewport está más cerca el centro (o el borde correspondiente) del elemento, y fijar la posición final con un margen de 16px en ese borde, dejando la coordenada perpendicular clampeada para que nunca quede fuera de la pantalla:
+
+```js
+const EDGE_MARGIN = 16;
+
+function snapToNearestEdge() {
+  const rect = contentEl.getBoundingClientRect();
+  const distances = {
+    top: rect.top,
+    bottom: window.innerHeight - rect.bottom,
+    left: rect.left,
+    right: window.innerWidth - rect.right,
+  };
+  const edge = Object.entries(distances).sort((a, b) => a[1] - b[1])[0][0];
+
+  contentEl.style.left = "auto";
+  contentEl.style.right = "auto";
+  contentEl.style.top = "auto";
+  contentEl.style.bottom = "auto";
+
+  if (edge === "left" || edge === "right") {
+    const top = Math.min(Math.max(rect.top, EDGE_MARGIN), window.innerHeight - rect.height - EDGE_MARGIN);
+    contentEl.style.top = `${top}px`;
+    contentEl.style[edge] = `${EDGE_MARGIN}px`;
+  } else {
+    const left = Math.min(Math.max(rect.left, EDGE_MARGIN), window.innerWidth - rect.width - EDGE_MARGIN);
+    contentEl.style.left = `${left}px`;
+    contentEl.style[edge] = `${EDGE_MARGIN}px`;
+  }
+
+  savePosition({ edge, offset: edge === "left" || edge === "right" ? contentEl.style.top : contentEl.style.left });
+}
+```
+
+- [ ] **Step 3: Persistir y restaurar la posición** — guardar `{ edge, offset }` en `chrome.storage.local` bajo una clave nueva, por ejemplo `bannerPosition` (seguir el mismo patrón plano que ya usa `autoStart`/`videoPreset`, sin objeto anidado si se prefiere serializar como string, o como objeto — usar criterio). Como `meet-banner.js` corre en el content script (ISOLATED world), que SÍ tiene acceso directo a `chrome.storage` (a diferencia del offscreen document — no aplica la limitación descubierta en un fix anterior), se puede leer/escribir directo con `chrome.storage.local.get/set`, sin necesidad de mensajería al service worker. Al llamar a `showBanner()`, antes de agregar `hostEl` al DOM, leer `bannerPosition` guardado y aplicar esa posición inicial en vez del `right: 16px; bottom: 16px` fijo (si no hay nada guardado, usar ese default de siempre).
+
+- [ ] **Step 4: Build + tests**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: build limpio, 18/18 tests siguen pasando (no hay tests automatizados de drag/DOM real de Meet — se verifica manualmente).
+
+- [ ] **Step 5: Manual verification**
+
+Entrar a una reunión, arrastrar el banner a distintas zonas de la pantalla (cerca de cada uno de los 4 bordes y también cerca del centro) y confirmar que siempre se pega al borde más cercano con un margen consistente, sin quedar nunca cortado fuera de la pantalla. Confirmar que los botones (Iniciar/Detener/Expandir/Cerrar/Ver grabación) siguen funcionando con un clic normal sin iniciar un arrastre accidental. Recargar la pestaña de Meet y confirmar que el banner aparece en la última posición donde quedó, no siempre en la esquina inferior derecha por defecto.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/content/meet-banner.js
+git commit -m "feat: make the in-page banner draggable with snap-to-nearest-edge and persisted position"
+```

@@ -9,6 +9,9 @@ let currentMeta = {};
 let isExpanded = false;
 let timerInterval = null;
 
+const EDGE_MARGIN = 16;
+const BANNER_POSITION_KEY = "bannerPosition";
+
 function formatElapsed(startedAt) {
   if (!startedAt) return "00:00";
   const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
@@ -123,6 +126,102 @@ function render() {
   if (currentMeta.videoError) console.warn("[Asterion] No se pudo activar video:", currentMeta.videoError);
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+function applyBannerPosition(position, shouldClamp = false) {
+  const { edge, offset } = position || {};
+  if (!contentEl || !["top", "right", "bottom", "left"].includes(edge) || !Number.isFinite(offset)) return;
+
+  contentEl.style.left = "auto";
+  contentEl.style.right = "auto";
+  contentEl.style.top = "auto";
+  contentEl.style.bottom = "auto";
+  contentEl.style[edge] = `${EDGE_MARGIN}px`;
+
+  if (edge === "left" || edge === "right") {
+    contentEl.style.top = `${offset}px`;
+    if (shouldClamp) {
+      const rect = contentEl.getBoundingClientRect();
+      contentEl.style.top = `${clamp(rect.top, EDGE_MARGIN, window.innerHeight - rect.height - EDGE_MARGIN)}px`;
+    }
+  } else {
+    contentEl.style.left = `${offset}px`;
+    if (shouldClamp) {
+      const rect = contentEl.getBoundingClientRect();
+      contentEl.style.left = `${clamp(rect.left, EDGE_MARGIN, window.innerWidth - rect.width - EDGE_MARGIN)}px`;
+    }
+  }
+}
+
+function saveBannerPosition(position) {
+  chrome.storage.local.set({ [BANNER_POSITION_KEY]: position });
+}
+
+function snapToNearestEdge() {
+  const rect = contentEl.getBoundingClientRect();
+  const distances = {
+    top: rect.top,
+    bottom: window.innerHeight - rect.bottom,
+    left: rect.left,
+    right: window.innerWidth - rect.right,
+  };
+  const edge = Object.entries(distances).sort(([, first], [, second]) => first - second)[0][0];
+  const isVerticalEdge = edge === "left" || edge === "right";
+  const offset = isVerticalEdge
+    ? clamp(rect.top, EDGE_MARGIN, window.innerHeight - rect.height - EDGE_MARGIN)
+    : clamp(rect.left, EDGE_MARGIN, window.innerWidth - rect.width - EDGE_MARGIN);
+
+  applyBannerPosition({ edge, offset });
+  saveBannerPosition({ edge, offset });
+}
+
+function wireDragEvents() {
+  let dragState = null;
+
+  contentEl.addEventListener("pointerdown", (event) => {
+    if (event.target instanceof Element && event.target.closest("button")) return;
+
+    const rect = contentEl.getBoundingClientRect();
+    dragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      moved: false,
+    };
+    contentEl.setPointerCapture(event.pointerId);
+  });
+
+  contentEl.addEventListener("pointermove", (event) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+
+    const dx = event.clientX - dragState.startX;
+    const dy = event.clientY - dragState.startY;
+    if (!dragState.moved && Math.hypot(dx, dy) < 5) return;
+
+    dragState.moved = true;
+    contentEl.style.cursor = "grabbing";
+    contentEl.style.left = `${dragState.originLeft + dx}px`;
+    contentEl.style.top = `${dragState.originTop + dy}px`;
+    contentEl.style.right = "auto";
+    contentEl.style.bottom = "auto";
+  });
+
+  const finishDrag = (event) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+    if (dragState.moved) snapToNearestEdge();
+    if (contentEl.hasPointerCapture(event.pointerId)) contentEl.releasePointerCapture(event.pointerId);
+    dragState = null;
+    contentEl.style.cursor = "";
+  };
+
+  contentEl.addEventListener("pointerup", finishDrag);
+  contentEl.addEventListener("pointercancel", finishDrag);
+}
+
 export function showBanner({ onStart, onStop }) {
   callbacks = { onStart, onStop };
   if (hostEl) return;
@@ -132,7 +231,7 @@ export function showBanner({ onStart, onStop }) {
   const shadowRoot = hostEl.attachShadow({ mode: "open" });
   shadowRoot.innerHTML = `<link rel="stylesheet" href="${chrome.runtime.getURL("src/shared/theme.css")}">
     <style>
-      #content { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; font-family: Inter, system-ui, sans-serif; }
+      #content { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; font-family: Inter, system-ui, sans-serif; touch-action: none; }
       .banner { min-width: 310px; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px var(--shadow); color: var(--text-primary); padding: 12px; }
       .pill { border-radius: 999px; }
       .expanded, .finished { border-radius: 20px; }
@@ -164,8 +263,14 @@ export function showBanner({ onStart, onStop }) {
       .finished .icon-button { margin-left: -2px; }
     </style><div id="content"></div>`;
   contentEl = shadowRoot.getElementById("content");
-  document.body.appendChild(hostEl);
-  render();
+  wireDragEvents();
+
+  chrome.storage.local.get({ [BANNER_POSITION_KEY]: null }, ({ [BANNER_POSITION_KEY]: bannerPosition }) => {
+    applyBannerPosition(bannerPosition);
+    document.body.appendChild(hostEl);
+    applyBannerPosition(bannerPosition, true);
+    render();
+  });
 }
 
 export function updateBannerState(state, meta = {}) {
