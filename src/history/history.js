@@ -8,6 +8,8 @@ const resultsCountEl = document.getElementById("results-count");
 const sortSelect = document.getElementById("sort-select");
 const meetingsListEl = document.getElementById("meetings-list");
 const detailPanelEl = document.getElementById("detail-panel");
+let activeMediaElement = null;
+let activeMediaUrl = null;
 
 document.getElementById("search-icon").innerHTML = icon("search", { size: 15, color: "var(--text-muted)" });
 document.getElementById("sort-icon").innerHTML = icon("arrow-up-down", { size: 14, color: "var(--text-secondary)" });
@@ -87,6 +89,7 @@ function formatMeetingDate(meeting) {
 function formatDetailDate(meeting) { return capitalize(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(meeting.startedAt))); }
 function formatTimeRange(meeting) { const formatter = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false }); return `${formatter.format(new Date(meeting.startedAt))} – ${formatter.format(new Date(endTime(meeting)))}`; }
 function formatDuration(totalMs) { const totalMinutes = Math.floor(Math.max(0, totalMs) / 60000); return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`; }
+function formatMediaTime(seconds) { if (!Number.isFinite(seconds) || seconds < 0) return "0:00"; const totalSeconds = Math.floor(seconds); return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`; }
 function formatFileSize(bytes) { if (!Number.isFinite(bytes)) return ""; const units = ["B", "KB", "MB", "GB"]; let value = bytes; let index = 0; while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; } return `${value.toLocaleString("es-ES", { maximumFractionDigits: index ? 1 : 0 })} ${units[index]}`; }
 function allFiltersOff() { return Object.values(state.filters).every((active) => !active); }
 
@@ -200,16 +203,47 @@ function createFileFooter(activeFile) {
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.textContent = "Eliminar reunión"; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
   actions.append(view, download, separator, remove); footer.append(metadata, actions); return footer;
 }
+function cleanupActiveMedia() {
+  if (activeMediaElement) { activeMediaElement.pause(); activeMediaElement.removeAttribute("src"); activeMediaElement.load(); activeMediaElement = null; }
+  if (activeMediaUrl) { URL.revokeObjectURL(activeMediaUrl); activeMediaUrl = null; }
+}
+function createMediaButton(className, label, iconName, size = 18) {
+  const button = document.createElement("button"); button.type = "button"; button.className = className; button.setAttribute("aria-label", label); button.title = label; button.innerHTML = icon(iconName, { size, color: "currentColor" }); return button;
+}
+function setRangeProgress(range, value, max) { range.style.setProperty("--range-progress", `${max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0}%`); }
+function createMediaPlayer(activeFile, isVideo) {
+  const player = document.createElement("div"); player.className = `custom-media-player${isVideo ? " custom-video-player" : " custom-audio-player"}`;
+  const media = document.createElement(isVideo ? "video" : "audio"); media.className = isVideo ? "custom-video-element" : "custom-audio-element"; media.preload = "metadata"; media.controls = false;
+  const sourceUrl = URL.createObjectURL(activeFile.file); activeMediaElement = media; activeMediaUrl = sourceUrl;
+  const seek = document.createElement("input"); seek.type = "range"; seek.className = "media-seek"; seek.min = "0"; seek.max = "0"; seek.value = "0"; seek.step = "0.1"; seek.disabled = true; seek.setAttribute("aria-label", "Posición de reproducción");
+  const time = document.createElement("span"); time.className = "media-time";
+  const volume = document.createElement("input"); volume.type = "range"; volume.className = "media-volume"; volume.min = "0"; volume.max = "1"; volume.value = "1"; volume.step = "0.05"; volume.setAttribute("aria-label", "Volumen"); setRangeProgress(volume, 1, 1);
+  const play = createMediaButton("media-play", "Reproducir", "play", isVideo ? 18 : 22);
+  const update = () => { const duration = Number.isFinite(media.duration) ? media.duration : 0; seek.max = String(duration); seek.disabled = duration <= 0; seek.value = String(Math.min(media.currentTime || 0, duration)); setRangeProgress(seek, Number(seek.value), duration); time.textContent = `${formatMediaTime(media.currentTime)} / ${formatMediaTime(duration)}`; };
+  const updatePlayButton = () => { const paused = media.paused || media.ended; play.setAttribute("aria-label", paused ? "Reproducir" : "Pausar"); play.title = paused ? "Reproducir" : "Pausar"; play.innerHTML = icon(paused ? "play" : "pause", { size: isVideo ? 18 : 22, color: "currentColor" }); player.classList.toggle("is-playing", !paused); };
+  const togglePlayback = async () => { if (media.paused || media.ended) { try { await media.play(); } catch { updatePlayButton(); } } else media.pause(); };
+  play.addEventListener("click", togglePlayback); seek.addEventListener("input", () => { if (!seek.disabled) media.currentTime = Number(seek.value); update(); }); volume.addEventListener("input", () => { media.volume = Number(volume.value); setRangeProgress(volume, media.volume, 1); });
+  media.addEventListener("loadedmetadata", update); media.addEventListener("durationchange", update); media.addEventListener("timeupdate", update); media.addEventListener("play", updatePlayButton); media.addEventListener("pause", updatePlayButton); media.addEventListener("ended", () => { update(); updatePlayButton(); }); media.addEventListener("error", () => { const error = document.createElement("p"); error.className = "media-error"; error.textContent = "No se pudo cargar este archivo multimedia."; player.appendChild(error); });
+  if (isVideo) {
+    const controls = document.createElement("div"); controls.className = "video-controls"; const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", "Volumen"); volumeWrap.innerHTML = icon("volume-2", { size: 17, color: "currentColor" }); volumeWrap.appendChild(volume);
+    const fullscreen = createMediaButton("media-control-button", "Pantalla completa", "maximize", 17); fullscreen.addEventListener("click", () => { media.requestFullscreen().catch(() => {}); });
+    const largePlay = createMediaButton("video-large-play", "Reproducir video", "play", 28); largePlay.addEventListener("click", togglePlayback); controls.append(play, seek, time, volumeWrap, fullscreen); player.append(media, largePlay, controls);
+  } else {
+    const label = document.createElement("p"); label.className = "audio-player-label"; label.textContent = "Audio de la reunión"; const transport = document.createElement("div"); transport.className = "audio-transport"; const rewind = createMediaButton("media-control-button", "Retroceder 10 segundos", "rotate-ccw"); rewind.addEventListener("click", () => { media.currentTime = Math.max(0, media.currentTime - 10); }); const forward = createMediaButton("media-control-button", "Adelantar 10 segundos", "fast-forward"); forward.addEventListener("click", () => { media.currentTime = Math.min(Number.isFinite(media.duration) ? media.duration : media.currentTime + 10, media.currentTime + 10); }); transport.append(rewind, play, forward, time);
+    const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", "Volumen"); volumeWrap.innerHTML = icon("volume-2", { size: 18, color: "var(--text-secondary)" }); volumeWrap.appendChild(volume); player.append(label, media, transport, seek, volumeWrap);
+  }
+  media.src = sourceUrl; update(); return player;
+}
 function renderTabContent(content, activeFile) {
   if (state.selectedTab === "transcript") {
     const list = document.createElement("div"); list.className = "transcript-list";
     parseTranscript(activeFile.text).forEach((entry) => { const row = document.createElement("div"); row.className = "transcript-row"; const timestamp = document.createElement("time"); timestamp.className = "transcript-time"; timestamp.textContent = entry.timestamp; const spoken = document.createElement("p"); spoken.className = "transcript-spoken"; const speaker = document.createElement("strong"); speaker.textContent = entry.speaker; spoken.append(speaker, document.createTextNode(` ${entry.text}`)); row.append(timestamp, spoken); list.appendChild(row); });
     if (!list.childElementCount) { const empty = document.createElement("p"); empty.className = "detail-empty"; empty.textContent = "No se encontraron intervenciones en la transcripción."; content.appendChild(empty); } else content.appendChild(list);
   } else if (state.selectedTab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
-  else { const placeholder = document.createElement("p"); placeholder.className = "media-placeholder"; placeholder.textContent = "Cargando reproductor..."; content.appendChild(placeholder); }
+  else content.appendChild(createMediaPlayer(activeFile, state.selectedTab === "video"));
 }
 async function renderDetail() {
-  detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
+  cleanupActiveMedia(); detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
   if (!meeting) { const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = "Seleccioná una reunión para ver el detalle"; detailPanelEl.appendChild(placeholder); return; }
   const tabs = availableTabs(meeting); if (!tabs.some(([, key]) => key === state.selectedTab)) state.selectedTab = tabs[0][1];
   const renderKey = `${meetingId(meeting)}:${state.selectedTab}`;
