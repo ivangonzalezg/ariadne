@@ -1,5 +1,10 @@
+// src/history/history.js
 import { icon } from "../shared/icons.js";
 import { formatSegmentTimestamp, transcriptToTxt, transcriptToMarkdown } from "../lib/transcript-export.js";
+import { initI18n } from "../shared/i18n/i18n.js";
+
+const { t, localeTag } = await initI18n();
+document.title = t("history.pageTitle");
 
 const searchInput = document.getElementById("search-input");
 const filterChipsEl = document.getElementById("filter-chips");
@@ -12,11 +17,23 @@ const detailPanelEl = document.getElementById("detail-panel");
 let activeMediaElement = null;
 let activeMediaUrl = null;
 
+document.getElementById("page-heading").textContent = t("history.pageHeading");
+document.getElementById("page-description").textContent = t("history.pageDescription");
+document.querySelector(".sidebar").setAttribute("aria-label", t("history.filtersAsideAria"));
+searchInput.placeholder = t("history.searchPlaceholder");
+searchInput.setAttribute("aria-label", t("history.searchPlaceholder"));
+document.getElementById("filters-label").textContent = t("history.filtersLabel");
+document.querySelector(".calendar").setAttribute("aria-label", t("history.calendarAria"));
+document.getElementById("kpis-label").textContent = t("history.summaryLabel");
+document.getElementById("meetings-title").textContent = t("history.meetingsTitle");
+sortSelect.setAttribute("aria-label", t("history.sortAria"));
+sortSelect.querySelector('option[value="newest"]').textContent = t("history.sortNewest");
+sortSelect.querySelector('option[value="oldest"]').textContent = t("history.sortOldest");
+detailPanelEl.setAttribute("aria-label", t("history.detailPanelAria"));
+
 document.getElementById("search-icon").innerHTML = icon("search", { size: 15, color: "var(--text-muted)" });
 document.getElementById("sort-chevron").innerHTML = icon("chevron-down", { size: 12, color: "var(--text-muted)" });
 
-// Se usan en el panel de detalle de la siguiente tarea. Se conservan acá para
-// que ese panel pueda abrir y descargar archivos sin cambiar la estrategia.
 function downloadFile(file, suggestedName) {
   const url = URL.createObjectURL(file);
   chrome.downloads.download({ url, filename: suggestedName, saveAs: true }, (downloadId) => {
@@ -36,7 +53,6 @@ function downloadFile(file, suggestedName) {
 }
 
 function viewFile(file) {
-  // El object URL permanece vivo mientras la pestaña nueva lee el archivo.
   chrome.tabs.create({ url: URL.createObjectURL(file) });
 }
 
@@ -46,14 +62,14 @@ const state = {
   calendarMonth: startOfMonth(new Date()), selectedDay: null, sort: "newest", selectedMeetingId: null, selectedTab: null,
 };
 
-const FILTERS = [["all", "Todas"], ["transcript", "Con transcripción"], ["video", "Con video"], ["audioOnly", "Solo audio"], ["thisMonth", "Este mes"], ["thisYear", "Este año"]];
+const FILTERS = () => [["all", t("history.filterAll")], ["transcript", t("history.filterTranscript")], ["video", t("history.filterVideo")], ["audioOnly", t("history.filterAudioOnly")], ["thisMonth", t("history.filterThisMonth")], ["thisYear", t("history.filterThisYear")]];
 
 function startOfMonth(date) { return new Date(date.getFullYear(), date.getMonth(), 1); }
 function dayKey(date) { return new Date(date).toDateString(); }
 function sameLocalDay(left, right) { return dayKey(left) === dayKey(right); }
 function isInCurrentMonth(date, now = new Date()) { return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth(); }
 function isInCurrentYear(date, now = new Date()) { return date.getFullYear() === now.getFullYear(); }
-function titleFor(meeting) { return meeting.meetingTitle || meeting.folderName || "Reunión sin título"; }
+function titleFor(meeting) { return meeting.meetingTitle || meeting.folderName || t("common.untitledMeeting"); }
 function meetingId(meeting) { return meeting.sessionId || meeting.folderName; }
 function endTime(meeting) {
   const startedAt = Number(meeting.startedAt);
@@ -83,27 +99,33 @@ export function deriveVisibleMeetings(currentState) {
   return visible.sort((left, right) => currentState.sort === "oldest" ? left.startedAt - right.startedAt : right.startedAt - left.startedAt);
 }
 
-function formatMonth(date) { return `${capitalize(new Intl.DateTimeFormat("es-ES", { month: "long" }).format(date))} ${date.getFullYear()}`; }
+function formatMonth(date) { return `${capitalize(new Intl.DateTimeFormat(localeTag, { month: "long" }).format(date))} ${date.getFullYear()}`; }
 function capitalize(text) { return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text; }
+function weekdayShortLabels() {
+  const formatter = new Intl.DateTimeFormat(localeTag, { weekday: "short" });
+  // 2024-01-01 is a Monday; formatting Mon..Sun from a fixed reference week
+  // keeps this independent of the calendar actually being rendered.
+  return Array.from({ length: 7 }, (_, index) => capitalize(formatter.format(new Date(2024, 0, 1 + index)).replace(".", "")));
+}
 function formatMeetingDate(meeting) {
   const started = new Date(meeting.startedAt);
   const ended = new Date(endTime(meeting));
-  const date = capitalize(new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "numeric", month: "long", year: "numeric" }).format(started).replace(".", ""));
-  const time = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const date = capitalize(new Intl.DateTimeFormat(localeTag, { weekday: "short", day: "numeric", month: "long", year: "numeric" }).format(started).replace(".", ""));
+  const time = new Intl.DateTimeFormat(localeTag, { hour: "2-digit", minute: "2-digit", hour12: false });
   return `${date} · ${time.format(started)} – ${time.format(ended)}`;
 }
-function formatDetailDate(meeting) { return capitalize(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(meeting.startedAt))); }
-function formatTimeRange(meeting) { const formatter = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false }); return `${formatter.format(new Date(meeting.startedAt))} – ${formatter.format(new Date(endTime(meeting)))}`; }
+function formatDetailDate(meeting) { return capitalize(new Intl.DateTimeFormat(localeTag, { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(meeting.startedAt))); }
+function formatTimeRange(meeting) { const formatter = new Intl.DateTimeFormat(localeTag, { hour: "2-digit", minute: "2-digit", hour12: false }); return `${formatter.format(new Date(meeting.startedAt))} – ${formatter.format(new Date(endTime(meeting)))}`; }
 function formatDurationHours(totalMs) { const hours = Math.ceil((Math.max(0, totalMs) / 3600000) * 10) / 10; return `${hours} h`; }
 function formatMediaTime(seconds) { if (!Number.isFinite(seconds) || seconds < 0) return "0:00"; const totalSeconds = Math.floor(seconds); return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`; }
-function formatFileSize(bytes) { if (!Number.isFinite(bytes)) return ""; const units = ["B", "KB", "MB", "GB"]; let value = bytes; let index = 0; while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; } return `${value.toLocaleString("es-ES", { maximumFractionDigits: index ? 1 : 0 })} ${units[index]}`; }
+function formatFileSize(bytes) { if (!Number.isFinite(bytes)) return ""; const units = ["B", "KB", "MB", "GB"]; let value = bytes; let index = 0; while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; } return `${value.toLocaleString(localeTag, { maximumFractionDigits: index ? 1 : 0 })} ${units[index]}`; }
 function allFiltersOff() { return Object.values(state.filters).every((active) => !active); }
 
 function renderSidebar() { renderFilters(); renderCalendar(); renderKpis(); }
 
 function renderFilters() {
   filterChipsEl.replaceChildren();
-  for (const [key, label] of FILTERS) {
+  for (const [key, label] of FILTERS()) {
     const button = document.createElement("button");
     const active = key === "all" ? allFiltersOff() : state.filters[key];
     button.type = "button"; button.className = `filter-chip${active ? " is-active" : ""}`; button.textContent = label; button.setAttribute("aria-pressed", String(active));
@@ -122,10 +144,10 @@ function renderCalendar() {
   const heading = document.createElement("div"); heading.className = "calendar-title";
   const month = document.createElement("span"); month.textContent = formatMonth(state.calendarMonth); heading.appendChild(month);
   const controls = document.createElement("div"); controls.className = "calendar-controls";
-  controls.append(createCalendarButton("chevron-left", "Mes anterior", -1), createCalendarButton("chevron-right", "Mes siguiente", 1));
+  controls.append(createCalendarButton("chevron-left", t("history.prevMonthAria"), -1), createCalendarButton("chevron-right", t("history.nextMonthAria"), 1));
   header.append(heading, controls); calendarEl.appendChild(header);
   const weekdays = document.createElement("div"); weekdays.className = "calendar-weekdays";
-  ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"].forEach((label) => { const day = document.createElement("span"); day.textContent = label; weekdays.appendChild(day); });
+  weekdayShortLabels().forEach((label) => { const day = document.createElement("span"); day.textContent = label; weekdays.appendChild(day); });
   calendarEl.appendChild(weekdays);
   const days = document.createElement("div"); days.className = "calendar-days";
   const first = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth(), 1);
@@ -137,7 +159,7 @@ function renderCalendar() {
     const selected = state.selectedDay && sameLocalDay(date, state.selectedDay);
     const button = document.createElement("button"); button.type = "button";
     button.className = `calendar-day${date.getMonth() !== state.calendarMonth.getMonth() ? " is-outside" : ""}${sameLocalDay(date, today) ? " is-today" : ""}${selected ? " is-selected" : ""}`;
-    button.textContent = String(date.getDate()); button.setAttribute("aria-label", new Intl.DateTimeFormat("es-ES", { dateStyle: "full" }).format(date)); button.setAttribute("aria-pressed", String(Boolean(selected)));
+    button.textContent = String(date.getDate()); button.setAttribute("aria-label", new Intl.DateTimeFormat(localeTag, { dateStyle: "full" }).format(date)); button.setAttribute("aria-pressed", String(Boolean(selected)));
     if (meetingDays.has(dayKey(date))) { const dot = document.createElement("span"); dot.className = "meeting-dot"; dot.setAttribute("aria-hidden", "true"); button.appendChild(dot); }
     button.addEventListener("click", () => { state.selectedDay = selected ? null : date; renderAllExceptDetail(); });
     days.appendChild(button);
@@ -154,13 +176,13 @@ function createCalendarButton(iconName, label, offset) {
 function renderKpis() {
   kpisEl.replaceChildren();
   const thisMonth = state.meetings.filter((meeting) => isInCurrentMonth(new Date(meeting.startedAt)));
-  const rows = [[String(thisMonth.length), "reuniones este mes"], [formatDurationHours(thisMonth.reduce((total, meeting) => total + durationOf(meeting), 0)), "de grabación"], [String(state.meetings.filter((meeting) => meeting.hasVideo).length), "reuniones con video"], [String(state.meetings.filter((meeting) => meeting.hasTranscript).length), "reuniones con transcripción"]];
+  const rows = [[String(thisMonth.length), t("history.kpiMeetingsThisMonth")], [formatDurationHours(thisMonth.reduce((total, meeting) => total + durationOf(meeting), 0)), t("history.kpiRecordingHours")], [String(state.meetings.filter((meeting) => meeting.hasVideo).length), t("history.kpiMeetingsWithVideo")], [String(state.meetings.filter((meeting) => meeting.hasTranscript).length), t("history.kpiMeetingsWithTranscript")]];
   rows.forEach(([value, label]) => { const row = document.createElement("div"); row.className = "kpi-row"; const valueEl = document.createElement("strong"); valueEl.className = "kpi-value"; valueEl.textContent = value; const labelEl = document.createElement("span"); labelEl.className = "kpi-label"; labelEl.textContent = label; row.append(valueEl, labelEl); kpisEl.appendChild(row); });
 }
 
 function renderMeetings() {
-  const meetings = deriveVisibleMeetings(state); resultsCountEl.textContent = `${meetings.length} resultados`; meetingsListEl.replaceChildren();
-  if (!meetings.length) { const empty = document.createElement("p"); empty.className = "empty-state"; empty.textContent = "Todavía no hay reuniones que coincidan con estos filtros."; meetingsListEl.appendChild(empty); return; }
+  const meetings = deriveVisibleMeetings(state); resultsCountEl.textContent = t("history.resultsCount", { count: meetings.length }); meetingsListEl.replaceChildren();
+  if (!meetings.length) { const empty = document.createElement("p"); empty.className = "empty-state"; empty.textContent = t("history.emptyState"); meetingsListEl.appendChild(empty); return; }
   meetings.forEach((meeting) => meetingsListEl.appendChild(createMeetingCard(meeting)));
 }
 
@@ -180,7 +202,7 @@ function createMeetingCard(meeting) {
   const header = document.createElement("div"); header.className = "meeting-card-header";
   const title = document.createElement("h3"); title.className = "meeting-title"; title.textContent = titleFor(meeting);
   const moreWrap = document.createElement("div"); moreWrap.className = "more-wrap";
-  const more = document.createElement("button"); more.type = "button"; more.className = "more-button"; more.setAttribute("aria-label", "Más opciones"); more.setAttribute("aria-haspopup", "true"); more.setAttribute("aria-expanded", "false"); more.innerHTML = icon("ellipsis", { size: 17, color: "currentColor" });
+  const more = document.createElement("button"); more.type = "button"; more.className = "more-button"; more.setAttribute("aria-label", t("history.moreOptionsAria")); more.setAttribute("aria-haspopup", "true"); more.setAttribute("aria-expanded", "false"); more.innerHTML = icon("ellipsis", { size: 17, color: "currentColor" });
   more.addEventListener("click", (event) => {
     event.stopPropagation();
     const wasOpen = more.classList.contains("is-open");
@@ -190,7 +212,7 @@ function createMeetingCard(meeting) {
     const menu = document.createElement("div"); menu.className = "more-menu"; menu.setAttribute("role", "menu");
     const deleteItem = document.createElement("button"); deleteItem.type = "button"; deleteItem.className = "more-menu-item"; deleteItem.setAttribute("role", "menuitem");
     deleteItem.innerHTML = icon("trash-2", { size: 14, color: "currentColor" });
-    deleteItem.appendChild(document.createTextNode("Eliminar reunión"));
+    deleteItem.appendChild(document.createTextNode(t("common.deleteMeeting")));
     deleteItem.addEventListener("click", (deleteEvent) => { deleteEvent.stopPropagation(); closeOpenMoreMenu(); showDeleteDialog(meeting, more); });
     menu.appendChild(deleteItem);
     moreWrap.appendChild(menu);
@@ -199,7 +221,7 @@ function createMeetingCard(meeting) {
   header.append(title, moreWrap);
   const date = document.createElement("p"); date.className = "meeting-date"; date.textContent = formatMeetingDate(meeting);
   const chips = document.createElement("div"); chips.className = "file-chips";
-  [[meeting.hasTranscript, "file-text", "Transcripción", "transcript"], [true, "volume-2", "Audio", "audio"], [meeting.hasVideo, "video", "Video", "video"], [true, "braces", "Manifest", "manifest"]].forEach(([available, iconName, label, tab]) => {
+  [[meeting.hasTranscript, "file-text", t("common.transcript"), "transcript"], [true, "volume-2", t("common.audio"), "audio"], [meeting.hasVideo, "video", t("common.video"), "video"], [true, "braces", t("common.manifest"), "manifest"]].forEach(([available, iconName, label, tab]) => {
     const chip = document.createElement("span"); chip.className = `file-chip${available ? " is-available" : " is-unavailable"}`;
     chip.innerHTML = icon(iconName, { size: 12, color: "currentColor" });
     chip.appendChild(document.createTextNode(label));
@@ -207,12 +229,12 @@ function createMeetingCard(meeting) {
     chips.appendChild(chip);
   });
   const detailsRow = document.createElement("div"); detailsRow.className = "details-row";
-  const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = "Ver detalles";
+  const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = t("history.viewDetails");
   detailsRow.appendChild(details);
   card.append(header, date, chips, detailsRow); return card;
 }
 
-function availableTabs(meeting) { return [[meeting.hasTranscript, "transcript", "Transcripción"], [true, "audio", "Audio"], [meeting.hasVideo, "video", "Video"], [true, "manifest", "Manifest"]].filter(([available]) => available); }
+function availableTabs(meeting) { return [[meeting.hasTranscript, "transcript", t("common.transcript")], [true, "audio", t("common.audio")], [meeting.hasVideo, "video", t("common.video")], [true, "manifest", t("common.manifest")]].filter(([available]) => available); }
 function escapeHtml(value) { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 function highlightJson(value) {
   const escaped = escapeHtml(JSON.stringify(value, null, 2));
@@ -238,18 +260,18 @@ function createFileFooter(activeFile, meeting) {
   const fileRow = document.createElement("div"); fileRow.className = "detail-file-row";
   const metadata = document.createElement("div"); metadata.className = "detail-file-meta"; const name = document.createElement("span"); name.className = "detail-file-name"; name.textContent = activeFile.name; const size = document.createElement("span"); size.className = "detail-file-size"; size.textContent = formatFileSize(activeFile.file.size); metadata.append(name, size);
   const actions = document.createElement("div"); actions.className = "detail-file-actions";
-  const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>Abrir</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
-  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
+  const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>${t("common.open")}</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
+  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("common.download")}</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
   actions.append(view, download);
   if (state.selectedTab === "transcript") {
-    const downloadTxt = document.createElement("button"); downloadTxt.type = "button"; downloadTxt.className = "detail-action"; downloadTxt.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar TXT</span>`;
+    const downloadTxt = document.createElement("button"); downloadTxt.type = "button"; downloadTxt.className = "detail-action"; downloadTxt.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("history.downloadTxt")}</span>`;
     downloadTxt.addEventListener("click", () => downloadFile(new Blob([transcriptToTxt(activeFile.value)], { type: "text/plain" }), "transcripcion.txt"));
-    const downloadMd = document.createElement("button"); downloadMd.type = "button"; downloadMd.className = "detail-action"; downloadMd.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar Markdown</span>`;
+    const downloadMd = document.createElement("button"); downloadMd.type = "button"; downloadMd.className = "detail-action"; downloadMd.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("history.downloadMarkdown")}</span>`;
     downloadMd.addEventListener("click", () => downloadFile(new Blob([transcriptToMarkdown(activeFile.value, titleFor(meeting))], { type: "text/markdown" }), "transcripcion.md"));
     actions.append(downloadTxt, downloadMd);
   }
   const separator = document.createElement("span"); separator.className = "detail-footer-separator"; separator.setAttribute("aria-hidden", "true");
-  const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.innerHTML = `${icon("trash-2", { size: 14, color: "currentColor" })}<span>Eliminar reunión</span>`; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
+  const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.innerHTML = `${icon("trash-2", { size: 14, color: "currentColor" })}<span>${t("common.deleteMeeting")}</span>`; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
   fileRow.append(metadata, actions); footer.append(fileRow, separator, remove); return footer;
 }
 function cleanupActiveMedia() {
@@ -264,23 +286,23 @@ function createMediaPlayer(activeFile, isVideo) {
   const player = document.createElement("div"); player.className = `custom-media-player${isVideo ? " custom-video-player" : " custom-audio-player"}`;
   const media = document.createElement(isVideo ? "video" : "audio"); media.className = isVideo ? "custom-video-element" : "custom-audio-element"; media.preload = "metadata"; media.controls = false;
   const sourceUrl = URL.createObjectURL(activeFile.file); activeMediaElement = media; activeMediaUrl = sourceUrl;
-  const seek = document.createElement("input"); seek.type = "range"; seek.className = "media-seek"; seek.min = "0"; seek.max = "0"; seek.value = "0"; seek.step = "0.1"; seek.disabled = true; seek.setAttribute("aria-label", "Posición de reproducción");
+  const seek = document.createElement("input"); seek.type = "range"; seek.className = "media-seek"; seek.min = "0"; seek.max = "0"; seek.value = "0"; seek.step = "0.1"; seek.disabled = true; seek.setAttribute("aria-label", t("history.seekAria"));
   const time = document.createElement("span"); time.className = "media-time";
-  const volume = document.createElement("input"); volume.type = "range"; volume.className = "media-volume"; volume.min = "0"; volume.max = "1"; volume.value = "1"; volume.step = "0.05"; volume.setAttribute("aria-label", "Volumen"); setRangeProgress(volume, 1, 1);
-  const play = createMediaButton("media-play", "Reproducir", "play", isVideo ? 18 : 20);
+  const volume = document.createElement("input"); volume.type = "range"; volume.className = "media-volume"; volume.min = "0"; volume.max = "1"; volume.value = "1"; volume.step = "0.05"; volume.setAttribute("aria-label", t("common.volumeAria")); setRangeProgress(volume, 1, 1);
+  const play = createMediaButton("media-play", t("common.play"), "play", isVideo ? 18 : 20);
   const update = () => { const duration = Number.isFinite(media.duration) ? media.duration : 0; seek.max = String(duration); seek.disabled = duration <= 0; seek.value = String(Math.min(media.currentTime || 0, duration)); setRangeProgress(seek, Number(seek.value), duration); time.textContent = `${formatMediaTime(media.currentTime)} / ${formatMediaTime(duration)}`; };
-  const updatePlayButton = () => { const paused = media.paused || media.ended; play.setAttribute("aria-label", paused ? "Reproducir" : "Pausar"); play.title = paused ? "Reproducir" : "Pausar"; play.innerHTML = icon(paused ? "play" : "pause", { size: isVideo ? 18 : 20, color: "currentColor" }); player.classList.toggle("is-playing", !paused); };
+  const updatePlayButton = () => { const paused = media.paused || media.ended; play.setAttribute("aria-label", paused ? t("common.play") : t("common.pause")); play.title = paused ? t("common.play") : t("common.pause"); play.innerHTML = icon(paused ? "play" : "pause", { size: isVideo ? 18 : 20, color: "currentColor" }); player.classList.toggle("is-playing", !paused); };
   const togglePlayback = async () => { if (media.paused || media.ended) { try { await media.play(); } catch { updatePlayButton(); } } else media.pause(); };
   play.addEventListener("click", togglePlayback); seek.addEventListener("input", () => { if (!seek.disabled) media.currentTime = Number(seek.value); update(); }); volume.addEventListener("input", () => { media.volume = Number(volume.value); setRangeProgress(volume, media.volume, 1); });
-  media.addEventListener("loadedmetadata", update); media.addEventListener("durationchange", update); media.addEventListener("timeupdate", update); media.addEventListener("play", updatePlayButton); media.addEventListener("pause", updatePlayButton); media.addEventListener("ended", () => { update(); updatePlayButton(); }); media.addEventListener("error", () => { const error = document.createElement("p"); error.className = "media-error"; error.textContent = "No se pudo cargar este archivo multimedia."; player.appendChild(error); });
+  media.addEventListener("loadedmetadata", update); media.addEventListener("durationchange", update); media.addEventListener("timeupdate", update); media.addEventListener("play", updatePlayButton); media.addEventListener("pause", updatePlayButton); media.addEventListener("ended", () => { update(); updatePlayButton(); }); media.addEventListener("error", () => { const error = document.createElement("p"); error.className = "media-error"; error.textContent = t("history.mediaLoadError"); player.appendChild(error); });
   if (isVideo) {
-    const controls = document.createElement("div"); controls.className = "video-controls"; const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", "Volumen"); volumeWrap.innerHTML = icon("volume-2", { size: 17, color: "currentColor" }); volumeWrap.appendChild(volume);
-    const fullscreen = createMediaButton("media-control-button", "Pantalla completa", "maximize", 17); fullscreen.addEventListener("click", () => { media.requestFullscreen().catch(() => {}); });
-    const largePlay = createMediaButton("video-large-play", "Reproducir video", "play", 28); largePlay.addEventListener("click", togglePlayback); controls.append(play, seek, time, volumeWrap, fullscreen); player.append(media, largePlay, controls);
+    const controls = document.createElement("div"); controls.className = "video-controls"; const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", t("common.volumeAria")); volumeWrap.innerHTML = icon("volume-2", { size: 17, color: "currentColor" }); volumeWrap.appendChild(volume);
+    const fullscreen = createMediaButton("media-control-button", t("history.fullscreenAria"), "maximize", 17); fullscreen.addEventListener("click", () => { media.requestFullscreen().catch(() => {}); });
+    const largePlay = createMediaButton("video-large-play", t("history.playVideoAria"), "play", 28); largePlay.addEventListener("click", togglePlayback); controls.append(play, seek, time, volumeWrap, fullscreen); player.append(media, largePlay, controls);
   } else {
-    const label = document.createElement("p"); label.className = "audio-player-label"; label.textContent = "Audio de la reunión";
-    const transport = document.createElement("div"); transport.className = "audio-transport"; const rewind = createMediaButton("media-round-button", "Retroceder 10 segundos", "rotate-ccw", 16); rewind.addEventListener("click", () => { media.currentTime = Math.max(0, media.currentTime - 10); }); const forward = createMediaButton("media-round-button", "Adelantar 10 segundos", "rotate-cw", 16); forward.addEventListener("click", () => { media.currentTime = Math.min(Number.isFinite(media.duration) ? media.duration : media.currentTime + 10, media.currentTime + 10); }); transport.append(rewind, play, forward, time);
-    const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", "Volumen"); volumeWrap.innerHTML = icon("volume-2", { size: 16, color: "var(--text-secondary)" }); volumeWrap.appendChild(volume); player.append(label, media, transport, seek, volumeWrap);
+    const label = document.createElement("p"); label.className = "audio-player-label"; label.textContent = t("common.meetingAudioLabel");
+    const transport = document.createElement("div"); transport.className = "audio-transport"; const rewind = createMediaButton("media-round-button", t("history.rewind10Aria"), "rotate-ccw", 16); rewind.addEventListener("click", () => { media.currentTime = Math.max(0, media.currentTime - 10); }); const forward = createMediaButton("media-round-button", t("history.forward10Aria"), "rotate-cw", 16); forward.addEventListener("click", () => { media.currentTime = Math.min(Number.isFinite(media.duration) ? media.duration : media.currentTime + 10, media.currentTime + 10); }); transport.append(rewind, play, forward, time);
+    const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", t("common.volumeAria")); volumeWrap.innerHTML = icon("volume-2", { size: 16, color: "var(--text-secondary)" }); volumeWrap.appendChild(volume); player.append(label, media, transport, seek, volumeWrap);
   }
   media.src = sourceUrl; update(); return player;
 }
@@ -288,25 +310,25 @@ function renderTabContent(content, activeFile) {
   if (state.selectedTab === "transcript") {
     const list = document.createElement("div"); list.className = "transcript-list";
     activeFile.value.forEach((segment) => { const row = document.createElement("div"); row.className = "transcript-row"; const timestamp = document.createElement("time"); timestamp.className = "transcript-time"; timestamp.textContent = formatSegmentTimestamp(segment.startTime); const spoken = document.createElement("p"); spoken.className = "transcript-spoken"; const speaker = document.createElement("strong"); speaker.textContent = segment.speaker; spoken.append(speaker, document.createTextNode(` ${segment.text}`)); row.append(timestamp, spoken); list.appendChild(row); });
-    if (!list.childElementCount) { const empty = document.createElement("p"); empty.className = "detail-empty"; empty.textContent = "No se encontraron intervenciones en la transcripción."; content.appendChild(empty); } else content.appendChild(list);
+    if (!list.childElementCount) { const empty = document.createElement("p"); empty.className = "detail-empty"; empty.textContent = t("history.noTranscriptSegments"); content.appendChild(empty); } else content.appendChild(list);
   } else if (state.selectedTab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
   else content.appendChild(createMediaPlayer(activeFile, state.selectedTab === "video"));
 }
 async function renderDetail() {
   cleanupActiveMedia(); detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
-  if (!meeting) { const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = "Seleccioná una reunión para ver el detalle"; detailPanelEl.appendChild(placeholder); return; }
+  if (!meeting) { const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = t("history.selectMeetingPlaceholder"); detailPanelEl.appendChild(placeholder); return; }
   const tabs = availableTabs(meeting); if (!tabs.some(([, key]) => key === state.selectedTab)) state.selectedTab = tabs[0][1];
   const renderKey = `${meetingId(meeting)}:${state.selectedTab}`;
   const detail = document.createElement("div"); detail.className = "detail-content";
   const header = document.createElement("header"); header.className = "detail-header"; const title = document.createElement("h2"); title.className = "detail-title"; title.textContent = titleFor(meeting); const date = document.createElement("p"); date.className = "detail-date"; date.textContent = formatDetailDate(meeting); const metadata = document.createElement("p"); metadata.className = "detail-metadata"; metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`; header.append(title, date, metadata);
   const tablist = document.createElement("div"); tablist.className = "detail-tabs"; tablist.setAttribute("role", "tablist"); const tabIcons = { transcript: "file-text", audio: "volume-2", video: "video", manifest: "braces" }; tabs.forEach(([, key, label]) => { const tab = document.createElement("button"); const active = key === state.selectedTab; tab.type = "button"; tab.className = `detail-tab${active ? " is-active" : ""}`; tab.innerHTML = `${icon(tabIcons[key], { size: 14, color: "currentColor" })}<span>${label}</span>`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(active)); tab.addEventListener("click", () => { state.selectedTab = key; renderDetail(); }); tablist.appendChild(tab); });
-  const content = document.createElement("section"); content.className = `detail-tab-content${state.selectedTab === "audio" ? " is-audio" : state.selectedTab === "video" ? " is-video" : ""}`; content.setAttribute("role", "tabpanel"); const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = "Cargando archivo..."; content.appendChild(loading); detail.append(header, tablist, content); detailPanelEl.appendChild(detail);
-  try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile, meeting)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = "No se pudo abrir este archivo de la reunión."; content.appendChild(unavailable); }
+  const content = document.createElement("section"); content.className = `detail-tab-content${state.selectedTab === "audio" ? " is-audio" : state.selectedTab === "video" ? " is-video" : ""}`; content.setAttribute("role", "tabpanel"); const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = t("history.loadingFile"); content.appendChild(loading); detail.append(header, tablist, content); detailPanelEl.appendChild(detail);
+  try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile, meeting)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = t("history.fileOpenError"); content.appendChild(unavailable); }
 }
 function showDeleteDialog(meeting, opener) {
   if (!meeting) return;
   const overlay = document.createElement("div"); overlay.className = "delete-modal-backdrop"; overlay.setAttribute("role", "presentation");
-  const dialog = document.createElement("section"); dialog.className = "delete-modal"; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true"); dialog.setAttribute("aria-labelledby", "delete-modal-title"); const title = document.createElement("h2"); title.id = "delete-modal-title"; title.textContent = "Eliminar reunión"; const body = document.createElement("p"); body.textContent = `Se eliminarán ${titleFor(meeting)} y todos sus archivos de este dispositivo. Esta acción es permanente y no se puede deshacer.`; const actions = document.createElement("div"); actions.className = "delete-modal-actions"; const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "modal-cancel"; cancel.textContent = "Cancelar"; const confirm = document.createElement("button"); confirm.type = "button"; confirm.className = "modal-confirm"; confirm.textContent = "Eliminar"; actions.append(cancel, confirm); dialog.append(title, body, actions); overlay.appendChild(dialog); document.body.appendChild(overlay);
+  const dialog = document.createElement("section"); dialog.className = "delete-modal"; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true"); dialog.setAttribute("aria-labelledby", "delete-modal-title"); const title = document.createElement("h2"); title.id = "delete-modal-title"; title.textContent = t("common.deleteMeeting"); const body = document.createElement("p"); body.textContent = t("history.deleteConfirmBody", { title: titleFor(meeting) }); const actions = document.createElement("div"); actions.className = "delete-modal-actions"; const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "modal-cancel"; cancel.textContent = t("common.cancel"); const confirm = document.createElement("button"); confirm.type = "button"; confirm.className = "modal-confirm"; confirm.textContent = t("common.delete"); actions.append(cancel, confirm); dialog.append(title, body, actions); overlay.appendChild(dialog); document.body.appendChild(overlay);
   const close = () => { document.removeEventListener("keydown", onKeydown); overlay.remove(); opener.focus(); };
   const onKeydown = (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } if (event.key === "Tab") { const controls = [...dialog.querySelectorAll("button:not([disabled])")]; const first = controls[0]; const last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
   cancel.addEventListener("click", close); confirm.addEventListener("click", async () => { confirm.disabled = true; try { const root = await navigator.storage.getDirectory(); await root.removeEntry(meeting.folderName, { recursive: true }); const meetingHistory = state.meetings.filter((item) => meetingId(item) !== meetingId(meeting)); await chrome.storage.local.set({ meetingHistory }); state.meetings = meetingHistory; state.selectedMeetingId = null; state.selectedTab = null; renderAllExceptDetail(); renderDetail(); close(); } catch { confirm.disabled = false; } });
