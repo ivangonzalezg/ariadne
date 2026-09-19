@@ -98,8 +98,12 @@ export class SessionWriter {
     }
 
     if (this.hasCaption) {
+      // segment.startMs es un epoch absoluto (Date.now() en meet-caption-observer.js), no un
+      // offset — hay que restarle startedAt para obtener el mm:ss relativo al inicio de la
+      // grabación. Sin esto formatTimestamp recibía el epoch completo y el resultado tenía
+      // minutos de 8+ dígitos, rompiendo el parseo posterior en history.js.
       const transcriptText = this.captionParser.finishedSegments
-        .map((segment) => `[${formatTimestamp(segment.startMs)}] [${segment.speaker}] ${segment.text}`)
+        .map((segment) => `[${formatTimestamp(segment.startMs - this.startedAt)}] [${segment.speaker}] ${segment.text}`)
         .join("\n");
       const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.txt", { create: true });
       const writable = await fileHandle.createWritable();

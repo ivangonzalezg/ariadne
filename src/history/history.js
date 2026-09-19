@@ -232,14 +232,14 @@ async function readActiveFile(meeting, tab) {
   const fallback = isVideo ? (preferred.endsWith(".mp4") ? "video-reunion.webm" : "video-reunion.mp4") : (preferred.endsWith(".mp3") ? "audio-reunion.webm" : "audio-reunion.mp3");
   try { return { file: await (await directory.getFileHandle(preferred)).getFile(), name: preferred }; } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
 }
-function parseTranscript(text) { return text.split("\n").map((line) => line.match(/^\[(\d{2}:\d{2})\] \[(.*?)\] (.*)$/)).filter(Boolean).map((match) => ({ timestamp: match[1], speaker: match[2], text: match[3] })); }
+function parseTranscript(text) { return text.split("\n").map((line) => line.match(/^\[(\d+:\d{2})\] \[(.*?)\] (.*)$/)).filter(Boolean).map((match) => ({ timestamp: match[1], speaker: match[2], text: match[3] })); }
 function createFileFooter(activeFile) {
   const footer = document.createElement("footer"); footer.className = "detail-footer";
   const fileRow = document.createElement("div"); fileRow.className = "detail-file-row";
   const metadata = document.createElement("div"); metadata.className = "detail-file-meta"; const name = document.createElement("span"); name.className = "detail-file-name"; name.textContent = activeFile.name; const size = document.createElement("span"); size.className = "detail-file-size"; size.textContent = formatFileSize(activeFile.file.size); metadata.append(name, size);
   const actions = document.createElement("div"); actions.className = "detail-file-actions";
-  const view = document.createElement("button"); view.type = "button"; view.className = "detail-action detail-action-view"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>Abrir</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
-  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action detail-action-download"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
+  const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>Abrir</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
+  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
   const separator = document.createElement("span"); separator.className = "detail-footer-separator"; separator.setAttribute("aria-hidden", "true");
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.innerHTML = `${icon("trash-2", { size: 14, color: "currentColor" })}<span>Eliminar reunión</span>`; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
   actions.append(view, download); fileRow.append(metadata, actions); footer.append(fileRow, separator, remove); return footer;
