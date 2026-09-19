@@ -169,10 +169,16 @@ function closeOpenMoreMenu() {
 }
 document.addEventListener("click", closeOpenMoreMenu);
 
+function openMeetingDetail(meeting, tab) {
+  state.selectedMeetingId = meetingId(meeting); state.selectedTab = tab ?? null; renderMeetings(); renderDetail();
+}
+
 function createMeetingCard(meeting) {
   const card = document.createElement("article"); card.className = `meeting-card${meetingId(meeting) === state.selectedMeetingId ? " is-selected" : ""}`;
+  card.addEventListener("click", () => openMeetingDetail(meeting));
   const header = document.createElement("div"); header.className = "meeting-card-header";
   const title = document.createElement("h3"); title.className = "meeting-title"; title.textContent = titleFor(meeting);
+  const moreWrap = document.createElement("div"); moreWrap.className = "more-wrap";
   const more = document.createElement("button"); more.type = "button"; more.className = "more-button"; more.setAttribute("aria-label", "Más opciones"); more.setAttribute("aria-haspopup", "true"); more.setAttribute("aria-expanded", "false"); more.innerHTML = icon("ellipsis", { size: 17, color: "currentColor" });
   more.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -186,19 +192,21 @@ function createMeetingCard(meeting) {
     deleteItem.appendChild(document.createTextNode("Eliminar reunión"));
     deleteItem.addEventListener("click", (deleteEvent) => { deleteEvent.stopPropagation(); closeOpenMoreMenu(); showDeleteDialog(meeting, more); });
     menu.appendChild(deleteItem);
-    card.appendChild(menu);
+    moreWrap.appendChild(menu);
   });
-  header.append(title, more);
+  moreWrap.appendChild(more);
+  header.append(title, moreWrap);
   const date = document.createElement("p"); date.className = "meeting-date"; date.textContent = formatMeetingDate(meeting);
   const chips = document.createElement("div"); chips.className = "file-chips";
-  [[meeting.hasTranscript, "file-text", "Transcripción"], [true, "volume-2", "Audio"], [meeting.hasVideo, "video", "Video"], [true, "braces", "Manifest"]].forEach(([available, iconName, label]) => {
-    const chip = document.createElement("span"); chip.className = `file-chip${available ? "" : " is-unavailable"}`;
+  [[meeting.hasTranscript, "file-text", "Transcripción", "transcript"], [true, "volume-2", "Audio", "audio"], [meeting.hasVideo, "video", "Video", "video"], [true, "braces", "Manifest", "manifest"]].forEach(([available, iconName, label, tab]) => {
+    const chip = document.createElement("span"); chip.className = `file-chip${available ? " is-available" : " is-unavailable"}`;
     chip.innerHTML = icon(iconName, { size: 12, color: "currentColor" });
     chip.appendChild(document.createTextNode(label));
+    if (available) { chip.setAttribute("role", "button"); chip.tabIndex = 0; chip.addEventListener("click", (event) => { event.stopPropagation(); openMeetingDetail(meeting, tab); }); }
     chips.appendChild(chip);
   });
   const detailsRow = document.createElement("div"); detailsRow.className = "details-row";
-  const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = "Ver detalles"; details.addEventListener("click", () => { state.selectedMeetingId = meetingId(meeting); state.selectedTab = null; renderMeetings(); renderDetail(); });
+  const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = "Ver detalles";
   detailsRow.appendChild(details);
   card.append(header, date, chips, detailsRow); return card;
 }
