@@ -12,7 +12,7 @@ let activeMediaElement = null;
 let activeMediaUrl = null;
 
 document.getElementById("search-icon").innerHTML = icon("search", { size: 15, color: "var(--text-muted)" });
-document.getElementById("sort-icon").innerHTML = icon("arrow-up-down", { size: 14, color: "var(--text-secondary)" });
+document.getElementById("sort-chevron").innerHTML = icon("chevron-down", { size: 12, color: "var(--text-muted)" });
 
 // Se usan en el panel de detalle de la siguiente tarea. Se conservan acá para
 // que ese panel pueda abrir y descargar archivos sin cambiar la estrategia.
@@ -163,16 +163,44 @@ function renderMeetings() {
   meetings.forEach((meeting) => meetingsListEl.appendChild(createMeetingCard(meeting)));
 }
 
+function closeOpenMoreMenu() {
+  meetingsListEl.querySelector(".more-menu")?.remove();
+  meetingsListEl.querySelectorAll(".more-button.is-open").forEach((button) => { button.classList.remove("is-open"); button.setAttribute("aria-expanded", "false"); });
+}
+document.addEventListener("click", closeOpenMoreMenu);
+
 function createMeetingCard(meeting) {
-  const card = document.createElement("article"); card.className = "meeting-card";
+  const card = document.createElement("article"); card.className = `meeting-card${meetingId(meeting) === state.selectedMeetingId ? " is-selected" : ""}`;
   const header = document.createElement("div"); header.className = "meeting-card-header";
   const title = document.createElement("h3"); title.className = "meeting-title"; title.textContent = titleFor(meeting);
-  const more = document.createElement("span"); more.className = "more-icon"; more.setAttribute("aria-hidden", "true"); more.innerHTML = icon("ellipsis", { size: 17, color: "var(--text-secondary)" }); header.append(title, more);
+  const more = document.createElement("button"); more.type = "button"; more.className = "more-button"; more.setAttribute("aria-label", "Más opciones"); more.setAttribute("aria-haspopup", "true"); more.setAttribute("aria-expanded", "false"); more.innerHTML = icon("ellipsis", { size: 17, color: "currentColor" });
+  more.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const wasOpen = more.classList.contains("is-open");
+    closeOpenMoreMenu();
+    if (wasOpen) return;
+    more.classList.add("is-open"); more.setAttribute("aria-expanded", "true");
+    const menu = document.createElement("div"); menu.className = "more-menu"; menu.setAttribute("role", "menu");
+    const deleteItem = document.createElement("button"); deleteItem.type = "button"; deleteItem.className = "more-menu-item"; deleteItem.setAttribute("role", "menuitem");
+    deleteItem.innerHTML = icon("trash-2", { size: 14, color: "currentColor" });
+    deleteItem.appendChild(document.createTextNode("Eliminar reunión"));
+    deleteItem.addEventListener("click", (deleteEvent) => { deleteEvent.stopPropagation(); closeOpenMoreMenu(); showDeleteDialog(meeting, more); });
+    menu.appendChild(deleteItem);
+    card.appendChild(menu);
+  });
+  header.append(title, more);
   const date = document.createElement("p"); date.className = "meeting-date"; date.textContent = formatMeetingDate(meeting);
   const chips = document.createElement("div"); chips.className = "file-chips";
-  [[meeting.hasTranscript, "Transcripción"], [true, "Audio"], [meeting.hasVideo, "Video"], [true, "Manifest"]].filter(([available]) => available).forEach(([, label]) => { const chip = document.createElement("span"); chip.className = "file-chip"; chip.textContent = label; chips.appendChild(chip); });
-  const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = "Ver detalles"; details.addEventListener("click", () => { state.selectedMeetingId = meetingId(meeting); state.selectedTab = null; renderDetail(); });
-  card.append(header, date, chips, details); return card;
+  [[meeting.hasTranscript, "file-text", "Transcripción"], [true, "volume-2", "Audio"], [meeting.hasVideo, "video", "Video"], [true, "braces", "Manifest"]].forEach(([available, iconName, label]) => {
+    const chip = document.createElement("span"); chip.className = `file-chip${available ? "" : " is-unavailable"}`;
+    chip.innerHTML = icon(iconName, { size: 12, color: "currentColor" });
+    chip.appendChild(document.createTextNode(label));
+    chips.appendChild(chip);
+  });
+  const detailsRow = document.createElement("div"); detailsRow.className = "details-row";
+  const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = "Ver detalles"; details.addEventListener("click", () => { state.selectedMeetingId = meetingId(meeting); state.selectedTab = null; renderMeetings(); renderDetail(); });
+  detailsRow.appendChild(details);
+  card.append(header, date, chips, detailsRow); return card;
 }
 
 function availableTabs(meeting) { return [[meeting.hasTranscript, "transcript", "Transcripción"], [true, "audio", "Audio"], [meeting.hasVideo, "video", "Video"], [true, "manifest", "Manifest"]].filter(([available]) => available); }
