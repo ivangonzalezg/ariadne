@@ -58,6 +58,11 @@ function endTime(meeting) {
   const startedAt = Number(meeting.startedAt);
   return meeting.endedAt ?? (meeting.durationMs != null ? startedAt + Number(meeting.durationMs) : startedAt);
 }
+function durationOf(meeting) {
+  if (meeting.durationMs != null) return Number(meeting.durationMs);
+  if (meeting.endedAt != null) return Number(meeting.endedAt) - Number(meeting.startedAt);
+  return 0;
+}
 
 export function deriveVisibleMeetings(currentState) {
   const normalizedSearch = currentState.search.trim().toLocaleLowerCase();
@@ -77,7 +82,7 @@ export function deriveVisibleMeetings(currentState) {
   return visible.sort((left, right) => currentState.sort === "oldest" ? left.startedAt - right.startedAt : right.startedAt - left.startedAt);
 }
 
-function formatMonth(date) { return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(date); }
+function formatMonth(date) { return `${capitalize(new Intl.DateTimeFormat("es-ES", { month: "long" }).format(date))} ${date.getFullYear()}`; }
 function capitalize(text) { return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text; }
 function formatMeetingDate(meeting) {
   const started = new Date(meeting.startedAt);
@@ -88,7 +93,7 @@ function formatMeetingDate(meeting) {
 }
 function formatDetailDate(meeting) { return capitalize(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(meeting.startedAt))); }
 function formatTimeRange(meeting) { const formatter = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false }); return `${formatter.format(new Date(meeting.startedAt))} – ${formatter.format(new Date(endTime(meeting)))}`; }
-function formatDuration(totalMs) { const totalMinutes = Math.floor(Math.max(0, totalMs) / 60000); return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`; }
+function formatDurationHours(totalMs) { const hours = Math.ceil((Math.max(0, totalMs) / 3600000) * 10) / 10; return `${hours} horas`; }
 function formatMediaTime(seconds) { if (!Number.isFinite(seconds) || seconds < 0) return "0:00"; const totalSeconds = Math.floor(seconds); return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`; }
 function formatFileSize(bytes) { if (!Number.isFinite(bytes)) return ""; const units = ["B", "KB", "MB", "GB"]; let value = bytes; let index = 0; while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; } return `${value.toLocaleString("es-ES", { maximumFractionDigits: index ? 1 : 0 })} ${units[index]}`; }
 function allFiltersOff() { return Object.values(state.filters).every((active) => !active); }
@@ -114,7 +119,6 @@ function renderCalendar() {
   calendarEl.replaceChildren();
   const header = document.createElement("div"); header.className = "calendar-header";
   const heading = document.createElement("div"); heading.className = "calendar-title";
-  heading.innerHTML = icon("calendar", { size: 15, color: "var(--text-secondary)" });
   const month = document.createElement("span"); month.textContent = formatMonth(state.calendarMonth); heading.appendChild(month);
   const controls = document.createElement("div"); controls.className = "calendar-controls";
   controls.append(createCalendarButton("chevron-left", "Mes anterior", -1), createCalendarButton("chevron-right", "Mes siguiente", 1));
@@ -149,7 +153,7 @@ function createCalendarButton(iconName, label, offset) {
 function renderKpis() {
   kpisEl.replaceChildren();
   const thisMonth = state.meetings.filter((meeting) => isInCurrentMonth(new Date(meeting.startedAt)));
-  const rows = [[String(thisMonth.length), "reuniones este mes"], [formatDuration(thisMonth.reduce((total, meeting) => total + (meeting.durationMs ?? 0), 0)), "de grabación"], [String(state.meetings.filter((meeting) => meeting.hasVideo).length), "reuniones con video"], [String(state.meetings.filter((meeting) => meeting.hasTranscript).length), "reuniones con transcripción"]];
+  const rows = [[String(thisMonth.length), "reuniones este mes"], [formatDurationHours(thisMonth.reduce((total, meeting) => total + durationOf(meeting), 0)), "de grabación"], [String(state.meetings.filter((meeting) => meeting.hasVideo).length), "reuniones con video"], [String(state.meetings.filter((meeting) => meeting.hasTranscript).length), "reuniones con transcripción"]];
   rows.forEach(([value, label]) => { const row = document.createElement("div"); row.className = "kpi-row"; const valueEl = document.createElement("strong"); valueEl.className = "kpi-value"; valueEl.textContent = value; const labelEl = document.createElement("span"); labelEl.className = "kpi-label"; labelEl.textContent = label; row.append(valueEl, labelEl); kpisEl.appendChild(row); });
 }
 
