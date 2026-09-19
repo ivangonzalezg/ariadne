@@ -4401,3 +4401,35 @@ Implementa los tabs de Audio y Video del panel de Detalle (Task 36), con control
 - [ ] **Build + tests**: `npm run build && npm test`.
 - [ ] **Manual verification**: reproducir audio y video real de una reunión grabada, probar play/pausa, arrastrar la barra de progreso, retroceder/adelantar 10s, cambiar volumen, pantalla completa del video, y confirmar que cambiar de reunión seleccionada no deja audio/video sonando de fondo sin control ni rompe la página.
 - [ ] **Commit**.
+
+---
+
+## Task 38: Historial — Detalle: contenedor con fondo, tabs con ícono y footer de acciones como en el diseño
+
+El panel de Detalle (Task 36/37) ya es funcional pero visualmente se aleja del diseño de Pencil (nodo `QcJgR`). Ajustar solo estilo/estructura, sin tocar la lógica de lectura de archivos ni de reproducción ya implementada.
+
+**Diseño de referencia (extraído del nodo `QcJgR` vía MCP de Pencil):**
+
+- Panel (`#detail-panel`): `fill: $bg-elevated`, borde solo a la izquierda (`stroke: $border`, `strokeWidth: {left: 1}`), `padding: 24`, layout vertical `gap: 16`. (El `padding: 24` y el borde izquierdo ya deberían existir o ser triviales de ajustar; verificar contra el `.detail-panel`/`.history-app` actual.)
+- **Tabs de archivo** (componente `C · File tab`): cada tab es `cornerRadius: 8`, `gap: 6`, `padding: [8, 12]` (8 vertical, 12 horizontal), con **ícono (14x14) + label (12px, weight 500)** — hoy `.detail-tab` en `history.js`/`history.html` sólo renderiza texto, sin ícono. Agregar el ícono correspondiente a cada tab, mismos nombres que ya se usan en los file chips del listado: `file-text` (Transcripción), `volume-2` (Audio), `video` (Video), `braces` (Manifest). Tab activo: `fill: $bg-button`, ícono y texto en `$text-primary`. Tab inactivo: sin fondo (transparente), ícono y texto en `$text-secondary`. No hay `font-weight: 600` extra en el activo en el diseño — el peso del label es 500 en ambos estados, solo cambia el color y el fondo.
+- **Contenedor del contenido del tab** (frames "Transcript/Audio/Video/Manifest viewer" en el diseño): el contenido de cada tab (lista de transcripción, reproductor, JSON del manifest) debe ir envuelto en un contenedor propio con `fill: $bg` (un tono más oscuro que el panel `$bg-elevated` — esto le da el "color de fondo específico" que pidió el usuario), `cornerRadius: 12`, `padding: 20`, ocupando el ancho/alto disponible. Hoy `.detail-tab-content` no tiene fondo ni padding propio — el contenido flota directamente sobre el fondo del panel. El manifest ya tiene su propio `<pre class="manifest-code">` con fondo/borde propios (`#151820`, `border: 1px solid var(--border)`) — decidir con criterio si ese `<pre>` debe perder su fondo/borde individual ahora que vive dentro del contenedor nuevo (para no duplicar "caja dentro de caja"), o si alcanza con que el contenedor nuevo styling reemplace ambos. Mismo criterio para `.transcript-list` y `.custom-media-player`, que hoy no tienen contenedor propio.
+- **Footer** (frame "Detail footer", `gap: 12`, sin borde superior — hoy `.detail-footer` tiene `border-top: 1px solid var(--border)`, en el diseño la línea divisoria está SOLO entre las acciones de archivo y "Eliminar reunión", no arriba de todo el footer):
+  - **Fila de archivo** (`justifyContent: space_between`, `alignItems: center`):
+    - Izquierda: nombre del archivo (12px, weight 500, `$text-secondary`) y tamaño (11px, `$text-muted`) apilados verticalmente (`gap: 2`) — hoy están concatenados en un solo `<span>` con "·". Separarlos en dos líneas.
+    - Derecha (`gap: 8`, `alignItems: center`): dos botones con chrome real (hoy son links de texto plano `color: var(--accent-blue)` sin fondo/borde):
+      - **"Abrir"**: `cornerRadius: 8`, `stroke: $border` (`strokeWidth: 1`), `padding: [7, 10]`, ícono `external-link` (12x12, `$text-secondary`) + label (12px, weight 500, `$text-secondary`).
+      - **"Descargar"**: `fill: $bg-button`, `cornerRadius: 8`, `padding: [7, 10]`, ícono `download` (12x12, `$text-primary`) + label (12px, weight 500, `$text-primary`).
+      - Ambos íconos (`external-link`, `download`) no existen todavía en `src/shared/icons.js` — agregarlos con el mismo patrón que los íconos existentes (paths reales de `node_modules/lucide-static/icons/`, nunca dibujados a mano).
+  - **Línea divisoria**: rectángulo de 1px de alto, `fill: $border`, ancho completo — entre la fila de archivo y la fila de eliminar (reemplaza el actual `.detail-footer-separator` vertical de 14px que separa "Descargar" de "Eliminar reunión" en la misma fila).
+  - **Fila "Eliminar reunión"**: propia fila debajo de la línea divisoria (no más inline con Abrir/Descargar), `gap: 8`, `alignItems: center`, ícono `trash-2` (14x14, `$accent-red`) + label "Eliminar reunión" (12px, weight 500, `$accent-red`). Reusar el modal de confirmación ya implementado en la Task 36 (`showDeleteDialog`), sin cambios de lógica.
+- Mantener sin cambios: la lógica de `readActiveFile`, `renderTabContent`, `createMediaPlayer`, `parseTranscript`, `highlightJson`/`escapeHtml`, `availableTabs`, y el manejo de foco/Escape del modal de eliminar — esta tarea es puramente de estilo/estructura del markup, no de comportamiento.
+
+**Files:**
+- Modify: `src/history/history.js` (estructura del tablist con íconos, wrapper del contenido del tab, estructura del footer en dos filas)
+- Modify: `src/history/history.html` (CSS: `.detail-tab` con ícono, nuevo contenedor de contenido del tab con `fill`/`radius`/`padding`, rediseño de `.detail-footer`/`.detail-file-meta`/`.detail-file-actions`/`.detail-action`/`.delete-meeting-button`)
+- Modify: `src/shared/icons.js` (agregar íconos `external-link` y `download`)
+
+- [ ] **Step 1-N**: implementar lo descrito arriba, tantos steps como haga falta.
+- [ ] **Build + tests**: `npm run build && npm test`.
+- [ ] **Manual verification**: abrir el detalle de una reunión con transcripción, audio, video y manifest; confirmar que cada tab muestra su ícono correspondiente y que el tab activo tiene el fondo `$bg-button`; confirmar que el contenido de cada tab (transcripción, reproductores, JSON) se ve dentro de un contenedor con fondo propio, no flotando sobre el fondo del panel; confirmar que el footer muestra nombre/tamaño del archivo apilados, los botones "Abrir"/"Descargar" con el chrome nuevo (borde vs. fondo), la línea divisoria, y la fila "Eliminar reunión" debajo funcionando igual que antes (modal con foco atrapado, Escape, restauración de foco).
+- [ ] **Commit**.
