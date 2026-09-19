@@ -83,8 +83,11 @@ export class SessionWriter {
     this.captionParser.onSnapshot(snapshot);
   }
 
-  async finalize({ muteManifest }) {
-    this.endedAt = Date.now();
+  async finalize({ muteManifest, endedAt }) {
+    // Se usa el momento real en que el usuario detuvo la grabación (capturado en
+    // MainWorldSession.stop()), no cuándo finalize() llegó a ejecutarse acá —
+    // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.
+    this.endedAt = endedAt ?? Date.now();
     await this.ready;
     this.captionParser.finalizeCurrent(Date.now());
 

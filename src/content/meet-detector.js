@@ -128,6 +128,7 @@ window.addEventListener("message", (event) => {
       type: "asterion:session-ended",
       sessionId: message.sessionId,
       muteManifest: message.muteManifest,
+      endedAt: message.endedAt,
     });
     sessionId = null;
     meetingTitle = null;

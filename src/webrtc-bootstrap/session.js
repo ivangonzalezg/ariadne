@@ -74,7 +74,8 @@ export class MainWorldSession {
   }
 
   async stop() {
-    this.muteManifest.finalize(Date.now());
+    const endedAt = Date.now();
+    this.muteManifest.finalize(endedAt);
     const recorders = [this.meetingRecorder, this.videoRecorder].filter(Boolean);
 
     const stopped = recorders.map(
@@ -97,6 +98,7 @@ export class MainWorldSession {
       type: "asterion:session-ended",
       sessionId: this.sessionId,
       muteManifest: this.muteManifest.toJSON(),
+      endedAt,
     });
   }
 }

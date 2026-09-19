@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     if (!writer) return;
     writer.onConversionsFinished = () => sessions.delete(message.sessionId);
     writer
-      .finalize({ muteManifest: message.muteManifest })
+      .finalize({ muteManifest: message.muteManifest, endedAt: message.endedAt })
       .then((meta) => {
         chrome.runtime.sendMessage({ type: "asterion:session-finalized", ...meta });
       })
