@@ -1,4 +1,5 @@
 import { icon } from "../shared/icons.js";
+import { formatSegmentTimestamp, transcriptToTxt, transcriptToMarkdown } from "../lib/transcript-export.js";
 
 const searchInput = document.getElementById("search-input");
 const filterChipsEl = document.getElementById("filter-chips");
@@ -224,7 +225,7 @@ async function openMeetingDirectory(meeting) { const root = await navigator.stor
 async function readJsonFile(directory) { const file = await (await directory.getFileHandle("manifest.json")).getFile(); return { file, value: JSON.parse(await file.text()) }; }
 async function readActiveFile(meeting, tab) {
   const directory = await openMeetingDirectory(meeting);
-  if (tab === "transcript") { const file = await (await directory.getFileHandle("transcripcion.txt")).getFile(); return { file, name: "transcripcion.txt", text: await file.text() }; }
+  if (tab === "transcript") { const file = await (await directory.getFileHandle("transcripcion.json")).getFile(); return { file, name: "transcripcion.json", value: JSON.parse(await file.text()) }; }
   if (tab === "manifest") { const { file, value } = await readJsonFile(directory); return { file, name: "manifest.json", value }; }
   const { value: manifest } = await readJsonFile(directory).catch(() => ({ value: {} }));
   const isVideo = tab === "video"; const converted = isVideo ? (manifest.hasVideoMp4 || manifest.videoConversionStatus === "succeeded") : (manifest.hasAudioMp3 || manifest.audioConversionStatus === "succeeded");
@@ -232,17 +233,24 @@ async function readActiveFile(meeting, tab) {
   const fallback = isVideo ? (preferred.endsWith(".mp4") ? "video-reunion.webm" : "video-reunion.mp4") : (preferred.endsWith(".mp3") ? "audio-reunion.webm" : "audio-reunion.mp3");
   try { return { file: await (await directory.getFileHandle(preferred)).getFile(), name: preferred }; } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
 }
-function parseTranscript(text) { return text.split("\n").map((line) => line.match(/^\[(\d+:\d{2})\] \[(.*?)\] (.*)$/)).filter(Boolean).map((match) => ({ timestamp: match[1], speaker: match[2], text: match[3] })); }
-function createFileFooter(activeFile) {
+function createFileFooter(activeFile, meeting) {
   const footer = document.createElement("footer"); footer.className = "detail-footer";
   const fileRow = document.createElement("div"); fileRow.className = "detail-file-row";
   const metadata = document.createElement("div"); metadata.className = "detail-file-meta"; const name = document.createElement("span"); name.className = "detail-file-name"; name.textContent = activeFile.name; const size = document.createElement("span"); size.className = "detail-file-size"; size.textContent = formatFileSize(activeFile.file.size); metadata.append(name, size);
   const actions = document.createElement("div"); actions.className = "detail-file-actions";
   const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>Abrir</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
   const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
+  actions.append(view, download);
+  if (state.selectedTab === "transcript") {
+    const downloadTxt = document.createElement("button"); downloadTxt.type = "button"; downloadTxt.className = "detail-action"; downloadTxt.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar TXT</span>`;
+    downloadTxt.addEventListener("click", () => downloadFile(new Blob([transcriptToTxt(activeFile.value)], { type: "text/plain" }), "transcripcion.txt"));
+    const downloadMd = document.createElement("button"); downloadMd.type = "button"; downloadMd.className = "detail-action"; downloadMd.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>Descargar Markdown</span>`;
+    downloadMd.addEventListener("click", () => downloadFile(new Blob([transcriptToMarkdown(activeFile.value, titleFor(meeting))], { type: "text/markdown" }), "transcripcion.md"));
+    actions.append(downloadTxt, downloadMd);
+  }
   const separator = document.createElement("span"); separator.className = "detail-footer-separator"; separator.setAttribute("aria-hidden", "true");
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.innerHTML = `${icon("trash-2", { size: 14, color: "currentColor" })}<span>Eliminar reunión</span>`; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
-  actions.append(view, download); fileRow.append(metadata, actions); footer.append(fileRow, separator, remove); return footer;
+  fileRow.append(metadata, actions); footer.append(fileRow, separator, remove); return footer;
 }
 function cleanupActiveMedia() {
   if (activeMediaElement) { activeMediaElement.pause(); activeMediaElement.removeAttribute("src"); activeMediaElement.load(); activeMediaElement = null; }
@@ -279,7 +287,7 @@ function createMediaPlayer(activeFile, isVideo) {
 function renderTabContent(content, activeFile) {
   if (state.selectedTab === "transcript") {
     const list = document.createElement("div"); list.className = "transcript-list";
-    parseTranscript(activeFile.text).forEach((entry) => { const row = document.createElement("div"); row.className = "transcript-row"; const timestamp = document.createElement("time"); timestamp.className = "transcript-time"; timestamp.textContent = entry.timestamp; const spoken = document.createElement("p"); spoken.className = "transcript-spoken"; const speaker = document.createElement("strong"); speaker.textContent = entry.speaker; spoken.append(speaker, document.createTextNode(` ${entry.text}`)); row.append(timestamp, spoken); list.appendChild(row); });
+    activeFile.value.forEach((segment) => { const row = document.createElement("div"); row.className = "transcript-row"; const timestamp = document.createElement("time"); timestamp.className = "transcript-time"; timestamp.textContent = formatSegmentTimestamp(segment.startTime); const spoken = document.createElement("p"); spoken.className = "transcript-spoken"; const speaker = document.createElement("strong"); speaker.textContent = segment.speaker; spoken.append(speaker, document.createTextNode(` ${segment.text}`)); row.append(timestamp, spoken); list.appendChild(row); });
     if (!list.childElementCount) { const empty = document.createElement("p"); empty.className = "detail-empty"; empty.textContent = "No se encontraron intervenciones en la transcripción."; content.appendChild(empty); } else content.appendChild(list);
   } else if (state.selectedTab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
   else content.appendChild(createMediaPlayer(activeFile, state.selectedTab === "video"));
@@ -293,7 +301,7 @@ async function renderDetail() {
   const header = document.createElement("header"); header.className = "detail-header"; const title = document.createElement("h2"); title.className = "detail-title"; title.textContent = titleFor(meeting); const date = document.createElement("p"); date.className = "detail-date"; date.textContent = formatDetailDate(meeting); const metadata = document.createElement("p"); metadata.className = "detail-metadata"; metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`; header.append(title, date, metadata);
   const tablist = document.createElement("div"); tablist.className = "detail-tabs"; tablist.setAttribute("role", "tablist"); const tabIcons = { transcript: "file-text", audio: "volume-2", video: "video", manifest: "braces" }; tabs.forEach(([, key, label]) => { const tab = document.createElement("button"); const active = key === state.selectedTab; tab.type = "button"; tab.className = `detail-tab${active ? " is-active" : ""}`; tab.innerHTML = `${icon(tabIcons[key], { size: 14, color: "currentColor" })}<span>${label}</span>`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(active)); tab.addEventListener("click", () => { state.selectedTab = key; renderDetail(); }); tablist.appendChild(tab); });
   const content = document.createElement("section"); content.className = `detail-tab-content${state.selectedTab === "audio" ? " is-audio" : state.selectedTab === "video" ? " is-video" : ""}`; content.setAttribute("role", "tabpanel"); const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = "Cargando archivo..."; content.appendChild(loading); detail.append(header, tablist, content); detailPanelEl.appendChild(detail);
-  try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = "No se pudo abrir este archivo de la reunión."; content.appendChild(unavailable); }
+  try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile, meeting)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = "No se pudo abrir este archivo de la reunión."; content.appendChild(unavailable); }
 }
 function showDeleteDialog(meeting, opener) {
   if (!meeting) return;
