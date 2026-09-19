@@ -84,10 +84,10 @@
     <main>
       <header class="page-header">
         <button id="back-button" class="back-button" type="button" aria-label="Volver"></button>
-        <h1>Configuración</h1>
+        <h1 id="page-heading">Configuración</h1>
       </header>
       <section class="setting-card">
-        <label for="video-preset">Velocidad y calidad del video</label>
+        <label id="video-preset-label" for="video-preset">Velocidad y calidad del video</label>
         <select id="video-preset">
           <option value="ultrafast">Ultrafast</option>
           <option value="superfast">Superfast</option>
@@ -99,7 +99,7 @@
           <option value="slower">Slower</option>
           <option value="veryslow">Veryslow</option>
         </select>
-        <p class="helper">Más rápido = menos calidad/compresión, más lento = mejor compresión.</p>
+        <p id="video-preset-helper" class="helper">Más rápido = menos calidad/compresión, más lento = mejor compresión.</p>
       </section>
     </main>
     <script type="module" src="settings.js"></script>
