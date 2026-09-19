@@ -163,4 +163,58 @@ describe("SessionWriter conversion flow", () => {
       hasVideoMp4: false,
     });
   });
+
+  it("writes transcripcion.json with camelCase segments relative to startedAt", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    writer.onCaptionSnapshot({ speaker: "Ana", text: "Hola", timestampMs: writer.startedAt + 1000 });
+    writer.onCaptionSnapshot({ speaker: "Luis", text: "Hola de vuelta", timestampMs: writer.startedAt + 5000 });
+
+    const endedAt = writer.startedAt + 8000;
+    await writer.finalize({ muteManifest: { intervals: [] }, endedAt });
+    await finished;
+
+    const bytes = writer.meetingHandle.files.get("transcripcion.json").bytes;
+    const segments = JSON.parse(new TextDecoder().decode(bytes));
+
+    expect(segments).toEqual([
+      { index: 0, startTime: 1000, endTime: 1000, text: "Hola", speaker: "Ana" },
+      { index: 1, startTime: 5000, endTime: 8000, text: "Hola de vuelta", speaker: "Luis" },
+    ]);
+  });
+
+  it("collapses consecutive snapshots from the same speaker into one segment", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    writer.onCaptionSnapshot({ speaker: "Ana", text: "Hola", timestampMs: writer.startedAt + 1000 });
+    writer.onCaptionSnapshot({ speaker: "Ana", text: "Hola a todos", timestampMs: writer.startedAt + 2000 });
+    writer.onCaptionSnapshot({ speaker: "Luis", text: "Buenas", timestampMs: writer.startedAt + 5000 });
+
+    const endedAt = writer.startedAt + 6000;
+    await writer.finalize({ muteManifest: { intervals: [] }, endedAt });
+    await finished;
+
+    const bytes = writer.meetingHandle.files.get("transcripcion.json").bytes;
+    const segments = JSON.parse(new TextDecoder().decode(bytes));
+
+    expect(segments).toEqual([
+      { index: 0, startTime: 1000, endTime: 2000, text: "Hola a todos", speaker: "Ana" },
+      { index: 1, startTime: 5000, endTime: 6000, text: "Buenas", speaker: "Luis" },
+    ]);
+  });
+
+  it("does not write any transcript file when there were no captions", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    await writer.finalize({ muteManifest: { intervals: [] } });
+    await finished;
+
+    expect(writer.meetingHandle.files.has("transcripcion.json")).toBe(false);
+  });
 });

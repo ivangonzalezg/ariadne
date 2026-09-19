@@ -16,13 +16,6 @@ function meetingFolderName(startedAt, meetingTitle) {
   return `${sanitizeForFolderName(meetingTitle)} — ${iso}`;
 }
 
-function formatTimestamp(ms) {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
 function sendConversionMessage(message) {
   try {
     chrome.runtime.sendMessage(message).catch(() => {});
@@ -89,7 +82,7 @@ export class SessionWriter {
     // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.
     this.endedAt = endedAt ?? Date.now();
     await this.ready;
-    this.captionParser.finalizeCurrent(Date.now());
+    this.captionParser.finalizeCurrent(this.endedAt);
 
     await Promise.all(this.writeQueueByStream.values());
 
@@ -98,16 +91,19 @@ export class SessionWriter {
     }
 
     if (this.hasCaption) {
-      // segment.startMs es un epoch absoluto (Date.now() en meet-caption-observer.js), no un
-      // offset — hay que restarle startedAt para obtener el mm:ss relativo al inicio de la
-      // grabación. Sin esto formatTimestamp recibía el epoch completo y el resultado tenía
-      // minutos de 8+ dígitos, rompiendo el parseo posterior en history.js.
-      const transcriptText = this.captionParser.finishedSegments
-        .map((segment) => `[${formatTimestamp(segment.startMs - this.startedAt)}] [${segment.speaker}] ${segment.text}`)
-        .join("\n");
-      const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.txt", { create: true });
+      // segment.startMs/endMs son epoch absoluto (Date.now() en meet-caption-observer.js);
+      // se restan contra startedAt para guardar offsets relativos al inicio de la
+      // grabación, iguales a los que usa el resto del manifest.
+      const segments = this.captionParser.finishedSegments.map((segment, index) => ({
+        index,
+        startTime: segment.startMs - this.startedAt,
+        endTime: segment.endMs - this.startedAt,
+        text: segment.text,
+        speaker: segment.speaker,
+      }));
+      const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.json", { create: true });
       const writable = await fileHandle.createWritable();
-      await writable.write(transcriptText);
+      await writable.write(JSON.stringify(segments, null, 2));
       await writable.close();
     }
 
