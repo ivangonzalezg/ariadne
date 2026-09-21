@@ -1,5 +1,6 @@
 // src/content/meet-banner.js
 import { icon } from "../shared/icons.js";
+import { initI18n } from "../shared/i18n/i18n.js";
 
 let hostEl = null;
 let contentEl = null;
@@ -8,6 +9,8 @@ let currentState = "idle";
 let currentMeta = {};
 let isExpanded = false;
 let timerInterval = null;
+let bannerReady = false;
+let t = (key) => key;
 
 const EDGE_MARGIN = 16;
 const BANNER_POSITION_KEY = "bannerPosition";
@@ -34,11 +37,11 @@ function sourceRow(iconName, label, active, activeLabel, inactiveLabel) {
 
 function recordingControls() {
   const videoActive = Boolean(currentMeta.videoEnabled);
-  return `<button class="icon-button video-button ${videoActive ? "is-active" : ""}" type="button" aria-label="Activar video" data-asterion-enable-video>
+  return `<button class="icon-button video-button ${videoActive ? "is-active" : ""}" type="button" aria-label="${t("banner.enableVideoAria")}" data-asterion-enable-video>
       ${icon("video", { size: 17 })}
     </button>
-    <button class="danger-button" id="stop-capture" type="button">Detener</button>
-    <button class="icon-button" id="toggle-expanded" type="button" aria-label="${isExpanded ? "Contraer" : "Expandir"}">
+    <button class="danger-button" id="stop-capture" type="button">${t("banner.stopButton")}</button>
+    <button class="icon-button" id="toggle-expanded" type="button" aria-label="${isExpanded ? t("banner.collapseAria") : t("banner.expandAria")}">
       ${icon(isExpanded ? "chevron-up" : "chevron-down", { size: 17 })}
     </button>`;
 }
@@ -46,8 +49,8 @@ function recordingControls() {
 function renderDetected() {
   return `<div class="banner pill detected">
     <img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20">
-    <div class="brand-copy"><strong>Asterion</strong><span>Reunión detectada</span></div>
-    <button class="primary-button" id="start-capture" type="button">${icon("play", { size: 15 })}Iniciar captura</button>
+    <div class="brand-copy"><strong>Asterion</strong><span>${t("popup.statusDetected")}</span></div>
+    <button class="primary-button" id="start-capture" type="button">${icon("play", { size: 15 })}${t("popup.startCapture")}</button>
   </div>`;
 }
 
@@ -55,12 +58,12 @@ function renderRecording() {
   const sources = isExpanded
     ? `<div class="divider"></div>
       <div class="sources">
-        ${sourceRow("file-text", "Transcripción", Boolean(currentMeta.hasTranscript), "Activa", "No disponible")}
-        ${sourceRow("volume-2", "Audio de la reunión", true, "Activo", "")}
-        ${sourceRow("mic", "Mi voz", !currentMeta.micMuted, "Activa", "Silenciada")}
-        ${sourceRow("app-window", "Video de la pestaña", Boolean(currentMeta.videoEnabled), "Activo", "No activo")}
+        ${sourceRow("file-text", t("common.transcript"), Boolean(currentMeta.hasTranscript), t("popup.activeFem"), t("common.notAvailable"))}
+        ${sourceRow("volume-2", t("common.meetingAudioLabel"), true, t("popup.activeMasc"), "")}
+        ${sourceRow("mic", t("popup.micLabel"), !currentMeta.micMuted, t("popup.activeFem"), t("popup.micMutedLabel"))}
+        ${sourceRow("app-window", t("popup.tabVideoLabel"), Boolean(currentMeta.videoEnabled), t("popup.activeMasc"), t("popup.notActive"))}
       </div>
-      <div class="info-row">${icon("info", { size: 16, color: "var(--text-secondary)" })}<span>Se está grabando la reunión. Puedes detener la captura en cualquier momento.</span></div>`
+      <div class="info-row">${icon("info", { size: 16, color: "var(--text-secondary)" })}<span>${t("banner.recordingInfo")}</span></div>`
     : "";
 
   return `<div class="banner ${isExpanded ? "expanded" : "pill"}">
@@ -74,16 +77,16 @@ function renderRecording() {
 
 function renderError() {
   return `<div class="banner pill">
-    <div class="recording-copy"><span class="dot" style="background:var(--accent-red)"></span><div class="brand-copy"><strong>Error</strong><span>No se pudo iniciar</span></div></div>
+    <div class="recording-copy"><span class="dot" style="background:var(--accent-red)"></span><div class="brand-copy"><strong>${t("popup.statusError")}</strong><span>${t("banner.errorCopy")}</span></div></div>
   </div>`;
 }
 
 function renderFinished() {
   return `<div class="banner finished">
     <div class="finish-badge"><svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg></div>
-    <div class="brand-copy finish-copy"><strong>Captura finalizada</strong><span>La reunión se guardó correctamente.</span></div>
-    <button class="secondary-button" id="view-recording" type="button">Ver grabación ${icon("arrow-up-right", { size: 15 })}</button>
-    <button class="icon-button" id="dismiss-banner" type="button" aria-label="Cerrar">${icon("x", { size: 17 })}</button>
+    <div class="brand-copy finish-copy"><strong>${t("banner.finishedTitle")}</strong><span>${t("banner.finishedCopy")}</span></div>
+    <button class="secondary-button" id="view-recording" type="button">${t("banner.viewRecording")} ${icon("arrow-up-right", { size: 15 })}</button>
+    <button class="icon-button" id="dismiss-banner" type="button" aria-label="${t("banner.dismissAria")}">${icon("x", { size: 17 })}</button>
   </div>`;
 }
 
@@ -124,7 +127,7 @@ function render() {
   }
 
   wireEvents();
-  if (currentMeta.videoError) console.warn("[Asterion] No se pudo activar video:", currentMeta.videoError);
+  if (currentMeta.videoError) console.warn(t("banner.videoErrorLog"), currentMeta.videoError);
 }
 
 function clamp(value, min, max) {
@@ -223,9 +226,18 @@ function wireDragEvents() {
   contentEl.addEventListener("pointercancel", finishDrag);
 }
 
-export function showBanner({ onStart, onStop }) {
+export async function showBanner({ onStart, onStop }) {
   callbacks = { onStart, onStop };
-  if (hostEl) return;
+  if (hostEl || bannerReady) return;
+  bannerReady = true;
+
+  try {
+    ({ t } = await initI18n());
+  } catch (error) {
+    console.error("[Asterion] i18n initialization failed for the Meet banner", error);
+    bannerReady = false;
+    return;
+  }
 
   hostEl = document.createElement("div");
   hostEl.id = "asterion-banner-host";

@@ -82,5 +82,16 @@
   "history.fileOpenError": "This meeting file could not be opened.",
   "history.downloadTxt": "Download TXT",
   "history.downloadMarkdown": "Download Markdown",
-  "history.deleteConfirmBody": "{{title}} and all its files will be deleted from this device. This action is permanent and cannot be undone."
+  "history.deleteConfirmBody": "{{title}} and all its files will be deleted from this device. This action is permanent and cannot be undone.",
+  "banner.enableVideoAria": "Enable video",
+  "banner.collapseAria": "Collapse",
+  "banner.expandAria": "Expand",
+  "banner.stopButton": "Stop",
+  "banner.recordingInfo": "The meeting is being recorded. You can stop capture at any time.",
+  "banner.errorCopy": "Could not start",
+  "banner.finishedTitle": "Capture finished",
+  "banner.finishedCopy": "The meeting was saved successfully.",
+  "banner.viewRecording": "View recording",
+  "banner.dismissAria": "Close",
+  "banner.videoErrorLog": "[Asterion] Could not enable video:"
 }

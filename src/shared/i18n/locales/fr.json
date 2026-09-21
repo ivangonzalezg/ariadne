@@ -82,5 +82,16 @@
   "history.fileOpenError": "Ce fichier de réunion n'a pas pu être ouvert.",
   "history.downloadTxt": "Télécharger TXT",
   "history.downloadMarkdown": "Télécharger Markdown",
-  "history.deleteConfirmBody": "{{title}} et tous ses fichiers seront supprimés de cet appareil. Cette action est permanente et irréversible."
+  "history.deleteConfirmBody": "{{title}} et tous ses fichiers seront supprimés de cet appareil. Cette action est permanente et irréversible.",
+  "banner.enableVideoAria": "Activer la vidéo",
+  "banner.collapseAria": "Réduire",
+  "banner.expandAria": "Développer",
+  "banner.stopButton": "Arrêter",
+  "banner.recordingInfo": "La réunion est en cours d'enregistrement. Vous pouvez arrêter la capture à tout moment.",
+  "banner.errorCopy": "Impossible de démarrer",
+  "banner.finishedTitle": "Capture terminée",
+  "banner.finishedCopy": "La réunion a été enregistrée avec succès.",
+  "banner.viewRecording": "Voir l'enregistrement",
+  "banner.dismissAria": "Fermer",
+  "banner.videoErrorLog": "[Asterion] Impossible d'activer la vidéo :"
 }

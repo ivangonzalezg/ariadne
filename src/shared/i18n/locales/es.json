@@ -82,5 +82,16 @@
   "history.fileOpenError": "No se pudo abrir este archivo de la reunión.",
   "history.downloadTxt": "Descargar TXT",
   "history.downloadMarkdown": "Descargar Markdown",
-  "history.deleteConfirmBody": "Se eliminarán {{title}} y todos sus archivos de este dispositivo. Esta acción es permanente y no se puede deshacer."
+  "history.deleteConfirmBody": "Se eliminarán {{title}} y todos sus archivos de este dispositivo. Esta acción es permanente y no se puede deshacer.",
+  "banner.enableVideoAria": "Activar video",
+  "banner.collapseAria": "Contraer",
+  "banner.expandAria": "Expandir",
+  "banner.stopButton": "Detener",
+  "banner.recordingInfo": "Se está grabando la reunión. Puedes detener la captura en cualquier momento.",
+  "banner.errorCopy": "No se pudo iniciar",
+  "banner.finishedTitle": "Captura finalizada",
+  "banner.finishedCopy": "La reunión se guardó correctamente.",
+  "banner.viewRecording": "Ver grabación",
+  "banner.dismissAria": "Cerrar",
+  "banner.videoErrorLog": "[Asterion] No se pudo activar video:"
 }

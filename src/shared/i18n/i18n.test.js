@@ -157,4 +157,13 @@ describe("dictionary completeness", () => {
     for (const key of Object.keys(esDict)) expect(enKeys.has(key)).toBe(true);
     for (const key of Object.keys(frDict)) expect(enKeys.has(key)).toBe(true);
   });
+
+  it("defines every English key in the Spanish and French dictionaries too (no missing translations)", () => {
+    const esKeys = new Set(Object.keys(esDict));
+    const frKeys = new Set(Object.keys(frDict));
+    for (const key of Object.keys(enDict)) {
+      expect(esKeys.has(key)).toBe(true);
+      expect(frKeys.has(key)).toBe(true);
+    }
+  });
 });
