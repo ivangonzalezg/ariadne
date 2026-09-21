@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "Asterion — Capture de Réunions",
+    "description": "Nom de l'extension affiché dans le Chrome Web Store et sur chrome://extensions."
+  },
+  "extensionDescription": {
+    "message": "Capture locale automatique de la transcription, de l'audio et de la vidéo des réunions Google Meet.",
+    "description": "Description de l'extension affichée dans le Chrome Web Store et sur chrome://extensions."
+  }
+}
