@@ -5,14 +5,16 @@ import { MainWorldSession } from "./session.js";
 
 console.log("[Asterion:debug] bootstrap (MAIN world) cargado");
 
-const mixer = new MeetingAudioMixer();
+const mixer = new MeetingAudioMixer({
+  log: (event, details) => console.debug(`[Asterion:audio-mixer] ${event}`, details),
+});
 mixer.resume().catch(() => {});
 let micTrack = null;
 let session = null;
 
 installRtcPatch({
-  onRemoteAudioTrack: (track) => mixer.addRemoteTrack(track),
-  onConnectionClosed: () => {},
+  onRemoteAudioTrack: (payload) => mixer.addRemoteTrack(payload),
+  onConnectionClosed: (connectionId) => mixer.removeConnection(connectionId),
 });
 
 installGetUserMediaPatch({
@@ -53,6 +55,7 @@ window.addEventListener("message", async (event) => {
       initialMicMuted: Boolean(message.initialMicMuted),
     });
     session.start();
+    mixer.startReconciliation();
     postToIsolated({ type: "asterion:session-started", sessionId: message.sessionId });
   } else if (message.type === "asterion:mic-muted") {
     session?.onMicMuted(message.timestampMs);
@@ -61,6 +64,7 @@ window.addEventListener("message", async (event) => {
   } else if (message.type === "asterion:stop-session") {
     session?.stop();
     session = null;
+    mixer.stopReconciliation();
   }
 });
 
