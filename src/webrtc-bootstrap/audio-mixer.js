@@ -5,7 +5,10 @@ const RECONCILE_INTERVAL_MS = 5000;
 export class MeetingAudioMixer {
   constructor({ audioContext = new AudioContext(), now = () => Date.now(), log = () => {} } = {}) {
     this.audioContext = audioContext;
+    this.now = now;
+    this.log = log;
     this.destination = this.audioContext.createMediaStreamDestination();
+    this._forceStereoChannelConfig(this.destination, "destination");
     // key -> { connectionId, sourceNode, track, staleSince }
     this.remoteSources = new Map();
     // connectionId -> Set<key>, for O(1) purge-by-connection
@@ -13,8 +16,29 @@ export class MeetingAudioMixer {
     this.micSourceNode = null;
     this.micGainNode = null;
     this.reconcileTimer = null;
-    this.now = now;
-    this.log = log;
+  }
+
+  // Fuerza explícitamente 2 canales (estéreo) en el nodo, en vez de confiar
+  // en su configuración por defecto. NOTA (agregada tras la revisión de
+  // Codex): por spec, MediaStreamAudioDestinationNode YA viene por defecto
+  // con channelCount=2/channelCountMode="explicit"/channelInterpretation=
+  // "speakers" — así que forzar esto en `destination` es casi seguro un
+  // no-op, no una reparación confirmada. Lo mantenemos igual porque no
+  // cuesta nada y Codex lo recomendó como hardening defensivo, pero NO debe
+  // presentarse como "la solución" sin evidencia de un caso real donde el
+  // valor por defecto haya sido distinto. Por eso este método loguea el
+  // valor ANTES de pisarlo — es la evidencia real que nos falta hoy.
+  _forceStereoChannelConfig(node, label) {
+    this.log("mixer-channel-config-before", {
+      node: label,
+      channelCount: node.channelCount,
+      channelCountMode: node.channelCountMode,
+      channelInterpretation: node.channelInterpretation,
+    });
+    node.channelCount = 2;
+    node.channelCountMode = "explicit";
+    node.channelInterpretation = "speakers";
+    this.log("mixer-channel-config-after", { node: label, channelCount: node.channelCount });
   }
 
   get activeRemoteSourceCount() {
@@ -144,6 +168,11 @@ export class MeetingAudioMixer {
   }
 
   setMicTrack(micTrack, { initiallyMuted }) {
+    this.log("mic-track-settings", {
+      trackId: micTrack.id,
+      channelCount: micTrack.getSettings?.()?.channelCount ?? null,
+    });
+
     if (this.micSourceNode) {
       try {
         this.micSourceNode.disconnect();
@@ -162,6 +191,7 @@ export class MeetingAudioMixer {
     const micStream = new MediaStream([micTrack]);
     this.micSourceNode = this.audioContext.createMediaStreamSource(micStream);
     this.micGainNode = this.audioContext.createGain();
+    this._forceStereoChannelConfig(this.micGainNode, "micGainNode");
     this.micGainNode.gain.value = initiallyMuted ? 0 : 1;
     this.micSourceNode.connect(this.micGainNode);
     this.micGainNode.connect(this.destination);

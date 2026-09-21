@@ -13,7 +13,7 @@ class FakeMediaStream {
 }
 globalThis.MediaStream = FakeMediaStream;
 
-function fakeTrack(id, { readyState = "live" } = {}) {
+function fakeTrack(id, { readyState = "live", channelCount = null } = {}) {
   const listeners = {};
   return {
     id,
@@ -22,6 +22,9 @@ function fakeTrack(id, { readyState = "live" } = {}) {
       (listeners[type] ??= []).push(handler);
     },
     removeEventListener() {},
+    getSettings() {
+      return { channelCount };
+    },
     _emit(type) {
       (listeners[type] || []).forEach((handler) => handler());
     },
@@ -48,10 +51,14 @@ function fakeStream(id) {
 function fakeAudioContext() {
   const sourceNodes = [];
   const gainNodes = [];
+  let destinationNode = null;
   const context = {
     state: "running",
     currentTime: 0,
-    createMediaStreamDestination: () => ({ stream: {} }),
+    createMediaStreamDestination: () => {
+      destinationNode = { stream: {} };
+      return destinationNode;
+    },
     createMediaStreamSource: () => {
       const node = { connect: vi.fn(), disconnect: vi.fn() };
       sourceNodes.push(node);
@@ -74,11 +81,12 @@ function fakeAudioContext() {
     resume: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
   };
-  return { context, sourceNodes, gainNodes };
+  return { context, sourceNodes, gainNodes, get destinationNode() { return destinationNode; } };
 }
 
 function makeMixer(overrides = {}) {
-  const { context, sourceNodes, gainNodes } = fakeAudioContext();
+  const audioContextFake = fakeAudioContext();
+  const { context, sourceNodes, gainNodes } = audioContextFake;
   let currentNow = 0;
   const mixer = new MeetingAudioMixer({
     audioContext: context,
@@ -86,7 +94,13 @@ function makeMixer(overrides = {}) {
     log: () => {},
     ...overrides,
   });
-  return { mixer, sourceNodes, gainNodes, advanceNow: (ms) => { currentNow += ms; } };
+  return {
+    mixer,
+    sourceNodes,
+    gainNodes,
+    destinationNode: audioContextFake.destinationNode,
+    advanceNow: (ms) => { currentNow += ms; },
+  };
 }
 
 describe("MeetingAudioMixer remote sources", () => {
@@ -290,5 +304,86 @@ describe("MeetingAudioMixer mic lifecycle", () => {
   it("does not throw when setMicTrack is called for the first time", () => {
     const { mixer } = makeMixer();
     expect(() => mixer.setMicTrack(fakeTrack("mic-1"), { initiallyMuted: false })).not.toThrow();
+  });
+});
+
+describe("MeetingAudioMixer channel configuration", () => {
+  it("forces the destination node to explicit stereo", () => {
+    const { destinationNode } = makeMixer();
+    expect(destinationNode.channelCount).toBe(2);
+    expect(destinationNode.channelCountMode).toBe("explicit");
+    expect(destinationNode.channelInterpretation).toBe("speakers");
+  });
+
+  it("forces the mic gain node to explicit stereo so a mono mic up-mixes to both channels", () => {
+    const { mixer, gainNodes } = makeMixer();
+    mixer.setMicTrack(fakeTrack("mic-1"), { initiallyMuted: false });
+
+    expect(gainNodes[0].channelCount).toBe(2);
+    expect(gainNodes[0].channelCountMode).toBe("explicit");
+    expect(gainNodes[0].channelInterpretation).toBe("speakers");
+  });
+
+  it("re-applies explicit stereo to the new mic gain node when setMicTrack is called again", () => {
+    const { mixer, gainNodes } = makeMixer();
+    mixer.setMicTrack(fakeTrack("mic-1"), { initiallyMuted: false });
+    mixer.setMicTrack(fakeTrack("mic-2"), { initiallyMuted: false });
+
+    expect(gainNodes[1].channelCount).toBe(2);
+    expect(gainNodes[1].channelCountMode).toBe("explicit");
+    expect(gainNodes[1].channelInterpretation).toBe("speakers");
+  });
+
+  it("logs the destination's channel configuration before and after forcing it to stereo", () => {
+    const logs = [];
+    makeMixer({ log: (event, details) => logs.push({ event, details }) });
+
+    expect(logs).toContainEqual({
+      event: "mixer-channel-config-before",
+      details: { node: "destination", channelCount: undefined, channelCountMode: undefined, channelInterpretation: undefined },
+    });
+    expect(logs).toContainEqual({ event: "mixer-channel-config-after", details: { node: "destination", channelCount: 2 } });
+  });
+
+  it("logs the mic track's own reported channel count separately from the gain node's forced config", () => {
+    const logs = [];
+    const { mixer } = makeMixer({ log: (event, details) => logs.push({ event, details }) });
+    mixer.setMicTrack(fakeTrack("mic-1", { channelCount: 2 }), { initiallyMuted: false });
+
+    expect(logs).toContainEqual({ event: "mic-track-settings", details: { trackId: "mic-1", channelCount: 2 } });
+    expect(logs).toContainEqual({ event: "mixer-channel-config-after", details: { node: "micGainNode", channelCount: 2 } });
+  });
+
+  it("logs the mic gain node's channel configuration before forcing it to stereo, same as the destination", () => {
+    const logs = [];
+    const { mixer } = makeMixer({ log: (event, details) => logs.push({ event, details }) });
+    mixer.setMicTrack(fakeTrack("mic-1"), { initiallyMuted: false });
+
+    expect(logs).toContainEqual({
+      event: "mixer-channel-config-before",
+      details: { node: "micGainNode", channelCount: undefined, channelCountMode: undefined, channelInterpretation: undefined },
+    });
+  });
+
+  it("logs a null channelCount when the mic track has no getSettings method at all", () => {
+    const logs = [];
+    const { mixer } = makeMixer({ log: (event, details) => logs.push({ event, details }) });
+    const trackWithoutGetSettings = fakeTrack("mic-1");
+    delete trackWithoutGetSettings.getSettings;
+
+    mixer.setMicTrack(trackWithoutGetSettings, { initiallyMuted: false });
+
+    expect(logs).toContainEqual({ event: "mic-track-settings", details: { trackId: "mic-1", channelCount: null } });
+  });
+
+  it("logs a null channelCount when getSettings exists but returns undefined", () => {
+    const logs = [];
+    const { mixer } = makeMixer({ log: (event, details) => logs.push({ event, details }) });
+    const trackWithEmptySettings = fakeTrack("mic-1");
+    trackWithEmptySettings.getSettings = () => undefined;
+
+    mixer.setMicTrack(trackWithEmptySettings, { initiallyMuted: false });
+
+    expect(logs).toContainEqual({ event: "mic-track-settings", details: { trackId: "mic-1", channelCount: null } });
   });
 });
