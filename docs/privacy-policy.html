@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ariadne — Privacy Policy</title>
+<meta name="description" content="How the Ariadne Chrome extension handles your Google Meet recordings, transcripts, and settings.">
+<link rel="icon" href="icon128.png">
+<meta property="og:title" content="Ariadne — Privacy Policy">
+<meta property="og:description" content="Everything Ariadne records stays on your device. No backend, no accounts, no tracking.">
+<meta property="og:image" content="https://ivangonzalezg.github.io/ariadne/icon128.png">
+<style>
+  :root, :host {
+    --bg: #1A1D24;
+    --bg-elevated: #232734;
+    --bg-button: #2B303C;
+    --text-primary: #F5F7FA;
+    --text-secondary: #8B93A7;
+    --text-muted: #6A7386;
+    --accent-blue: #3B82F6;
+    --border: #2C313C;
+    --shadow: #00000040;
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root, :host {
+      --bg: #FFFFFF;
+      --bg-elevated: #F4F6F8;
+      --bg-button: #ECEFF3;
+      --text-primary: #1A1D24;
+      --text-secondary: #5B6472;
+      --text-muted: #8A93A3;
+      --accent-blue: #2563EB;
+      --border: #E6E8EE;
+      --shadow: #0F172A1F;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 48px 20px 80px;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+  }
+
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 28px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .brand img { width: 24px; height: 24px; border-radius: 5px; }
+
+  h1 { margin: 0 0 6px; font-size: 26px; line-height: 1.25; font-weight: 600; }
+
+  .updated { margin: 0 0 32px; color: var(--text-muted); font-size: 13px; }
+
+  .card {
+    padding: 24px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg-elevated);
+    box-shadow: 0 6px 18px var(--shadow);
+  }
+
+  .card + .card { margin-top: 16px; }
+
+  h2 {
+    margin: 0 0 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  p { margin: 0 0 12px; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+  p:last-child { margin-bottom: 0; }
+
+  ul { margin: 0; padding-left: 1.2rem; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+  li { margin-bottom: 8px; }
+  li:last-child { margin-bottom: 0; }
+  li strong, p strong { color: var(--text-primary); font-weight: 600; }
+
+  code {
+    padding: 0.15em 0.4em;
+    border-radius: 5px;
+    background: var(--bg-button);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.88em;
+  }
+
+  a { color: var(--accent-blue); font-weight: 500; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><img src="icon128.png" alt=""><span>Ariadne</span></div>
+
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: September 22, 2026</p>
+
+  <div class="card">
+    <h2>Overview</h2>
+    <p>Ariadne is a Chrome extension that records audio, optional video, and a live transcript of your Google Meet calls, entirely on your own device. This page explains what the extension does with your data.</p>
+  </div>
+
+  <div class="card">
+    <h2>1. What Ariadne captures</h2>
+    <ul>
+      <li><strong>Audio</strong> of the Google Meet call, captured automatically when a meeting starts (if auto-start is enabled in Settings).</li>
+      <li><strong>Video</strong> of the call, only if you explicitly click "Enable video" for that meeting — Chrome requires this one-click confirmation for screen/tab capture and there is no way to skip it.</li>
+      <li><strong>A text transcript</strong>, read from Google Meet's own live captions panel while captions are visible.</li>
+      <li><strong>Basic settings and metadata</strong> you configure yourself: auto-start preference, video quality preset, and a list of your past meetings (title, date, duration) so you can find them again in the History page.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>2. Where your data goes</h2>
+    <p>Nowhere but your own browser. Ariadne has no backend server, no account system, and no analytics or tracking of any kind. Recordings, transcripts, and settings are stored using the browser's own private storage for the extension (the Origin Private File System and <code>chrome.storage</code>), which is not accessible to websites, other extensions, or anyone else — including us.</p>
+    <p>The only way any of this data leaves the extension's storage is if <strong>you</strong> click the download button on a recording in the History page, which saves that specific file to your computer using Chrome's normal download flow.</p>
+  </div>
+
+  <div class="card">
+    <h2>3. Third parties</h2>
+    <p>Ariadne does not sell, share, rent, or transmit your recordings, transcripts, or settings to any third party, ad network, or analytics service, because it never sends this data anywhere in the first place.</p>
+  </div>
+
+  <div class="card">
+    <h2>4. Permissions Ariadne requests, and why</h2>
+    <ul>
+      <li><code>storage</code> — save your settings and the list of past meetings.</li>
+      <li><code>offscreen</code> — run the local audio/video processing (format conversion) that Manifest V3 service workers can't do directly. This processing happens entirely inside your browser.</li>
+      <li><code>unlimitedStorage</code> — recordings can be large; this lifts the default storage cap so a long meeting isn't cut off.</li>
+      <li><code>downloads</code> — let you save a recording file to your computer when you choose to.</li>
+      <li><strong>Host access to <code>meet.google.com</code> only</strong> — to detect when you're in a meeting and read the live captions panel. Ariadne cannot see or act on any other website.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>5. Data retention and deletion</h2>
+    <p>A recording stays in your browser's storage until you delete it from the History page, or until you remove the Ariadne extension — which erases everything the extension stored, since none of it exists anywhere else.</p>
+  </div>
+
+  <div class="card">
+    <h2>6. Children's privacy</h2>
+    <p>Ariadne is a productivity tool for Google Meet and is not directed at children. It does not knowingly collect information from children.</p>
+  </div>
+
+  <div class="card">
+    <h2>7. Changes to this policy</h2>
+    <p>If this policy changes, the "Last updated" date above will change too. Since Ariadne doesn't collect contact information from users, we can't notify you directly — check back here if you want to review the current version.</p>
+  </div>
+
+  <div class="card">
+    <h2>8. Contact</h2>
+    <p>Questions about this policy or how Ariadne handles data: <a href="mailto:contacto@ivangonzalez.co">contacto@ivangonzalez.co</a></p>
+  </div>
+</main>
+</body>
+</html>
