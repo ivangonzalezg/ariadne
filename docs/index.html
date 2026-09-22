@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ariadne — Private, Local Google Meet Recorder for Chrome</title>
+  <meta name="description" content="Ariadne is a free Chrome extension that records, transcribes, and saves your Google Meet calls locally. No cloud, no subscriptions, no account.">
+  <meta property="og:title" content="Ariadne — Private, Local Google Meet Recorder for Chrome">
+  <meta property="og:description" content="Ariadne is a free Chrome extension that records, transcribes, and saves your Google Meet calls locally. No cloud, no subscriptions, no account.">
+  <meta property="og:image" content="https://ivangonzalezg.github.io/ariadne/icon128.png">
+  <link rel="icon" href="icon128.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --surface: #f5f5f3;
+      --surface-strong: #e9e9e5;
+      --text: #131209;
+      --muted: #5d5b55;
+      --border: #d8d7d1;
+      --accent: #131209;
+      --accent-text: #ffffff;
+      --focus: #5d5b55;
+      --shadow: rgba(19, 18, 9, 0.12);
+      --ease: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --surface: #181818;
+        --surface-strong: #1F1F1F;
+        --text: #ffffff;
+        --muted: #b8b8b8;
+        --border: #313131;
+        --accent: #ffffff;
+        --accent-text: #000000;
+        --focus: #ffffff;
+        --shadow: rgba(0, 0, 0, 0.4);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 0;
+      overflow-x: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Manrope", sans-serif;
+      font-size: 16px;
+      line-height: 24px;
+    }
+    a { color: inherit; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 4px;
+    }
+    img { display: block; max-width: 100%; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2, h3 { text-wrap: balance; }
+    p { text-wrap: pretty; }
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 10;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font-size: 14px;
+      line-height: 20px;
+      transform: translateY(-80px);
+      transition: transform 800ms var(--ease);
+    }
+    .skip-link:focus { transform: translateY(0); }
+    .page { width: min(100% - 32px, 1120px); margin: 0 auto; }
+    .hero { padding: 80px 0 64px; text-align: center; }
+    .brand { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 48px; font-size: 16px; line-height: 24px; font-weight: 700; }
+    .brand img { width: 32px; height: 32px; border-radius: 8px; }
+    .hero h1 {
+      max-width: 680px;
+      margin: 0 auto;
+      background: linear-gradient(90deg, #000000, #666666);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      font-size: 48px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+    }
+    .hero-copy { max-width: 680px; margin: 24px auto 0; color: var(--muted); font-size: 18px; line-height: 28px; }
+    .cta-wrap { margin-top: 32px; }
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font-size: 16px;
+      line-height: 24px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: transform 800ms var(--ease), background-color 800ms var(--ease), color 800ms var(--ease);
+    }
+    .cta:hover { transform: translateY(-2px); }
+    .cta:active { transform: scale(0.98); }
+    .cta svg { width: 16px; height: 16px; fill: currentColor; }
+    .proof { margin-top: 16px; color: var(--muted); font-size: 14px; line-height: 20px; }
+    .proof a { font-weight: 700; }
+    .visual-frame { margin: 64px auto 0; max-width: 960px; padding: 8px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: 0 24px 64px var(--shadow); }
+    .visual-frame img { border-radius: 16px; }
+    section { padding: 80px 0; }
+    .tagline { max-width: 680px; margin: 0 auto; font-size: 36px; line-height: 40px; font-weight: 700; letter-spacing: -0.03em; }
+    .tagline-line { display: block; }
+    .word { display: inline-block; margin-right: 8px; color: var(--text); opacity: 0.3; transform: translateY(8px); transition: opacity 800ms var(--ease), transform 800ms var(--ease); }
+    .word.is-visible { opacity: 1; transform: translateY(0); }
+    .benefits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .benefit { padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+    .icon { display: grid; width: 40px; height: 40px; place-items: center; margin-bottom: 24px; border-radius: 8px; background: var(--surface-strong); color: var(--text); }
+    .icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    .benefit p { color: var(--muted); font-size: 16px; line-height: 24px; }
+    .benefit strong { color: var(--text); font-weight: 700; }
+    .how-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: center; }
+    .section-title { margin-bottom: 32px; font-size: 30px; line-height: 36px; font-weight: 700; letter-spacing: -0.03em; }
+    .steps { display: grid; gap: 24px; }
+    .step { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .step-number { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 8px; background: var(--surface-strong); font-size: 14px; line-height: 20px; font-weight: 700; }
+    .step p { color: var(--muted); font-size: 16px; line-height: 24px; }
+    .step strong { color: var(--text); font-weight: 700; }
+    .step-screens { display: grid; gap: 16px; }
+    .screen { margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+    .screen img { border-radius: 8px; }
+    .faq { max-width: 800px; margin: 0 auto; }
+    .faq-list { display: grid; gap: 12px; }
+    details { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+    summary { cursor: pointer; color: var(--text); font-size: 16px; line-height: 24px; font-weight: 700; }
+    summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+    details p { margin-top: 12px; color: var(--muted); font-size: 16px; line-height: 24px; }
+    code { font-family: "Manrope", sans-serif; font-size: 14px; line-height: 20px; }
+    .final-cta { text-align: center; }
+    .final-cta h2 { max-width: 680px; margin: 0 auto; font-size: 36px; line-height: 40px; font-weight: 700; letter-spacing: -0.03em; }
+    .footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; padding: 32px 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; line-height: 20px; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
+    .reveal { opacity: 0; filter: blur(4px); transform: translateY(64px); transition: opacity 800ms var(--ease), filter 800ms var(--ease), transform 800ms var(--ease); }
+    .reveal.is-visible { opacity: 1; filter: blur(0); transform: translateY(0); }
+
+    @media (prefers-color-scheme: dark) {
+      .hero h1 { background-image: linear-gradient(90deg, #FFFFFF, #9B9B9B); }
+    }
+    @media (min-width: 768px) { .hero h1 { font-size: 60px; line-height: 1; } }
+    @media (max-width: 640px) {
+      .page { width: min(100% - 24px, 1120px); }
+      .hero { padding: 64px 0 48px; }
+      section { padding: 64px 0; }
+      .brand { margin-bottom: 32px; }
+      .hero h1 { font-size: 36px; line-height: 40px; }
+      .hero-copy { font-size: 16px; line-height: 24px; }
+      .visual-frame { margin-top: 48px; }
+      .tagline, .final-cta h2 { font-size: 30px; line-height: 36px; }
+      .benefits, .how-grid { grid-template-columns: 1fr; }
+      .how-grid { gap: 32px; }
+      .screen:last-child { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+      .reveal, .word { opacity: 1; filter: none; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <main class="page" id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="brand"><img src="icon128.png" alt="Ariadne icon">Ariadne</div>
+      <h1 id="hero-title">Record every Google Meet call —<br>without it ever leaving your laptop</h1>
+      <p class="hero-copy">Ariadne captures audio, video, and a live transcript automatically, and stores all of it locally in your browser. No account, no cloud, no subscription.</p>
+      <div class="cta-wrap">
+        <!-- TODO: reemplazar con la URL real una vez aprobada la ficha -->
+        <a class="cta" href="https://chrome.google.com/webstore/detail/PLACEHOLDER" target="_blank" rel="noopener noreferrer">Add to Chrome — it's free<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2 3 6v6c0 5.55 3.84 9.74 9 11 5.16-1.26 9-5.45 9-11V6l-9-4Zm0 3.18L18 7.85v4.1c0 3.7-2.45 6.92-6 7.97-3.55-1.05-6-4.27-6-7.97v-4.1l6-2.67Z"/></svg></a>
+      </div>
+      <p class="proof"><a href="https://github.com/ivangonzalezg/ariadne" target="_blank" rel="noopener noreferrer">Open source</a> · Google Meet only · Nothing uploaded, ever</p>
+      <div class="visual-frame reveal"><img src="screenshots/meeting-banner.png" alt="Ariadne recording banner in a Google Meet call"></div>
+    </section>
+
+    <section aria-label="Ariadne's local first approach">
+      <p class="tagline" data-tagline><span class="tagline-line">Every other meeting recorder asks you to trust a server you'll never see.</span><span class="tagline-line">Ariadne just doesn't have one.</span></p>
+    </section>
+
+    <section aria-label="Benefits">
+      <div class="benefits">
+        <article class="benefit reveal"><div class="icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.1 7 9.2 4-1.1 7-4.8 7-9.2V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></div><p><strong>Nothing leaves your device</strong> — audio, video, and transcripts are written straight to your browser's private storage; there is no backend to send them to.</p></article>
+        <article class="benefit reveal"><div class="icon"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><p><strong>Starts itself</strong> — recording begins the moment you join a Google Meet call, no button to remember to press.</p></article>
+        <article class="benefit reveal"><div class="icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 9v6"/><path d="M9 6v12"/><path d="M13 4v16"/><path d="M17 7v10"/><path d="M21 10v4"/></svg></div><p><strong>One mixed track, not five</strong> — your microphone and everyone else's voice are combined in real time into a single audio file, automatically.</p></article>
+        <article class="benefit reveal"><div class="icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 9h8M8 13h5"/></svg></div><p><strong>A transcript you can search</strong> — every line is attributed to whoever said it, pulled live from Meet's own captions.</p></article>
+      </div>
+    </section>
+
+    <section class="how-grid" aria-labelledby="how-title">
+      <div>
+        <h2 class="section-title" id="how-title">How it works</h2>
+        <div class="steps">
+          <div class="step reveal"><span class="step-number">1</span><p><strong>Install the extension from the Chrome Web Store.</strong></p></div>
+          <div class="step reveal"><span class="step-number">2</span><p><strong>Join a Google Meet call. Recording starts automatically.</strong></p></div>
+          <div class="step reveal"><span class="step-number">3</span><p><strong>Open History anytime to search, play back, or download any past meeting.</strong></p></div>
+        </div>
+      </div>
+      <div class="step-screens reveal">
+        <figure class="screen"><img src="screenshots/popup-recording.png" alt="Ariadne recording controls in the extension popup"></figure>
+        <figure class="screen"><img src="screenshots/history-detail.png" alt="Ariadne history detail showing a saved meeting"></figure>
+      </div>
+    </section>
+
+    <section class="faq" aria-labelledby="faq-title">
+      <h2 class="section-title" id="faq-title">FAQ</h2>
+      <div class="faq-list">
+        <details class="reveal"><summary>Does Ariadne upload my recordings anywhere?</summary><p>No. There is no backend, no account system, and no analytics. Everything is written to your browser's own private storage (Origin Private File System and <code>chrome.storage</code>), and the only way a file leaves that storage is if you click download.</p></details>
+        <details class="reveal"><summary>Which meeting platforms are supported?</summary><p>Google Meet only, for now. The architecture is not tied to a single platform, so support for others may follow.</p></details>
+        <details class="reveal"><summary>Do other participants know they are being recorded?</summary><p>There is no visible indicator in the meeting. Ariadne is a personal tool for taking your own notes, not a meeting bot — you are responsible for complying with your jurisdiction's recording consent laws when you use it.</p></details>
+        <details class="reveal"><summary>Is Ariadne free?</summary><p>Yes. No subscription, no usage limits, no account to create.</p></details>
+        <details class="reveal"><summary>What happens to a recording if I uninstall the extension?</summary><p>It is erased, since it only ever lived in the extension's own storage and nowhere else.</p></details>
+        <details class="reveal"><summary>Can I get video, not just audio?</summary><p>Yes, one click on the banner inside the meeting enables video for that meeting. Chrome requires that one confirmation for screen capture; there is no way around it.</p></details>
+        <details class="reveal"><summary>Is the code open source?</summary><p>Yes — the full source is on <a href="https://github.com/ivangonzalezg/ariadne" target="_blank" rel="noopener noreferrer">GitHub</a>.</p></details>
+        <details class="reveal"><summary>What permissions does it need, and why?</summary><p><code>storage</code> and <code>unlimitedStorage</code> to save recordings locally, <code>offscreen</code> to run local audio/video conversion, <code>downloads</code> so you can save a file to your computer, and host access limited to <code>meet.google.com</code> to detect meetings and read captions. Nothing else.</p></details>
+      </div>
+    </section>
+
+    <section class="final-cta reveal" aria-labelledby="final-title">
+      <h2 id="final-title">Record every Google Meet call — without it ever leaving your laptop</h2>
+      <div class="cta-wrap">
+        <!-- TODO: reemplazar con la URL real una vez aprobada la ficha -->
+        <a class="cta" href="https://chrome.google.com/webstore/detail/PLACEHOLDER" target="_blank" rel="noopener noreferrer">Add to Chrome — it's free<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2 3 6v6c0 5.55 3.84 9.74 9 11 5.16-1.26 9-5.45 9-11V6l-9-4Zm0 3.18L18 7.85v4.1c0 3.7-2.45 6.92-6 7.97-3.55-1.05-6-4.27-6-7.97v-4.1l6-2.67Z"/></svg></a>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-links"><a href="privacy-policy.html">Privacy policy</a><a href="https://github.com/ivangonzalezg/ariadne" target="_blank" rel="noopener noreferrer">GitHub</a></div>
+      <span>A personal project — not affiliated with Google or Google Meet.</span>
+    </footer>
+  </main>
+  <script>
+    (() => {
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const revealItems = document.querySelectorAll('.reveal');
+      const tagline = document.querySelector('[data-tagline]');
+      const words = [];
+      if (tagline) {
+        tagline.querySelectorAll('.tagline-line').forEach((line) => {
+          const text = line.textContent.trim();
+          if (!text) return;
+          const fragment = document.createDocumentFragment();
+          text.split(/\s+/).forEach((word) => {
+            const span = document.createElement('span');
+            span.className = 'word';
+            span.textContent = word;
+            fragment.append(span, ' ');
+            words.push(span);
+          });
+          line.replaceChildren(fragment);
+        });
+      }
+      if (reducedMotion) {
+        revealItems.forEach((item) => item.classList.add('is-visible'));
+        words.forEach((word) => word.classList.add('is-visible'));
+        return;
+      }
+      const revealObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12 });
+      revealItems.forEach((item) => revealObserver.observe(item));
+      if (tagline) {
+        const taglineObserver = new IntersectionObserver((entries, observer) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            words.forEach((word, index) => window.setTimeout(() => word.classList.add('is-visible'), index * 80));
+            observer.unobserve(entry.target);
+          });
+        }, { threshold: 0.35 });
+        taglineObserver.observe(tagline);
+      }
+    })();
+  </script>
+</body>
+</html>
