@@ -245,3 +245,77 @@ Verificar al final:
 - Confirmar que no hay enlaces muertos (`href="#"` sin comportamiento).
 
 Commit: un solo commit para esta tarea.
+
+### Task 2 — Instalar el patrón "accordion expand" del skill `transitions-dev` en el FAQ
+
+**Files:** `docs/index.html` (modificar)
+
+**Contexto:** se corrió `transitions review` (skill `transitions-dev`) sobre
+`docs/index.html`. El FAQ usa `<details>/<summary>` nativos sin ninguna
+transición — abren y cierran de forma instantánea. Encaja exacto con la
+regla del skill: *"Header with a collapsible body that grows/shrinks in
+height (FAQ, filter section, disclosure) → accordion expand"*
+(`.claude/skills/transitions-dev/21-accordion.md`).
+
+**Decisión de arquitectura ya tomada (no es a decidir por Codex):**
+el snippet de referencia define su propio `--acc-ease:
+cubic-bezier(0.22, 1, 0.36, 1)`. Este proyecto ya tiene un único easing
+obligatorio para toda la landing (`--ease: cubic-bezier(0.32, 0.72, 0, 1)`,
+definido en `docs/index.html`, regla B7 del skill `landing-page-design`:
+"Never use default transitions... custom cubic beziers", una sola curva
+en toda la página). Para no mezclar dos curvas de easing distintas en la
+misma página, **no** se agrega `--acc-ease`: el accordion debe leer
+`var(--ease)` (la variable ya existente) en vez de `--acc-ease`. Las
+duraciones sí se toman del snippet (`--acc-expand: 250ms`, `--acc-collapse:
+250ms`, `--acc-chevron: 250ms`) como variables nuevas en el `:root` ya
+existente del archivo (no un bloque `:root` nuevo, agregar las tres
+declaraciones al bloque `:root` que ya está en `docs/index.html`).
+
+**Qué reemplazar:** los 8 `<details class="reveal"><summary>…</summary><p>…</p></details>`
+dentro de `.faq-list` (líneas ~228–235 en la versión actual) por la
+estructura de `21-accordion.md`:
+
+```html
+<div class="t-acc reveal" data-open="false">
+  <button class="t-acc-head" aria-expanded="false">
+    Pregunta literal (copiar el texto exacto de cada <summary> actual, no
+    reescribir)
+    <span class="t-acc-chevron">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg>
+    </span>
+  </button>
+  <div class="t-acc-panel"><div class="t-acc-panel-inner">
+    Respuesta literal (copiar el HTML exacto de cada <p> actual, incluido
+    el <code> y el <a> a GitHub en la pregunta 7 — no reescribir copy)
+  </div></div>
+</div>
+```
+
+Conservar la clase `reveal` en el contenedor `.t-acc` (el scroll reveal
+existente de la sección sigue aplicando al conjunto). Copiar el CSS de
+`21-accordion.md` tal cual, con el único cambio de `--acc-ease` →
+`var(--ease)` en las tres reglas que lo usan. Copiar el guard
+`@media (prefers-reduced-motion: reduce)` del snippet sin modificar.
+Copiar la orquestación JS del snippet, adaptada para inicializar **los 8**
+acordeones (no solo uno): iterar `document.querySelectorAll('.t-acc')` y
+enganchar el click en cada `.t-acc-head` respectivo, siguiendo la misma
+lógica de toggle documentada.
+
+**No hacer:** no cambiar el copy de ninguna pregunta/respuesta, no
+reordenar las 8 preguntas, no tocar ninguna otra sección de la página, no
+introducir `--acc-ease` como variable nueva.
+
+Verificar al final:
+- Cada uno de los 8 acordeones abre y cierra con la animación de grid-rows
+  (sin salto instantáneo) y el chevron flipea de "v" a "^".
+- Solo un fetch de `var(--ease)` en las reglas de transición del accordion,
+  sin `--acc-ease` en ningún lado del archivo.
+- `aria-expanded` se actualiza correctamente al togglear cada uno.
+- El accordion sigue siendo navegable por teclado (foco visible en
+  `.t-acc-head`, togglea con Enter/Space por ser un `<button>` nativo).
+- `prefers-reduced-motion: reduce` deja los acordeones sin transición pero
+  igual funcionales.
+- El resto de la página (hero, benefits, how it works, CTA final, footer)
+  no cambió.
+
+Commit: un solo commit para esta tarea.
