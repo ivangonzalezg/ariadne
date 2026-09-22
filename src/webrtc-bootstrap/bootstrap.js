@@ -15,6 +15,7 @@ let session = null;
 installRtcPatch({
   onRemoteAudioTrack: (payload) => mixer.addRemoteTrack(payload),
   onConnectionClosed: (connectionId) => mixer.removeConnection(connectionId),
+  log: (event, details) => console.debug(`[Asterion:rtc-patch] ${event}`, details),
 });
 
 installGetUserMediaPatch({

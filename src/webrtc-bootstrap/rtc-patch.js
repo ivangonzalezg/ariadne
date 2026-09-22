@@ -15,7 +15,7 @@ function getConnectionId(pc) {
   return connectionIds.get(pc);
 }
 
-export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed }) {
+export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = () => {} }) {
   const OriginalRTCPeerConnection = window.RTCPeerConnection;
   if (!OriginalRTCPeerConnection) return;
 
@@ -29,17 +29,31 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed }) {
 
     pc.addEventListener("track", (event) => {
       if (event.track.kind !== "audio") return;
+      const streamId = event.streams?.[0]?.id ?? null;
+      const mid = event.transceiver?.mid ?? null;
+      // Logueado ANTES del guard de closed/failed a propósito: si alguna vez
+      // llega un "track" tarde para una conexión ya cerrada, queremos verlo acá
+      // (con connectionState reflejando ese estado) aunque onRemoteAudioTrack no
+      // se termine llamando.
+      log("remote-track-observed", {
+        connectionId,
+        connectionState: pc.connectionState,
+        streamId,
+        mid,
+        trackId: event.track.id,
+      });
       if (pc.connectionState === "closed" || pc.connectionState === "failed") return;
       diagnostics.remoteAudioTracksSeen += 1;
       onRemoteAudioTrack({
         track: event.track,
         stream: event.streams?.[0] ?? null,
-        mid: event.transceiver?.mid ?? null,
+        mid,
         connectionId,
       });
     });
 
     pc.addEventListener("connectionstatechange", () => {
+      log("connection-state-changed", { connectionId, connectionState: pc.connectionState });
       if (pc.connectionState === "closed" || pc.connectionState === "failed") {
         diagnostics.connectionsClosed += 1;
         onConnectionClosed(connectionId);

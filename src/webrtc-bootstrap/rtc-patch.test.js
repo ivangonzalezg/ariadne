@@ -71,15 +71,25 @@ describe("installRtcPatch", () => {
     expect(onRemoteAudioTrack).not.toHaveBeenCalled();
   });
 
-  it("ignores a track event when the connection is already closed", async () => {
+  it("ignores a track event when the connection is already closed, but still logs it for diagnostics", async () => {
     vi.resetModules();
     const { installRtcPatch } = await import("./rtc-patch.js");
     const onRemoteAudioTrack = vi.fn();
-    installRtcPatch({ onRemoteAudioTrack, onConnectionClosed: () => {} });
+    const logs = [];
+    installRtcPatch({
+      onRemoteAudioTrack,
+      onConnectionClosed: () => {},
+      log: (event, details) => logs.push({ event, details }),
+    });
     const pc = new window.RTCPeerConnection();
     pc.connectionState = "closed";
     pc._emit("track", { track: fakeAudioTrack("t1"), streams: [], transceiver: null });
+
     expect(onRemoteAudioTrack).not.toHaveBeenCalled();
+    expect(logs).toContainEqual({
+      event: "remote-track-observed",
+      details: { connectionId: expect.any(Number), connectionState: "closed", streamId: null, mid: null, trackId: "t1" },
+    });
   });
 
   it("passes null for stream/mid when the track event has neither", async () => {
@@ -142,6 +152,54 @@ describe("installRtcPatch", () => {
     const [{ connectionId: id1 }] = onRemoteAudioTrack.mock.calls[0];
     const [{ connectionId: id2 }] = onRemoteAudioTrack.mock.calls[1];
     expect(id1).not.toBe(id2);
+  });
+
+  it("logs remote-track-observed with full context for every audio track event", async () => {
+    vi.resetModules();
+    const { installRtcPatch } = await import("./rtc-patch.js");
+    const logs = [];
+    installRtcPatch({
+      onRemoteAudioTrack: () => {},
+      onConnectionClosed: () => {},
+      log: (event, details) => logs.push({ event, details }),
+    });
+    const pc = new window.RTCPeerConnection();
+    const track = fakeAudioTrack("t1");
+    const stream = { id: "s1" };
+    pc._emit("track", { track, streams: [stream], transceiver: { mid: "0" } });
+
+    expect(logs).toHaveLength(1);
+    expect(logs[0].event).toBe("remote-track-observed");
+    expect(logs[0].details).toMatchObject({
+      connectionState: "new",
+      streamId: "s1",
+      mid: "0",
+      trackId: "t1",
+    });
+    expect(typeof logs[0].details.connectionId).toBe("number");
+  });
+
+  it("logs connection-state-changed on every connectionstatechange, not only closed/failed", async () => {
+    vi.resetModules();
+    const { installRtcPatch } = await import("./rtc-patch.js");
+    const logs = [];
+    installRtcPatch({
+      onRemoteAudioTrack: () => {},
+      onConnectionClosed: () => {},
+      log: (event, details) => logs.push({ event, details }),
+    });
+    const pc = new window.RTCPeerConnection();
+
+    pc._setConnectionState("connected");
+    pc._setConnectionState("disconnected");
+    pc._setConnectionState("closed");
+
+    const stateChangeLogs = logs.filter((entry) => entry.event === "connection-state-changed");
+    expect(stateChangeLogs.map((entry) => entry.details.connectionState)).toEqual([
+      "connected",
+      "disconnected",
+      "closed",
+    ]);
   });
 });
 
