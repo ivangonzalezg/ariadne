@@ -203,7 +203,7 @@ export class SessionWriter {
           audioConversionStatus = "succeeded";
           hasAudioMp3 = true;
         } catch (error) {
-          console.error("[Asterion] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
+          console.error("[Ariadne] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
           audioConversionStatus = "failed";
         }
         await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
@@ -215,7 +215,7 @@ export class SessionWriter {
           const response = await chrome.runtime.sendMessage({ type: "asterion:get-video-preset" });
           if (response?.videoPreset) videoPreset = response.videoPreset;
         } catch (error) {
-          console.error("[Asterion] No se pudo obtener el preset de video guardado, se usa 'medium' por defecto:", error);
+          console.error("[Ariadne] No se pudo obtener el preset de video guardado, se usa 'medium' por defecto:", error);
         }
         sendConversionMessage({
           type: "asterion:conversion-started",
@@ -235,19 +235,19 @@ export class SessionWriter {
           videoConversionStatus = "succeeded";
           hasVideoMp4 = true;
         } catch (error) {
-          console.error("[Asterion] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
+          console.error("[Ariadne] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
           videoConversionStatus = "failed";
         }
         await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
       }
     } catch (error) {
-      console.error("[Asterion] Falló inesperadamente la programación de conversiones:", error);
+      console.error("[Ariadne] Falló inesperadamente la programación de conversiones:", error);
     } finally {
       sendConversionMessage({ type: "asterion:conversion-finished", sessionId: this.sessionId });
       try {
         await this.onConversionsFinished?.();
       } catch (error) {
-        console.error("[Asterion] Falló el callback de finalización de conversiones:", error);
+        console.error("[Ariadne] Falló el callback de finalización de conversiones:", error);
       }
     }
   }

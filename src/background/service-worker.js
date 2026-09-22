@@ -79,7 +79,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .get({ videoPreset: "medium" })
     .then(({ videoPreset }) => sendResponse({ videoPreset }))
     .catch((error) => {
-      console.error("[Asterion] No se pudo leer el preset de video guardado, se usa 'medium' por defecto:", error);
+      console.error("[Ariadne] No se pudo leer el preset de video guardado, se usa 'medium' por defecto:", error);
       sendResponse({ videoPreset: "medium" });
     });
 

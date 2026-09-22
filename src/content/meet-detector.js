@@ -5,7 +5,7 @@ import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
 import { arrayBufferToBase64 } from "../lib/base64.js";
 
-console.log("[Asterion:debug] content script (ISOLATED) cargado", { url: location.href });
+console.log("[Ariadne:debug] content script (ISOLATED) cargado", { url: location.href });
 
 function isInActiveMeeting() {
   return findByIconText("call_end") !== null;
@@ -57,7 +57,7 @@ async function startRecording() {
   setState("starting");
 
   meetingTitle = getCurrentMeetingTitle();
-  console.log("[Asterion:debug] startRecording iniciado", { sessionId, meetingTitle });
+  console.log("[Ariadne:debug] startRecording iniciado", { sessionId, meetingTitle });
   startedAt = Date.now();
   hasTranscript = false;
   videoEnabled = false;
@@ -101,7 +101,7 @@ window.addEventListener("message", (event) => {
   const message = event.data;
   if (!message || message.source !== "asterion-main-world") return;
 
-  console.log("[Asterion:debug] mensaje recibido desde MAIN world", { type: message.type });
+  console.log("[Ariadne:debug] mensaje recibido desde MAIN world", { type: message.type });
 
   if (message.type === "asterion:session-started") {
     setState("recording");
@@ -109,7 +109,7 @@ window.addEventListener("message", (event) => {
     sessionId = null;
     setState("error");
     cleanupObservers();
-    console.error("[Asterion] No se pudo iniciar la sesión:", message.reason);
+    console.error("[Ariadne] No se pudo iniciar la sesión:", message.reason);
   } else if (message.type === "asterion:chunk") {
     chrome.runtime.sendMessage({
       type: "asterion:chunk",
@@ -176,12 +176,12 @@ window.addEventListener("pagehide", () => {
 });
 
 function waitForMeeting() {
-  console.log("[Asterion:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
+  console.log("[Ariadne:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
 
   const onMeetingDetected = () => {
-    console.log("[Asterion:debug] reunión detectada");
+    console.log("[Ariadne:debug] reunión detectada");
     chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
-      console.log("[Asterion:debug] autoStart obtenido", { autoStart });
+      console.log("[Ariadne:debug] autoStart obtenido", { autoStart });
       showBanner({ onStart: startRecording, onStop: stopRecording });
       if (autoStart) startRecording();
     });

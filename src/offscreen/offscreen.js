@@ -10,12 +10,12 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     const writer = new SessionWriter({ sessionId: message.sessionId, tabId: sender.tab?.id ?? null, meetingTitle: message.meetingTitle });
     sessions.set(message.sessionId, writer);
     writer.ready.catch((error) => {
-      console.error("[Asterion] No se pudo iniciar el storage de la sesión:", error);
+      console.error("[Ariadne] No se pudo iniciar el storage de la sesión:", error);
     });
   } else if (message.type === "asterion:chunk") {
     const writer = sessions.get(message.sessionId);
     writer?.writeChunk(message.stream, base64ToArrayBuffer(message.bufferBase64)).catch((error) => {
-      console.error("[Asterion] Error escribiendo chunk:", error);
+      console.error("[Ariadne] Error escribiendo chunk:", error);
     });
   } else if (message.type === "asterion:caption-snapshot") {
     sessions.get(message.sessionId)?.onCaptionSnapshot(message.snapshot);
@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         chrome.runtime.sendMessage({ type: "asterion:session-finalized", ...meta });
       })
       .catch((error) => {
-        console.error("[Asterion] Error finalizando la sesión:", error);
+        console.error("[Ariadne] Error finalizando la sesión:", error);
         sessions.delete(message.sessionId);
       });
   }
