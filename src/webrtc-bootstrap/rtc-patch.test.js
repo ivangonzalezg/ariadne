@@ -4,6 +4,7 @@ class FakePeerConnection {
   constructor() {
     this.connectionState = "new";
     this._listeners = {};
+    this._senders = [];
   }
   addEventListener(type, handler) {
     (this._listeners[type] ??= []).push(handler);
@@ -14,6 +15,12 @@ class FakePeerConnection {
   _setConnectionState(state) {
     this.connectionState = state;
     this._emit("connectionstatechange");
+  }
+  getSenders() {
+    return this._senders;
+  }
+  _setSenders(senders) {
+    this._senders = senders;
   }
 }
 
@@ -240,5 +247,206 @@ describe("installGetUserMediaPatch", () => {
     await navigator.mediaDevices.getUserMedia({ video: true });
 
     expect(onMicStream).not.toHaveBeenCalled();
+  });
+});
+
+describe("getCurrentLocalAudioTrack", () => {
+  it("returns null when there are no active connections", async () => {
+    vi.resetModules();
+    const { getCurrentLocalAudioTrack } = await import("./rtc-patch.js");
+    expect(getCurrentLocalAudioTrack()).toBeNull();
+  });
+
+  it("returns the current audio sender's track from an active connection", async () => {
+    vi.resetModules();
+    const { installRtcPatch, getCurrentLocalAudioTrack } = await import("./rtc-patch.js");
+    installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed: () => {} });
+    const pc = new window.RTCPeerConnection();
+    const audioTrack = fakeAudioTrack("mic-1");
+    pc._setSenders([{ track: { kind: "video", id: "v1" } }, { track: audioTrack }]);
+
+    expect(getCurrentLocalAudioTrack()).toBe(audioTrack);
+  });
+
+  it("prefers a candidate from a connection whose connectionState is 'connected' over one that is merely not closed", async () => {
+    vi.resetModules();
+    const { installRtcPatch, getCurrentLocalAudioTrack } = await import("./rtc-patch.js");
+    installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed: () => {} });
+    const staleConnectionTrack = fakeAudioTrack("stale");
+    const activeConnectionTrack = fakeAudioTrack("active");
+    const stalePc = new window.RTCPeerConnection();
+    stalePc._setSenders([{ track: staleConnectionTrack }]);
+    stalePc._setConnectionState("disconnected");
+    const activePc = new window.RTCPeerConnection();
+    activePc._setSenders([{ track: activeConnectionTrack }]);
+    activePc._setConnectionState("connected");
+
+    expect(getCurrentLocalAudioTrack()).toBe(activeConnectionTrack);
+  });
+
+  it("skips a connection whose connectionState is closed/failed even if it's still in the active set", async () => {
+    vi.resetModules();
+    const { installRtcPatch, getCurrentLocalAudioTrack } = await import("./rtc-patch.js");
+    installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed: () => {} });
+    const pc = new window.RTCPeerConnection();
+    pc._setSenders([{ track: fakeAudioTrack("mic-1") }]);
+    // Mutated directly (not via _setConnectionState, which would also fire our
+    // own "connectionstatechange" listener and remove this pc from
+    // activeConnections) — this exercises getCurrentLocalAudioTrack's own
+    // internal closed/failed guard specifically, independent of that cleanup,
+    // per Codex's review: the original version of this test only exercised the
+    // Set-removal side effect, never the guard itself.
+    pc.connectionState = "closed";
+
+    expect(getCurrentLocalAudioTrack()).toBeNull();
+  });
+
+  it("logs every candidate it considered (not just the one it picked)", async () => {
+    vi.resetModules();
+    const { installRtcPatch, getCurrentLocalAudioTrack } = await import("./rtc-patch.js");
+    installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed: () => {} });
+    const disconnectedTrack = fakeAudioTrack("disconnected-mic");
+    const connectedTrack = fakeAudioTrack("connected-mic");
+    const disconnectedPc = new window.RTCPeerConnection();
+    disconnectedPc._setSenders([{ track: disconnectedTrack }]);
+    disconnectedPc._setConnectionState("disconnected");
+    const connectedPc = new window.RTCPeerConnection();
+    connectedPc._setSenders([{ track: connectedTrack }]);
+    connectedPc._setConnectionState("connected");
+    const logs = [];
+
+    getCurrentLocalAudioTrack({ log: (event, details) => logs.push({ event, details }) });
+
+    expect(logs).toHaveLength(1);
+    expect(logs[0].event).toBe("current-local-audio-track-lookup");
+    expect(logs[0].details.candidateCount).toBe(2);
+    expect(logs[0].details.candidates.map((c) => c.trackId).sort()).toEqual(["connected-mic", "disconnected-mic"]);
+    expect(logs[0].details.selectedTrackId).toBe("connected-mic");
+  });
+});
+
+describe("installReplaceTrackPatch", () => {
+  let originalRTCRtpSender;
+
+  beforeEach(() => {
+    originalRTCRtpSender = window.RTCRtpSender;
+    window.RTCRtpSender = class {
+      constructor(track) {
+        this.track = track;
+      }
+      async replaceTrack(newTrack) {
+        this.track = newTrack;
+        // Valor centinela devuelto a propósito, para poder comprobar que
+        // installReplaceTrackPatch preserva lo que el replaceTrack original
+        // resolvió (el contrato real de RTCRtpSender.replaceTrack()), en vez
+        // de perderlo o devolver undefined siempre.
+        return "replace-track-resolved-value";
+      }
+    };
+  });
+
+  afterEach(() => {
+    window.RTCRtpSender = originalRTCRtpSender;
+  });
+
+  it("calls onAudioTrackReplaced (after the replacement resolves) and logs the attempt", async () => {
+    vi.resetModules();
+    const { installReplaceTrackPatch } = await import("./rtc-patch.js");
+    const onAudioTrackReplaced = vi.fn();
+    const logs = [];
+    installReplaceTrackPatch({ onAudioTrackReplaced, log: (event, details) => logs.push({ event, details }) });
+
+    const oldTrack = fakeAudioTrack("old");
+    const newTrack = fakeAudioTrack("new");
+    const sender = new window.RTCRtpSender(oldTrack);
+
+    const resolvedValue = await sender.replaceTrack(newTrack);
+
+    expect(resolvedValue).toBe("replace-track-resolved-value");
+    expect(onAudioTrackReplaced).toHaveBeenCalledWith(newTrack, oldTrack);
+    expect(logs).toContainEqual({
+      event: "sender-replace-track",
+      details: { kind: "audio", previousTrackId: "old", newTrackId: "new" },
+    });
+  });
+
+  it("does not call onAudioTrackReplaced for a video sender's track replacement", async () => {
+    vi.resetModules();
+    const { installReplaceTrackPatch } = await import("./rtc-patch.js");
+    const onAudioTrackReplaced = vi.fn();
+    installReplaceTrackPatch({ onAudioTrackReplaced });
+
+    const oldTrack = { kind: "video", id: "old-v" };
+    const newTrack = { kind: "video", id: "new-v" };
+    const sender = new window.RTCRtpSender(oldTrack);
+    await sender.replaceTrack(newTrack);
+
+    expect(onAudioTrackReplaced).not.toHaveBeenCalled();
+  });
+
+  it("still calls through to the original replaceTrack behavior", async () => {
+    vi.resetModules();
+    const { installReplaceTrackPatch } = await import("./rtc-patch.js");
+    installReplaceTrackPatch({ onAudioTrackReplaced: () => {} });
+
+    const oldTrack = fakeAudioTrack("old");
+    const newTrack = fakeAudioTrack("new");
+    const sender = new window.RTCRtpSender(oldTrack);
+    await sender.replaceTrack(newTrack);
+
+    expect(sender.track).toBe(newTrack);
+  });
+
+  it("does not call onAudioTrackReplaced if the underlying replaceTrack call rejects", async () => {
+    // Real gap Codex's review caught in the first version of this plan: firing
+    // onAudioTrackReplaced before awaiting the original call would switch the
+    // mixer to a track that Meet's own replaceTrack call never actually
+    // accepted.
+    vi.resetModules();
+    const { installReplaceTrackPatch } = await import("./rtc-patch.js");
+    window.RTCRtpSender = class {
+      constructor(track) {
+        this.track = track;
+      }
+      async replaceTrack() {
+        throw new Error("replaceTrack failed");
+      }
+    };
+    const onAudioTrackReplaced = vi.fn();
+    installReplaceTrackPatch({ onAudioTrackReplaced });
+
+    const sender = new window.RTCRtpSender(fakeAudioTrack("old"));
+    await expect(sender.replaceTrack(fakeAudioTrack("new"))).rejects.toThrow("replaceTrack failed");
+    expect(onAudioTrackReplaced).not.toHaveBeenCalled();
+  });
+
+  it("increments diagnostics.audioSenderReplacements only for successful audio sender replacements", async () => {
+    vi.resetModules();
+    const { installReplaceTrackPatch, diagnostics } = await import("./rtc-patch.js");
+    installReplaceTrackPatch({ onAudioTrackReplaced: () => {} });
+
+    const sender = new window.RTCRtpSender(fakeAudioTrack("old"));
+    await sender.replaceTrack(fakeAudioTrack("new"));
+    await sender.replaceTrack(fakeAudioTrack("newer"));
+
+    expect(diagnostics.audioSenderReplacements).toBe(2);
+  });
+
+  it("does not double-wrap replaceTrack when installed more than once", async () => {
+    // Guards against Meet triggering two log lines / two callback firings for
+    // one real replaceTrack call if installReplaceTrackPatch were ever
+    // (accidentally) called twice.
+    vi.resetModules();
+    const { installReplaceTrackPatch } = await import("./rtc-patch.js");
+    const firstCallback = vi.fn();
+    const secondCallback = vi.fn();
+    installReplaceTrackPatch({ onAudioTrackReplaced: firstCallback });
+    installReplaceTrackPatch({ onAudioTrackReplaced: secondCallback });
+
+    const sender = new window.RTCRtpSender(fakeAudioTrack("old"));
+    await sender.replaceTrack(fakeAudioTrack("new"));
+
+    expect(firstCallback).toHaveBeenCalledTimes(1);
+    expect(secondCallback).not.toHaveBeenCalled();
   });
 });
