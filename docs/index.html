@@ -26,6 +26,9 @@
       --focus: #5d5b55;
       --shadow: rgba(19, 18, 9, 0.12);
       --ease: cubic-bezier(0.32, 0.72, 0, 1);
+      --acc-expand: 250ms;
+      --acc-collapse: 250ms;
+      --acc-chevron: 250ms;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -143,10 +146,44 @@
     .screen img { border-radius: 8px; }
     .faq { max-width: 800px; margin: 0 auto; }
     .faq-list { display: grid; gap: 12px; }
-    details { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-    summary { cursor: pointer; color: var(--text); font-size: 16px; line-height: 24px; font-weight: 700; }
-    summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
-    details p { margin-top: 12px; color: var(--muted); font-size: 16px; line-height: 24px; }
+    .t-acc { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+    .t-acc-head { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; padding: 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 16px; line-height: 24px; font-weight: 700; text-align: left; }
+    .t-acc-panel {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows var(--acc-collapse) var(--ease);
+    }
+    .t-acc[data-open="true"] .t-acc-panel {
+      grid-template-rows: 1fr;
+      transition: grid-template-rows var(--acc-expand) var(--ease);
+    }
+    .t-acc-panel-inner {
+      overflow: hidden;
+      padding-top: 12px;
+      opacity: 0;
+      filter: blur(2px);
+      transition:
+        opacity var(--acc-collapse) var(--ease),
+        filter var(--acc-collapse) var(--ease);
+    }
+    .t-acc[data-open="true"] .t-acc-panel-inner {
+      opacity: 1;
+      filter: blur(0);
+      transition:
+        opacity var(--acc-expand) var(--ease),
+        filter var(--acc-expand) var(--ease);
+    }
+    .t-acc-panel-inner p { color: var(--muted); font-size: 16px; line-height: 24px; }
+    .t-acc-chevron {
+      display: inline-flex;
+      flex: 0 0 auto;
+      transform: scaleY(1);
+      transform-origin: center;
+      transition: transform var(--acc-chevron) var(--ease);
+    }
+    .t-acc-chevron svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    .t-acc-chevron path { vector-effect: non-scaling-stroke; }
+    .t-acc[data-open="true"] .t-acc-chevron { transform: scaleY(-1); }
     code { font-family: "Manrope", sans-serif; font-size: 14px; line-height: 20px; }
     .final-cta { text-align: center; }
     .final-cta h2 { max-width: 680px; margin: 0 auto; font-size: 36px; line-height: 40px; font-weight: 700; letter-spacing: -0.03em; }
@@ -176,6 +213,9 @@
       html { scroll-behavior: auto; }
       *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
       .reveal, .word { opacity: 1; filter: none; transform: none; }
+      .t-acc-panel, .t-acc-panel-inner, .t-acc-chevron {
+        transition: none !important;
+      }
     }
   </style>
 </head>
@@ -225,14 +265,14 @@
     <section class="faq" aria-labelledby="faq-title">
       <h2 class="section-title" id="faq-title">FAQ</h2>
       <div class="faq-list">
-        <details class="reveal"><summary>Does Ariadne upload my recordings anywhere?</summary><p>No. There is no backend, no account system, and no analytics. Everything is written to your browser's own private storage (Origin Private File System and <code>chrome.storage</code>), and the only way a file leaves that storage is if you click download.</p></details>
-        <details class="reveal"><summary>Which meeting platforms are supported?</summary><p>Google Meet only, for now. The architecture is not tied to a single platform, so support for others may follow.</p></details>
-        <details class="reveal"><summary>Do other participants know they are being recorded?</summary><p>There is no visible indicator in the meeting. Ariadne is a personal tool for taking your own notes, not a meeting bot — you are responsible for complying with your jurisdiction's recording consent laws when you use it.</p></details>
-        <details class="reveal"><summary>Is Ariadne free?</summary><p>Yes. No subscription, no usage limits, no account to create.</p></details>
-        <details class="reveal"><summary>What happens to a recording if I uninstall the extension?</summary><p>It is erased, since it only ever lived in the extension's own storage and nowhere else.</p></details>
-        <details class="reveal"><summary>Can I get video, not just audio?</summary><p>Yes, one click on the banner inside the meeting enables video for that meeting. Chrome requires that one confirmation for screen capture; there is no way around it.</p></details>
-        <details class="reveal"><summary>Is the code open source?</summary><p>Yes — the full source is on <a href="https://github.com/ivangonzalezg/ariadne" target="_blank" rel="noopener noreferrer">GitHub</a>.</p></details>
-        <details class="reveal"><summary>What permissions does it need, and why?</summary><p><code>storage</code> and <code>unlimitedStorage</code> to save recordings locally, <code>offscreen</code> to run local audio/video conversion, <code>downloads</code> so you can save a file to your computer, and host access limited to <code>meet.google.com</code> to detect meetings and read captions. Nothing else.</p></details>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">Does Ariadne upload my recordings anywhere?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>No. There is no backend, no account system, and no analytics. Everything is written to your browser's own private storage (Origin Private File System and <code>chrome.storage</code>), and the only way a file leaves that storage is if you click download.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">Which meeting platforms are supported?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>Google Meet only, for now. The architecture is not tied to a single platform, so support for others may follow.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">Do other participants know they are being recorded?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>There is no visible indicator in the meeting. Ariadne is a personal tool for taking your own notes, not a meeting bot — you are responsible for complying with your jurisdiction's recording consent laws when you use it.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">Is Ariadne free?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>Yes. No subscription, no usage limits, no account to create.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">What happens to a recording if I uninstall the extension?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>It is erased, since it only ever lived in the extension's own storage and nowhere else.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">Can I get video, not just audio?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>Yes, one click on the banner inside the meeting enables video for that meeting. Chrome requires that one confirmation for screen capture; there is no way around it.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">Is the code open source?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p>Yes — the full source is on <a href="https://github.com/ivangonzalezg/ariadne" target="_blank" rel="noopener noreferrer">GitHub</a>.</p></div></div></div>
+        <div class="t-acc reveal" data-open="false"><button class="t-acc-head" aria-expanded="false">What permissions does it need, and why?<span class="t-acc-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button><div class="t-acc-panel"><div class="t-acc-panel-inner"><p><code>storage</code> and <code>unlimitedStorage</code> to save recordings locally, <code>offscreen</code> to run local audio/video conversion, <code>downloads</code> so you can save a file to your computer, and host access limited to <code>meet.google.com</code> to detect meetings and read captions. Nothing else.</p></div></div></div>
       </div>
     </section>
 
@@ -270,6 +310,14 @@
           line.replaceChildren(fragment);
         });
       }
+      document.querySelectorAll('.t-acc').forEach((acc) => {
+        const head = acc.querySelector('.t-acc-head');
+        head.addEventListener('click', () => {
+          const open = acc.getAttribute('data-open') === 'true';
+          acc.setAttribute('data-open', String(!open));
+          head.setAttribute('aria-expanded', String(!open));
+        });
+      });
       if (reducedMotion) {
         revealItems.forEach((item) => item.classList.add('is-visible'));
         words.forEach((word) => word.classList.add('is-visible'));
