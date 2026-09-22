@@ -8,20 +8,9 @@
   Automatically record, transcribe, and save your meetings locally — no cloud, no subscriptions.
 </p>
 
-<!--
-  Screenshot placeholder — the popup showing an in-progress recording.
-  ![Popup in recording state](docs/screenshots/popup-recording.png)
--->
-
-<!--
-  Screenshot placeholder — the on-page banner shown inside a meeting.
-  ![In-meeting banner](docs/screenshots/meeting-banner.png)
--->
-
-<!--
-  Screenshot placeholder — the History page with a meeting's detail panel open.
-  ![History page](docs/screenshots/history-detail.png)
--->
+<p align="center">
+  <img src="docs/screenshots/meeting-banner.png" width="360" alt="In-meeting banner" />
+</p>
 
 ## What it does
 
