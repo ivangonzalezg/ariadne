@@ -45,8 +45,24 @@ export class MeetingAudioMixer {
     return this.remoteSources.size;
   }
 
+  // Global por stream.id cuando hay un MediaStream disponible — así, SI Meet
+  // reutiliza el mismo MediaStream.id para el mismo participante al reconectar o
+  // renegociar (con una RTCPeerConnection nueva, y por lo tanto un connectionId
+  // distinto), lo tratamos como la MISMA fuente y la reemplazamos (ver
+  // addRemoteTrack) en vez de sumar una copia adicional. Esta es la hipótesis
+  // objetivo para el eco que el usuario detectó comparando contra Fireflies
+  // (cuyo código usa este mismo esquema global) — confirmada como plausible por
+  // dos revisiones de Codex, pero todavía no confirmada contra una reunión real;
+  // ver el logging de diagnóstico en rtc-patch.js y la verificación manual del
+  // plan que introdujo este cambio para cómo se termina de confirmar o
+  // descartar. `mid` NO es seguro tratarlo así: son enteros chicos ("0", "1",
+  // ...) que se reinician por conexión, así que dos conexiones distintas casi
+  // seguro van a tener el mismo mid para participantes DISTINTOS — por eso ese
+  // fallback (y el de track.id) se mantienen scopeados a la conexión.
   _remoteKey(connectionId, { streamId, mid, track }) {
-    return `${connectionId}:${streamId ?? mid ?? track.id}`;
+    if (streamId) return `stream:${streamId}`;
+    if (mid) return `conn:${connectionId}:mid:${mid}`;
+    return `conn:${connectionId}:track:${track.id}`;
   }
 
   addRemoteTrack({ track, stream, mid, connectionId }) {

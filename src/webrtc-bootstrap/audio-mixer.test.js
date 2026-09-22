@@ -162,10 +162,68 @@ describe("MeetingAudioMixer remote sources", () => {
     expect(mixer.activeRemoteSourceCount).toBe(0);
   });
 
-  it("keeps sources from different connections separate even with the same stream id", () => {
-    const { mixer } = makeMixer();
+  it("treats the same stream id as the same logical source across different connections (replaces, not duplicates)", () => {
+    // This is the targeted hypothesis for the echo the user confirmed via an A/B
+    // recording against Fireflies (not yet confirmed as THE cause against a real
+    // Meet call — see Task 2's logging and Task 3's manual verification for how
+    // that gets confirmed or ruled out): IF Google Meet reuses the same
+    // MediaStream.id for a participant across a connection replacement (new
+    // RTCPeerConnection, new connectionId), the old and new copies must not both
+    // stay connected to the mix — that would produce an audible doubling.
+    const { mixer, sourceNodes } = makeMixer();
+    const firstTrack = fakeTrack("t1");
+    const secondTrack = fakeTrack("t2");
+    mixer.addRemoteTrack({ track: firstTrack, stream: fakeStream("s1"), mid: null, connectionId: 1 });
+    mixer.addRemoteTrack({ track: secondTrack, stream: fakeStream("s1"), mid: null, connectionId: 2 });
+
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(sourceNodes[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(sourceNodes[1].disconnect).not.toHaveBeenCalled();
+  });
+
+  it("does not remove a replaced source when its OLD connection later closes, and the replacement stays removable under its real owner", () => {
+    // Locks in that connectionKeys bookkeeping still follows the entry's actual
+    // owning connection (tracked separately from the key string itself), not the
+    // connection that originally created the key — both directions: closing the
+    // OLD connection must not touch the replacement, and closing the NEW
+    // (actual owning) connection must still clean it up correctly.
+    const { mixer, sourceNodes } = makeMixer();
     mixer.addRemoteTrack({ track: fakeTrack("t1"), stream: fakeStream("s1"), mid: null, connectionId: 1 });
     mixer.addRemoteTrack({ track: fakeTrack("t2"), stream: fakeStream("s1"), mid: null, connectionId: 2 });
+
+    mixer.removeConnection(1);
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(sourceNodes[1].disconnect).not.toHaveBeenCalled();
+
+    mixer.removeConnection(2);
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+    expect(sourceNodes[1].disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps sources from different connections separate when falling back to mid (no stream), even with the same mid", () => {
+    // mid ("0", "1", ...) is a per-connection SDP media-line id, not globally
+    // unique — unlike stream.id, it's NOT safe to treat as the same logical
+    // source across connections. This test locks in that the mid fallback stays
+    // connection-scoped.
+    const { mixer } = makeMixer();
+    mixer.addRemoteTrack({ track: fakeTrack("t1"), stream: null, mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track: fakeTrack("t2"), stream: null, mid: "0", connectionId: 2 });
+
+    expect(mixer.activeRemoteSourceCount).toBe(2);
+  });
+
+  it("does NOT migrate an entry from a mid-fallback key to a stream key if a stream becomes available later on the same connection+mid (known, accepted gap)", () => {
+    // There is no alias/migration mechanism between the two keying schemes. If a
+    // track first arrives with no stream (falls back to conn:<id>:mid:<mid>) and
+    // a later track for the same connection+mid DOES have a stream (keys as
+    // stream:<id>), they're treated as two unrelated sources, not one — this
+    // test documents that as a known, deliberately-accepted gap (Codex's review
+    // flagged it as an untested risk; YAGNI applies until real evidence from the
+    // Task 2 diagnostic logging shows this transition actually happens against a
+    // real Meet call and causes a problem worth fixing).
+    const { mixer } = makeMixer();
+    mixer.addRemoteTrack({ track: fakeTrack("t1"), stream: null, mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track: fakeTrack("t2"), stream: fakeStream("s1"), mid: "0", connectionId: 1 });
 
     expect(mixer.activeRemoteSourceCount).toBe(2);
   });
