@@ -46,7 +46,7 @@ function footer(autoStart) {
 
 function header() {
   return `<div class="header">
-    <div class="brand"><img src="${chrome.runtime.getURL("icons/icon32.png")}" width="18" height="18" alt="">Asterion</div>
+    <div class="brand"><img src="${chrome.runtime.getURL("icons/icon32.png")}" width="18" height="18" alt="">Ariadne</div>
     <span id="settings-link" role="button" tabindex="0" aria-label="${t("popup.settingsAria")}" style="display:inline-flex;cursor:pointer">${icon("settings", { size: 18, color: "var(--text-secondary)" })}</span>
   </div>`;
 }

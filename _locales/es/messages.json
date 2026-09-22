@@ -1,10 +1,10 @@
 {
   "extensionName": {
-    "message": "Asterion — Captura de Reuniones",
+    "message": "Ariadne — Grabador de Reuniones",
     "description": "Nombre de la extensión mostrado en la Chrome Web Store y en chrome://extensions."
   },
   "extensionDescription": {
-    "message": "Captura local automática de transcripción, audio y video de reuniones de Google Meet.",
+    "message": "Graba, transcribe y guarda tus reuniones de forma local y automática — sin nube, sin suscripciones.",
     "description": "Descripción de la extensión mostrada en la Chrome Web Store y en chrome://extensions."
   }
 }

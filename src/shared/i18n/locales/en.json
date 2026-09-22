@@ -14,7 +14,7 @@
   "common.volumeAria": "Volume",
   "common.meetingAudioLabel": "Meeting audio",
   "common.notAvailable": "Not available",
-  "settings.pageTitle": "Asterion — Settings",
+  "settings.pageTitle": "Ariadne — Settings",
   "settings.backAria": "Back",
   "settings.title": "Settings",
   "settings.videoPresetLabel": "Video speed and quality",
@@ -41,7 +41,7 @@
   "popup.processingSingle": "Processing {{label}}... {{pct}}%",
   "popup.processingLabelVideo": "video",
   "popup.processingLabelAudio": "audio",
-  "history.pageTitle": "Asterion — History",
+  "history.pageTitle": "Ariadne — History",
   "history.pageHeading": "History",
   "history.pageDescription": "Meetings saved locally on this device.",
   "history.filtersAsideAria": "History filters",
@@ -93,5 +93,5 @@
   "banner.finishedCopy": "The meeting was saved successfully.",
   "banner.viewRecording": "View recording",
   "banner.dismissAria": "Close",
-  "banner.videoErrorLog": "[Asterion] Could not enable video:"
+  "banner.videoErrorLog": "[Ariadne] Could not enable video:"
 }

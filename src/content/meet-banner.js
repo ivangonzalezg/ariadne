@@ -49,7 +49,7 @@ function recordingControls() {
 function renderDetected() {
   return `<div class="banner pill detected">
     <img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20">
-    <div class="brand-copy"><strong>Asterion</strong><span>${t("popup.statusDetected")}</span></div>
+    <div class="brand-copy"><strong>Ariadne</strong><span>${t("popup.statusDetected")}</span></div>
     <button class="primary-button" id="start-capture" type="button">${icon("play", { size: 15 })}${t("popup.startCapture")}</button>
   </div>`;
 }
@@ -68,7 +68,7 @@ function renderRecording() {
 
   return `<div class="banner ${isExpanded ? "expanded" : "pill"}">
     <div class="recording-top">
-      <div class="recording-copy"><img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20"><strong>Asterion</strong><span class="timer">${formatElapsed(currentMeta.startedAt)}</span></div>
+      <div class="recording-copy"><img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20"><strong>Ariadne</strong><span class="timer">${formatElapsed(currentMeta.startedAt)}</span></div>
       <div class="controls">${recordingControls()}</div>
     </div>
     ${sources}
@@ -234,7 +234,7 @@ export async function showBanner({ onStart, onStop }) {
   try {
     ({ t } = await initI18n());
   } catch (error) {
-    console.error("[Asterion] i18n initialization failed for the Meet banner", error);
+    console.error("[Ariadne] i18n initialization failed for the Meet banner", error);
     bannerReady = false;
     return;
   }

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 document.body.innerHTML = `
   <aside class="sidebar" aria-label="Filtros del historial">
-    <div class="brand"><img alt="" /><span>Asterion</span></div>
+    <div class="brand"><img alt="" /><span>Ariadne</span></div>
     <div><h1 id="page-heading" class="sidebar-heading">Historial</h1><p id="page-description" class="sidebar-description"></p></div>
     <div class="search-field"><span id="search-icon" class="search-icon" aria-hidden="true"></span><input id="search-input" type="search" /></div>
     <section aria-labelledby="filters-label" hidden><span id="filters-label" class="section-label"></span><div id="filter-chips" class="filter-chips"></div></section>

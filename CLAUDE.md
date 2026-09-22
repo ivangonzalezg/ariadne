@@ -1,4 +1,4 @@
-# Reglas del proyecto Asterion
+# Reglas del proyecto Ariadne
 
 ## Modelo de trabajo: Claude orquesta, Codex construye
 

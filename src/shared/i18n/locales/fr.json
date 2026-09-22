@@ -14,7 +14,7 @@
   "common.volumeAria": "Volume",
   "common.meetingAudioLabel": "Audio de la réunion",
   "common.notAvailable": "Non disponible",
-  "settings.pageTitle": "Asterion — Paramètres",
+  "settings.pageTitle": "Ariadne — Paramètres",
   "settings.backAria": "Retour",
   "settings.title": "Paramètres",
   "settings.videoPresetLabel": "Vitesse et qualité vidéo",
@@ -41,7 +41,7 @@
   "popup.processingSingle": "Traitement de {{label}}... {{pct}}%",
   "popup.processingLabelVideo": "vidéo",
   "popup.processingLabelAudio": "audio",
-  "history.pageTitle": "Asterion — Historique",
+  "history.pageTitle": "Ariadne — Historique",
   "history.pageHeading": "Historique",
   "history.pageDescription": "Réunions enregistrées localement sur cet appareil.",
   "history.filtersAsideAria": "Filtres de l'historique",
@@ -93,5 +93,5 @@
   "banner.finishedCopy": "La réunion a été enregistrée avec succès.",
   "banner.viewRecording": "Voir l'enregistrement",
   "banner.dismissAria": "Fermer",
-  "banner.videoErrorLog": "[Asterion] Impossible d'activer la vidéo :"
+  "banner.videoErrorLog": "[Ariadne] Impossible d'activer la vidéo :"
 }
