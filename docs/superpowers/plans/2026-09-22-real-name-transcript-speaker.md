@@ -929,7 +929,17 @@ Corregido con dos cambios, consultados con el usuario antes de implementarlos da
 - **`speaker-label-reconciler.js` (commit `6156748`):** ahora el nombre propio se resuelve **una sola vez por sesión, por consenso de mayoría** entre todas las captions cuyo `speaker` original era `"You"` (no ventana por ventana) — un solape aislado de un tercero ya no alcanza para desplazar al nombre que realmente predomina. Además, **nunca se vuelve a tocar una caption que Meet ya atribuyó a otra persona real** (antes el código podía reemplazar el nombre de un tercero si una ventana distinta se solapaba, un riesgo que ni siquiera se había detectado hasta este punto) — las ventanas de indicador ahora solo sirven para resolver el caso "You", nunca para "corregir" un nombre que Meet ya dio bien.
 - **`speaker-observer.js` (commit `21cadd6`):** se eliminó por completo el timeout sintético de silencio. La ventana de un hablante se extiende hasta el próximo cambio real de indicador, sin cortarla artificialmente — esto es seguro precisamente porque el punto anterior ya garantiza que esas ventanas solo se usan para resolver "You", nunca para tocar a otra persona.
 
-Con estos dos cambios juntos, el diseño se parece menos al de Fireflies punto por punto (que si atribuye en tiempo real a cada hablante, según su propio código decompilado) y más a una versión acotada y más conservadora: usar la misma técnica de lectura de `__soy.data`, pero solo para resolver la identidad propia, fijada una vez por sesión, sin arriesgarse a reasignar la identidad de terceros. Sigue pendiente repetir la Tarea 8 una vez más para confirmar que esta segunda corrección resuelve el problema end-to-end en una reunión real.
+Con estos dos cambios juntos, el diseño se parece menos al de Fireflies punto por punto (que sí atribuye en tiempo real a cada hablante, según su propio código decompilado) y más a una versión acotada y más conservadora: usar la misma técnica de lectura de `__soy.data`, pero solo para resolver la identidad propia, fijada una vez por sesión, sin arriesgarse a reasignar la identidad de terceros.
+
+#### Tarea 8: resultado final (2026-09-23)
+
+Repetida con una reunión real de dos personas (Iván y Silvestre), hablando varias veces cada uno, con frases largas y alternancia entre ambos. `transcripcion.json` resultante:
+
+- Las dos intervenciones del usuario salieron completas, sin fragmentar, como `"Iván González (You)"` — incluida una de 8.5 segundos que antes de la corrección del timeout de silencio se hubiera partido.
+- Las dos intervenciones de Silvestre salieron como `"Silvestre Dangond"`, sin ningún sufijo y sin mezclarse con la identidad del usuario.
+- Ninguna línea quedó en `"You"` a secas ni con el nombre de la persona equivocada.
+
+Con esto, la Tarea 8 queda verificada end-to-end. El plan se da por completo.
 
 
 - Reemplazo de "You" por nombre real con sufijo `" (You)"`: cubierto en `speaker-label-reconciler.js` (Tarea 1) y verificado end-to-end en `SessionWriter` (Tarea 7).
