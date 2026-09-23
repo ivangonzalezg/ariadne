@@ -41,6 +41,8 @@ let micMuted = true;
 let videoEnabled = false;
 let stopMuteObserver = () => {};
 let stopCaptionObserver = () => {};
+let stopMeetingEndObserver = () => {};
+const MEETING_END_POLL_INTERVAL_MS = 3000;
 
 function bannerMeta(extra = {}) {
   return { meetingTitle, startedAt, hasTranscript, micMuted, videoEnabled, ...extra };
@@ -54,8 +56,10 @@ function setState(state, meta = {}) {
 function cleanupObservers() {
   stopMuteObserver();
   stopCaptionObserver();
+  stopMeetingEndObserver();
   stopMuteObserver = () => {};
   stopCaptionObserver = () => {};
+  stopMeetingEndObserver = () => {};
 }
 
 function getCurrentMeetingTitle() {
@@ -108,6 +112,7 @@ async function startRecording() {
     chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
   });
   stopCaptionObserver = cleanup ?? (() => {});
+  stopMeetingEndObserver = observeMeetingEnd();
 }
 
 function stopRecording() {
@@ -199,6 +204,26 @@ chrome.runtime.onMessage.addListener((message) => {
 window.addEventListener("pagehide", () => {
   if (sessionId) postToMainWorld({ type: "asterion:stop-session", sessionId });
 });
+
+function observeMeetingEnd() {
+  // Chequeo inicial inmediato: cubre el caso de que el usuario ya se haya
+  // ido de la reunión mientras `startRecording()` todavía estaba esperando
+  // `enableCaptionsAndObserve(...)`, antes de que este polling arrancara.
+  if (!isInActiveMeeting()) {
+    debugLog("[Ariadne:debug] se detectó que la reunión terminó (chequeo inicial), deteniendo grabación automáticamente");
+    stopRecording();
+    return () => {};
+  }
+
+  const intervalId = setInterval(() => {
+    if (!isInActiveMeeting()) {
+      clearInterval(intervalId);
+      debugLog("[Ariadne:debug] se detectó que la reunión terminó, deteniendo grabación automáticamente");
+      stopRecording();
+    }
+  }, MEETING_END_POLL_INTERVAL_MS);
+  return () => clearInterval(intervalId);
+}
 
 function waitForMeeting() {
   debugLog("[Ariadne:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
