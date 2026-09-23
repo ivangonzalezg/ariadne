@@ -21,11 +21,15 @@ describe("reconcileCaptionSnapshots", () => {
     ]);
   });
 
-  it("replaces a non-'You' speaker with the plain real name, no (You) suffix", () => {
+  it("never overwrites a caption Meet already attributed to a real (non-'You') speaker, even if a window overlaps it", () => {
+    // Corregido tras verificación manual contra una reunión real (Tarea 8):
+    // el panel de captions de Meet ya es la fuente de verdad para cualquier
+    // hablante que no sea uno mismo — las ventanas de indicador solo sirven
+    // para resolver "You", nunca para "corregir" un nombre que Meet ya dio bien.
     const captions = [{ speaker: "Beto", text: "Hola", timestampMs: 1000 }];
     const speakerLabels = [{ speakerName: "Ana", timestampMs: 950 }];
     expect(reconcileCaptionSnapshots({ captions, speakerLabels })).toEqual([
-      { speaker: "Ana", text: "Hola", timestampMs: 1000 },
+      { speaker: "Beto", text: "Hola", timestampMs: 1000 },
     ]);
   });
 
@@ -78,6 +82,33 @@ describe("reconcileCaptionSnapshots", () => {
     ];
     expect(reconcileCaptionSnapshots({ captions, speakerLabels })).toEqual([
       { speaker: "You", text: "Hola", timestampMs: 3000 },
+    ]);
+  });
+
+  it("locks its own name by majority vote and ignores a one-off window from a different person for a 'You' caption", () => {
+    // Reproduce el bug real encontrado en la Tarea 8: el usuario habla varias
+    // veces (matcheando su propia ventana), pero en un momento el indicador
+    // de "Fulano" se solapa por casualidad con una de sus captions "You". Sin
+    // el voto de mayoría, esa caption se hubiera atribuido incorrectamente a
+    // "Fulano (You)" — con él, la identidad ya establecida ("Ivan Gonzalez")
+    // gana, y la caption que solo matchea a Fulano cae al fallback seguro.
+    const captions = [
+      { speaker: "You", text: "Hola", timestampMs: 1000 },
+      { speaker: "You", text: "sigo hablando", timestampMs: 3000 },
+      { speaker: "You", text: "esto en realidad lo dije yo", timestampMs: 5000 },
+      { speaker: "You", text: "y esto también", timestampMs: 7000 },
+    ];
+    const speakerLabels = [
+      { speakerName: "Ivan Gonzalez", timestampMs: 950 },
+      { speakerName: "Ivan Gonzalez", timestampMs: 2950 },
+      { speakerName: "Fulano Detal", timestampMs: 4950 },
+      { speakerName: "Ivan Gonzalez", timestampMs: 6950 },
+    ];
+    expect(reconcileCaptionSnapshots({ captions, speakerLabels })).toEqual([
+      { speaker: "Ivan Gonzalez (You)", text: "Hola", timestampMs: 1000 },
+      { speaker: "Ivan Gonzalez (You)", text: "sigo hablando", timestampMs: 3000 },
+      { speaker: "You", text: "esto en realidad lo dije yo", timestampMs: 5000 },
+      { speaker: "Ivan Gonzalez (You)", text: "y esto también", timestampMs: 7000 },
     ]);
   });
 });

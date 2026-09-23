@@ -26,6 +26,50 @@ function buildWindows(sortedLabels, maxLabelDistanceMs) {
   return collapsed;
 }
 
+function findMatch(eligibleWindows, timestampMs, maxLabelDistanceMs) {
+  // Dos ventanas de hablantes adyacentes, cada una con su margen de tolerancia,
+  // se solapan cerca de la transición. Hay que preferir siempre la ventana que
+  // contiene el timestamp de forma exacta (sin tolerancia) antes de caer al
+  // matching tolerante — si no, .find() puede devolver la ventana anterior
+  // (la primera en el array) para un caption que en realidad cae dentro de la
+  // ventana siguiente.
+  const exactMatch = eligibleWindows.find((window) => timestampMs >= window.startMs && timestampMs < window.endMs);
+  return (
+    exactMatch ??
+    eligibleWindows.find(
+      (window) => timestampMs >= window.startMs - maxLabelDistanceMs && timestampMs < window.endMs + maxLabelDistanceMs
+    )
+  );
+}
+
+// Averigua cuál es el nombre real del propio usuario una sola vez, por
+// consenso de mayoría a lo largo de TODA la sesión (no ventana por ventana).
+// Corregido tras verificación manual contra una reunión real (Tarea 8): usar
+// "la ventana que matchea en este instante" ingenuamente permitía que el
+// indicador de OTRO participante, si se solapaba por casualidad justo cuando
+// el propio quedaba en silencio, le robara la línea a la caption "You" y le
+// pusiera el nombre de esa otra persona real. Fijar la identidad propia por
+// mayoría hace que un solape aislado de un tercero no alcance para desplazar
+// al nombre que realmente predomina en las capturas "You" de la sesión.
+function resolveSelfName(captions, eligibleWindows, maxLabelDistanceMs) {
+  const counts = new Map();
+  for (const { speaker, timestampMs } of captions) {
+    if (speaker !== "You") continue;
+    const match = findMatch(eligibleWindows, timestampMs, maxLabelDistanceMs);
+    if (!match) continue;
+    counts.set(match.speakerName, (counts.get(match.speakerName) ?? 0) + 1);
+  }
+  let bestName = null;
+  let bestCount = 0;
+  for (const [name, count] of counts) {
+    if (count > bestCount) {
+      bestName = name;
+      bestCount = count;
+    }
+  }
+  return bestName;
+}
+
 export function reconcileCaptionSnapshots({ captions, speakerLabels, maxLabelDistanceMs = 100, minLabelDurationMs = 100 }) {
   if (!speakerLabels || speakerLabels.length === 0) {
     return captions.map(({ speaker, text, timestampMs }) => ({ speaker, text, timestampMs }));
@@ -36,21 +80,16 @@ export function reconcileCaptionSnapshots({ captions, speakerLabels, maxLabelDis
     (window) => window.speakerName !== null && window.endMs - window.startMs > minLabelDurationMs
   );
 
+  // Las ventanas de hablante SOLO se usan para resolver "You" -> nombre real.
+  // Una caption que Meet ya atribuyó a otra persona real nunca se toca — su
+  // panel de captions es la fuente de verdad para todos menos para uno mismo,
+  // así que un solape de ventanas nunca le puede robar la línea a un tercero.
+  const selfName = resolveSelfName(captions, eligibleWindows, maxLabelDistanceMs);
+
   return captions.map(({ speaker, text, timestampMs }) => {
-    // Dos ventanas de hablantes adyacentes, cada una con su margen de tolerancia,
-    // se solapan cerca de la transición. Hay que preferir siempre la ventana que
-    // contiene el timestamp de forma exacta (sin tolerancia) antes de caer al
-    // matching tolerante — si no, .find() puede devolver la ventana anterior
-    // (la primera en el array) para un caption que en realidad cae dentro de la
-    // ventana siguiente.
-    const exactMatch = eligibleWindows.find((window) => timestampMs >= window.startMs && timestampMs < window.endMs);
-    const match =
-      exactMatch ??
-      eligibleWindows.find(
-        (window) => timestampMs >= window.startMs - maxLabelDistanceMs && timestampMs < window.endMs + maxLabelDistanceMs
-      );
-    if (!match) return { speaker, text, timestampMs };
-    const resolvedSpeaker = speaker === "You" ? `${match.speakerName} (You)` : match.speakerName;
-    return { speaker: resolvedSpeaker, text, timestampMs };
+    if (speaker !== "You" || selfName === null) return { speaker, text, timestampMs };
+    const match = findMatch(eligibleWindows, timestampMs, maxLabelDistanceMs);
+    if (!match || match.speakerName !== selfName) return { speaker, text, timestampMs };
+    return { speaker: `${selfName} (You)`, text, timestampMs };
   });
 }
