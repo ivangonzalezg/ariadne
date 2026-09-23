@@ -164,7 +164,7 @@ describe("MeetingAudioMixer remote sources", () => {
 
   it("treats the same stream id as the same logical source across different connections (replaces, not duplicates)", () => {
     // This is the targeted hypothesis for the echo the user confirmed via an A/B
-    // recording against Fireflies (not yet confirmed as THE cause against a real
+    // recording against a comparable extension (not yet confirmed as THE cause against a real
     // Meet call - see Task 2's logging and Task 3's manual verification for how
     // that gets confirmed or ruled out): IF Google Meet reuses the same
     // MediaStream.id for a participant across a connection replacement (new

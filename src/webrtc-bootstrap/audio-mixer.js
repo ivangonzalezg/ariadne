@@ -50,8 +50,8 @@ export class MeetingAudioMixer {
   // renegociar (con una RTCPeerConnection nueva, y por lo tanto un connectionId
   // distinto), lo tratamos como la MISMA fuente y la reemplazamos (ver
   // addRemoteTrack) en vez de sumar una copia adicional. Esta es la hipótesis
-  // objetivo para el eco que el usuario detectó comparando contra Fireflies
-  // (cuyo código usa este mismo esquema global) - confirmada como plausible por
+  // objetivo para el eco que el usuario detectó comparando contra una extensión
+  // comparable (cuyo código usa este mismo esquema global) - confirmada como plausible por
   // dos revisiones de Codex, pero todavía no confirmada contra una reunión real;
   // ver el logging de diagnóstico en rtc-patch.js y la verificación manual del
   // plan que introdujo este cambio para cómo se termina de confirmar o

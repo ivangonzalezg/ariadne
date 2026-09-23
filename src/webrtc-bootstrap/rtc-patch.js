@@ -159,8 +159,8 @@ let replaceTrackPatchInstalled = false;
 // con un track ya procesado internamente (con su propio control de
 // volumen/normalización), seguir usando el track original sin enterarnos
 // del reemplazo explicaría por qué la voz propia grabada suena más baja que
-// en Fireflies, que sí detecta estos reemplazos (confirmado inspeccionando
-// su código).
+// en una extensión comparable, que sí detecta estos reemplazos (confirmado
+// inspeccionando su código).
 //
 // onAudioTrackReplaced se dispara DESPUÉS de que el replaceTrack original se
 // resuelve con éxito, no antes - si Meet intenta un reemplazo que termina

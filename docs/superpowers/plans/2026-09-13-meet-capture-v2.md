@@ -1309,7 +1309,7 @@ Expected: aparece una subcarpeta `reunion-<timestamp>` con `audio-reunion.webm` 
 
 ## Bugs encontrados en verificación real con Meet (post-Task 12), ya corregidos
 
-- **Selectores en inglés, no español** (commit `e79c9ee`): la UI real de Meet del usuario está en inglés. Se corrigieron `hangUpButton`, `micButton` y `captionsToggleButton` contra un diagnóstico real del DOM. `captionsContainer` se tomó del código fuente de Fireflies (`div[jsname="xySENc"][aria-live="polite"]`, alta confianza); `captionSpeakerName`/`captionText` siguen siendo best-effort sin confirmar (Fireflies no los necesita — lee el canal de datos WebRTC `captions_v2` de Meet directamente en vez de escrapear el DOM, algo a evaluar como mejora futura dado que ya tenemos la arquitectura de interceptación de WebRTC para el audio).
+- **Selectores en inglés, no español** (commit `e79c9ee`): la UI real de Meet del usuario está en inglés. Se corrigieron `hangUpButton`, `micButton` y `captionsToggleButton` contra un diagnóstico real del DOM. `captionsContainer` se tomó del código fuente de una extensión comparable (`div[jsname="xySENc"][aria-live="polite"]`, alta confianza); `captionSpeakerName`/`captionText` siguen siendo best-effort sin confirmar (esa extensión no los necesita — lee el canal de datos WebRTC `captions_v2` de Meet directamente en vez de escrapear el DOM, algo a evaluar como mejora futura dado que ya tenemos la arquitectura de interceptación de WebRTC para el audio).
 - **Los subtítulos no se activaban en auto-inicio** (commit `41d0ef1`): el clic al botón de subtítulos en `enableCaptionsAndObserve` ocurría una sola vez, antes del bucle de reintentos — si el botón no existía todavía en el DOM en ese instante (típico en auto-inicio, que dispara muy temprano), el clic se perdía y nunca se reintentaba. Corregido: el clic ahora se reintenta en cada vuelta del bucle.
 - **Nada se guardaba / historial vacío** (commit `41d0ef1`): condición de carrera real, no un caso raro — el offscreen document se crea recién al llegar el primer `asterion:session-starting`, pero ese mensaje es un *broadcast*; si el offscreen document todavía no terminó de registrar su listener, nunca lo recibe, y ninguno de los mensajes siguientes (chunks, fin de sesión) encuentra una sesión de escritura activa. Corregido: el service worker ahora reenvía `session-starting` explícitamente después de confirmar que el offscreen document ya existe, y el offscreen document es idempotente ante recibir ese mensaje dos veces.
 
@@ -1624,7 +1624,7 @@ Esto no se puede automatizar ni delegar — requiere una cuenta de Google y una 
 
 ## Task 13: Audio combinado en un solo archivo + selectores de subtítulos robustos (`jsname`)
 
-Cambio de diseño decidido por el usuario tras confirmar cómo lo hace Fireflies (ver PRD, secciones 4.1/5.2/5.3/6 ya actualizadas) y validado con Codex. Reemplaza los dos `MediaRecorder` separados de audio (reunión + propio) por uno solo, mezclado en tiempo real con Web Audio API; el mic se gatea con un `GainNode` (no pausando el `MediaRecorder`, que también cortaría el audio remoto). De paso corrige tres bugs reales que Codex encontró al revisar el diseño: tipo MIME incorrecto para el video, observers de mute/captions que no se limpiaban entre sesiones, y una condición de carrera donde el último chunk de audio podía no llegar a tiempo antes de finalizar la sesión.
+Cambio de diseño decidido por el usuario tras confirmar cómo lo hace una extensión comparable (ver PRD, secciones 4.1/5.2/5.3/6 ya actualizadas) y validado con Codex. Reemplaza los dos `MediaRecorder` separados de audio (reunión + propio) por uno solo, mezclado en tiempo real con Web Audio API; el mic se gatea con un `GainNode` (no pausando el `MediaRecorder`, que también cortaría el audio remoto). De paso corrige tres bugs reales que Codex encontró al revisar el diseño: tipo MIME incorrecto para el video, observers de mute/captions que no se limpiaban entre sesiones, y una condición de carrera donde el último chunk de audio podía no llegar a tiempo antes de finalizar la sesión.
 
 **Files:**
 - Modify: `src/webrtc-bootstrap/audio-mixer.js` (renombrar `RemoteAudioMixer` → `MeetingAudioMixer`, agregar mic + `GainNode`)
@@ -2127,7 +2127,7 @@ export async function enableCaptionsAndObserve(onSnapshot, { retries = 10, delay
 }
 ```
 
-- [ ] **Step 6: Modify `meet-selectors.js`** — `captionsToggleButton` por el atributo `jsname` real de Meet (de Fireflies), no por `aria-label`
+- [ ] **Step 6: Modify `meet-selectors.js`** — `captionsToggleButton` por el atributo `jsname` real de Meet (validado contra una extensión comparable), no por `aria-label`
 
 ```js
 // src/content/meet-selectors.js
@@ -2666,7 +2666,7 @@ git commit -m "feat: add view-in-new-tab and delete-meeting actions to history"
 
 ## Task 16: Selector real del panel de subtítulos + leer el último bloque, no el primero + timestamps en la transcripción
 
-Diagnóstico real contra el DOM de Meet (ver conversación de esta sesión) reveló dos cosas: (1) el selector del contenedor de subtítulos (`div[jsname="xySENc"][aria-live="polite"]`, tomado de Fireflies sin confirmar) está mal — el real es `[role="region"][aria-label="Captions"]`; (2) Meet acumula **un bloque de DOM por cada intervención** (`div.nMcdL.bj4p3b`, uno por hablante), no un solo nodo que se reemplaza — nuestra lectura usaba `querySelector` (agarra el primer bloque, siempre el más viejo) en vez de leer el último bloque (el que realmente se está actualizando en vivo). Los selectores de hablante (`.NWpY1d`) y texto (`.ygicle.VbkSUe`) sí eran correctos. De paso: se saca el CSS que ocultaba visualmente los subtítulos (pedido explícito del usuario — no hace falta ocultarlos en esta versión) y se agregan timestamps `mm:ss` a cada línea de `transcripcion.txt`, aprovechando que `CaptionParser` ya calcula `startMs`/`endMs` por intervención.
+Diagnóstico real contra el DOM de Meet (ver conversación de esta sesión) reveló dos cosas: (1) el selector del contenedor de subtítulos (`div[jsname="xySENc"][aria-live="polite"]`, tomado de una extensión comparable sin confirmar) está mal — el real es `[role="region"][aria-label="Captions"]`; (2) Meet acumula **un bloque de DOM por cada intervención** (`div.nMcdL.bj4p3b`, uno por hablante), no un solo nodo que se reemplaza — nuestra lectura usaba `querySelector` (agarra el primer bloque, siempre el más viejo) en vez de leer el último bloque (el que realmente se está actualizando en vivo). Los selectores de hablante (`.NWpY1d`) y texto (`.ygicle.VbkSUe`) sí eran correctos. De paso: se saca el CSS que ocultaba visualmente los subtítulos (pedido explícito del usuario — no hace falta ocultarlos en esta versión) y se agregan timestamps `mm:ss` a cada línea de `transcripcion.txt`, aprovechando que `CaptionParser` ya calcula `startMs`/`endMs` por intervención.
 
 **Files:**
 - Modify: `src/content/meet-selectors.js`
@@ -3011,7 +3011,7 @@ git commit -m "feat: add shared design tokens (light/dark) and lucide icon modul
 
 ---
 
-## Task 19: Título real de la reunión (Fireflies-style) en vez de nombre por timestamp
+## Task 19: Título real de la reunión (estilo herramientas de transcripción existentes) en vez de nombre por timestamp
 
 **Files:**
 - Modify: `src/content/meet-detector.js`
@@ -3573,7 +3573,7 @@ git commit -m "feat: restyle history view to match Pencil design and show real m
 
 ## Task 25: Dependencias de ffmpeg + copia de los binarios en build-time (sin comprometerlos a git)
 
-Vamos a producir MP3/MP4 reales de la reunión (audio y video), igual que hace Fireflies (confirmado inspeccionando su extensión instalada: usa `@ffmpeg/ffmpeg` + `@ffmpeg/core` reales, no un truco liviano). Los binarios de `ffmpeg-core` (~24-31MB) nunca deben comprometerse a git: llegan a `node_modules` vía `npm install` normal (ya gitignoreado) y un script de build los copia a `dist/ffmpeg/` (dentro de `dist/`, también gitignoreado).
+Vamos a producir MP3/MP4 reales de la reunión (audio y video), igual que hace una extensión comparable (confirmado inspeccionando su extensión instalada: usa `@ffmpeg/ffmpeg` + `@ffmpeg/core` reales, no un truco liviano). Los binarios de `ffmpeg-core` (~24-31MB) nunca deben comprometerse a git: llegan a `node_modules` vía `npm install` normal (ya gitignoreado) y un script de build los copia a `dist/ffmpeg/` (dentro de `dist/`, también gitignoreado).
 
 **Files:**
 - Modify: `package.json`
@@ -4226,7 +4226,7 @@ git commit -m "feat: make the in-page banner draggable with snap-to-nearest-edge
 
 ## Task 33: Badge de progreso en el ícono de la extensión mientras se convierte audio/video
 
-Hoy, después de terminar una reunión, la conversión a MP3/MP4 sigue corriendo en segundo plano (Task 29) sin ninguna señal visible — el usuario tiene que entrar al historial y recargar la página repetidas veces para saber si ya terminó. El usuario pidió replicar lo que hace Fireflies: un badge numérico sobre el ícono de la extensión en la barra de herramientas mientras procesa, idealmente con un porcentaje de avance, y que el popup también refleje ese estado.
+Hoy, después de terminar una reunión, la conversión a MP3/MP4 sigue corriendo en segundo plano (Task 29) sin ninguna señal visible — el usuario tiene que entrar al historial y recargar la página repetidas veces para saber si ya terminó. El usuario pidió replicar lo que hacen otras extensiones comparables: un badge numérico sobre el ícono de la extensión en la barra de herramientas mientras procesa, idealmente con un porcentaje de avance, y que el popup también refleje ese estado.
 
 Diseño revisado y confirmado por Codex (no implementar nada distinto a esto sin volver a consultar):
 

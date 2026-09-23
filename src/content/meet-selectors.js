@@ -1,6 +1,6 @@
 // src/content/meet-selectors.js
 // Meet renders Material icon names in <i> text nodes. Unlike aria-label values,
-// those internal names are not localized (validated against Meet by Fireflies).
+// those internal names are not localized (validated against Meet directly).
 export function findByIconText(name) {
   const icons = document.querySelectorAll("i");
   for (const icon of icons) {

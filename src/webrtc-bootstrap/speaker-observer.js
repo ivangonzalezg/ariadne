@@ -16,8 +16,8 @@ export function startSpeakerObserver({ onSpeakerLabel: rawOnSpeakerLabel, log = 
   // No hay temporizador de "silencio": verificado contra una reunión real
   // (Tarea 8 del plan) que el indicador de Meet solo muta una vez al empezar
   // a hablar, no de forma continua mientras la persona sigue hablando - un
-  // timeout sintético (como el que tenía esta función antes, copiado de
-  // Fireflies) le cortaba la cobertura a intervenciones largas sin ninguna
+  // timeout sintético (como el que tenía esta función antes) le cortaba
+  // la cobertura a intervenciones largas sin ninguna
   // señal real que lo justificara. La ventana de cada hablante simplemente
   // se extiende hasta el próximo cambio real de indicador (el mismo u otro),
   // lo cual es seguro acá porque `speaker-label-reconciler.js` solo usa estas
