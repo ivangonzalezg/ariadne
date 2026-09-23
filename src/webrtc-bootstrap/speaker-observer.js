@@ -4,7 +4,11 @@ import { findByIconText } from "../content/meet-selectors.js";
 const MAX_SILENCE_DURATION_MS = 2000;
 const RESCAN_DEBOUNCE_MS = 200;
 
-export function startSpeakerObserver({ onSpeakerLabel, log = () => {} }) {
+export function startSpeakerObserver({ onSpeakerLabel: rawOnSpeakerLabel, log = () => {} }) {
+  const onSpeakerLabel = (label) => {
+    log("speaker-observer-emit", label);
+    rawOnSpeakerLabel(label);
+  };
   const observedIndicators = new WeakSet();
   const indicatorObservers = [];
   let silenceTimer = null;
@@ -24,6 +28,7 @@ export function startSpeakerObserver({ onSpeakerLabel, log = () => {} }) {
 
   function handleIndicatorChange(indicatorEl) {
     const speakerName = extractSpeakerNameFromIndicator(indicatorEl);
+    log("speaker-observer-indicator-change", { speakerName, indicatorClass: indicatorEl.getAttribute("class") });
     if (speakerName === null) return;
     if (speakerName === lastSpeakerName) {
       // Sigue siendo el mismo hablante activo — no es un cambio para emitir,
