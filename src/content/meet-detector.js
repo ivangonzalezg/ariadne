@@ -4,8 +4,12 @@ import { observeMuteState } from "./meet-mute-observer.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
 import { arrayBufferToBase64 } from "../lib/base64.js";
+import { debugLog, isDebugEnabled, setDebugEnabled } from "../shared/debug-log.js";
 
-console.log("[Ariadne:debug] content script (ISOLATED) cargado", { url: location.href });
+const debugLoggingReady = chrome.storage.local.get({ debugLogging: false }).then(({ debugLogging }) => {
+  setDebugEnabled(debugLogging);
+  debugLog("[Ariadne:debug] content script (ISOLATED) cargado", { url: location.href });
+});
 
 function isInActiveMeeting() {
   return findByIconText("call_end") !== null;
@@ -53,11 +57,12 @@ function getCurrentMeetingTitle() {
 
 async function startRecording() {
   if (sessionId) return;
+  await debugLoggingReady;
   sessionId = generateSessionId();
   setState("starting");
 
   meetingTitle = getCurrentMeetingTitle();
-  console.log("[Ariadne:debug] startRecording iniciado", { sessionId, meetingTitle });
+  debugLog("[Ariadne:debug] startRecording iniciado", { sessionId, meetingTitle });
   startedAt = Date.now();
   hasTranscript = false;
   videoEnabled = false;
@@ -74,7 +79,12 @@ async function startRecording() {
     updateBannerState(currentState, bannerMeta());
     if (isFirstMuteReport) {
       isFirstMuteReport = false;
-      postToMainWorld({ type: "asterion:start-session", sessionId, initialMicMuted: muted });
+      postToMainWorld({
+        type: "asterion:start-session",
+        sessionId,
+        initialMicMuted: muted,
+        debugLogging: isDebugEnabled(),
+      });
       return;
     }
     postToMainWorld({
@@ -101,7 +111,7 @@ window.addEventListener("message", (event) => {
   const message = event.data;
   if (!message || message.source !== "asterion-main-world") return;
 
-  console.log("[Ariadne:debug] mensaje recibido desde MAIN world", { type: message.type });
+  debugLog("[Ariadne:debug] mensaje recibido desde MAIN world", { type: message.type });
 
   if (message.type === "asterion:session-started") {
     setState("recording");
@@ -182,12 +192,12 @@ window.addEventListener("pagehide", () => {
 });
 
 function waitForMeeting() {
-  console.log("[Ariadne:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
+  debugLog("[Ariadne:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
 
   const onMeetingDetected = () => {
-    console.log("[Ariadne:debug] reunión detectada");
+    debugLog("[Ariadne:debug] reunión detectada");
     chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
-      console.log("[Ariadne:debug] autoStart obtenido", { autoStart });
+      debugLog("[Ariadne:debug] autoStart obtenido", { autoStart });
       showBanner({ onStart: startRecording, onStop: stopRecording });
       if (autoStart) startRecording();
     });
@@ -207,4 +217,4 @@ function waitForMeeting() {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-waitForMeeting();
+debugLoggingReady.then(waitForMeeting);
