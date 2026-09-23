@@ -118,6 +118,12 @@ window.addEventListener("message", (event) => {
       seq: message.seq,
       bufferBase64: arrayBufferToBase64(message.buffer),
     });
+  } else if (message.type === "asterion:speaker-label") {
+    chrome.runtime.sendMessage({
+      type: "asterion:speaker-label",
+      sessionId: message.sessionId,
+      label: message.label,
+    });
   } else if (message.type === "asterion:video-enabled") {
     videoEnabled = true;
     setState("video-enabled");
