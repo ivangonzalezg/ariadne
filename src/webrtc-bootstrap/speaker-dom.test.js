@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { findSpeakerAwareIndicators, extractSpeakerNameFromIndicator } from "./speaker-dom.js";
 
-function makeIndicator({ soyKey = "someprefix_speakerAware_suffix", childCount = 3, firstHasChildren = false, lastHasChildren = false } = {}) {
+// Forma validada contra una reunión real de Meet (ver Tarea 8 del plan): un
+// único <div jscontroller> con __soy.key incluyendo "speakerAwareVolumeIndicator"
+// y un solo hijo — no tres hijos con extremos sin hijos propios, como asumía
+// una versión anterior de este archivo.
+function makeIndicator({ soyKey = "iEqC6d27:speakerAwareVolumeIndicator", childCount = 1 } = {}) {
   const el = document.createElement("div");
   el.setAttribute("jscontroller", "abc123");
   el.__soy = { key: soyKey };
   for (let i = 0; i < childCount; i++) {
-    const child = document.createElement("span");
-    if (i === 0 && firstHasChildren) child.appendChild(document.createElement("i"));
-    if (i === childCount - 1 && lastHasChildren) child.appendChild(document.createElement("i"));
-    el.appendChild(child);
+    el.appendChild(document.createElement("div"));
   }
   return el;
 }
 
 describe("findSpeakerAwareIndicators", () => {
-  it("finds a div with jscontroller and __soy.key including speakerAware, 3 childless-edge children", () => {
+  it("finds a div with jscontroller and __soy.key including speakerAwareVolumeIndicator", () => {
     document.body.innerHTML = "";
     const indicator = makeIndicator();
     document.body.appendChild(indicator);
@@ -30,21 +31,17 @@ describe("findSpeakerAwareIndicators", () => {
     expect(findSpeakerAwareIndicators()).toEqual([]);
   });
 
-  it("ignores divs whose __soy.key does not include speakerAware", () => {
+  it("ignores divs whose __soy.key does not include speakerAwareVolumeIndicator", () => {
     document.body.innerHTML = "";
     document.body.appendChild(makeIndicator({ soyKey: "somethingElse" }));
     expect(findSpeakerAwareIndicators()).toEqual([]);
   });
 
-  it("ignores divs without exactly 3 children", () => {
+  it("ignores divs without jscontroller even if __soy.key would otherwise match", () => {
     document.body.innerHTML = "";
-    document.body.appendChild(makeIndicator({ childCount: 2 }));
-    expect(findSpeakerAwareIndicators()).toEqual([]);
-  });
-
-  it("ignores divs whose first or last child already has child nodes", () => {
-    document.body.innerHTML = "";
-    document.body.appendChild(makeIndicator({ firstHasChildren: true }));
+    const el = document.createElement("div");
+    el.__soy = { key: "iEqC6d27:speakerAwareVolumeIndicator" };
+    document.body.appendChild(el);
     expect(findSpeakerAwareIndicators()).toEqual([]);
   });
 });
@@ -78,7 +75,26 @@ describe("extractSpeakerNameFromIndicator", () => {
     expect(extractSpeakerNameFromIndicator(indicator)).toBeNull();
   });
 
-  it("returns null when position 28 is not a non-empty string", () => {
+  it("keeps climbing past an ancestor with __soy.data that has no usable name (real Meet DOM has these)", () => {
+    // Caso real encontrado en producción (Tarea 8): el indicador vive dentro
+    // de varios wrappers intermedios que sí tienen __soy.data (ej. solo con
+    // clases CSS y una función de render) pero sin ningún nombre — el nombre
+    // real está más arriba. Antes de esta corrección, la función se rendía en
+    // el primer wrapper y nunca llegaba al ancestro correcto.
+    const indicator = makeIndicator();
+    const emptyWrapper = document.createElement("div");
+    emptyWrapper.__soy = { data: { rF: "some-css-class", content: () => {} } };
+    const grandparent = document.createElement("div");
+    const space = new Array(29).fill(null);
+    space[28] = "Iván González";
+    grandparent.__soy = { data: { uc: { zn: space } } };
+
+    emptyWrapper.appendChild(indicator);
+    grandparent.appendChild(emptyWrapper);
+    expect(extractSpeakerNameFromIndicator(indicator)).toBe("Iván González");
+  });
+
+  it("returns null when position 28 is not a non-empty string anywhere up the tree", () => {
     const indicator = makeIndicator();
     const parent = document.createElement("div");
     parent.__soy = { data: { k: { j: new Array(29).fill(null) } } };

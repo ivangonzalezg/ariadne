@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startSpeakerObserver } from "./speaker-observer.js";
 
+// Forma validada contra una reunión real de Meet (ver Tarea 8 del plan): el
+// indicador es un <div jscontroller> con un solo hijo y __soy.key conteniendo
+// "speakerAwareVolumeIndicator"; el nombre vive en __soy.data de un ancestro
+// (no necesariamente el padre directo).
 function appendIndicatorWithName(name) {
   const parent = document.createElement("div");
   const space = new Array(29).fill(null);
@@ -9,8 +13,8 @@ function appendIndicatorWithName(name) {
 
   const indicator = document.createElement("div");
   indicator.setAttribute("jscontroller", "abc");
-  indicator.__soy = { key: "x_speakerAware_y" };
-  for (let i = 0; i < 3; i++) indicator.appendChild(document.createElement("span"));
+  indicator.__soy = { key: "iEqC6d27:speakerAwareVolumeIndicator" };
+  indicator.appendChild(document.createElement("div"));
 
   parent.appendChild(indicator);
   document.body.appendChild(parent);

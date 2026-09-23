@@ -6,36 +6,50 @@
 
 const MAX_SPEAKER_NAME_LENGTH = 200;
 
+// La forma exacta de este indicador se validó contra una reunión real de Meet
+// (ver docs/superpowers/plans/2026-09-22-real-name-transcript-speaker.md, Tarea 8):
+// es un único <div jscontroller> con __soy.key conteniendo "speakerAwareVolumeIndicator"
+// y un solo hijo — NO tres hijos con extremos sin hijos propios, como asumía una
+// versión anterior de este archivo copiada de un build viejo/distinto de un
+// competidor. Esa forma puede volver a cambiar sin aviso en el futuro.
 export function findSpeakerAwareIndicators() {
   const candidates = document.querySelectorAll("div[jscontroller]");
   const indicators = [];
   for (const el of candidates) {
     const soyKey = el.__soy?.key;
-    if (typeof soyKey !== "string" || !soyKey.includes("speakerAware")) continue;
-    if (el.children.length !== 3) continue;
-    const first = el.firstElementChild;
-    const last = el.lastElementChild;
-    if (first?.hasChildNodes() || last?.hasChildNodes()) continue;
+    if (typeof soyKey !== "string" || !soyKey.includes("speakerAwareVolumeIndicator")) continue;
     indicators.push(el);
   }
   return indicators;
 }
 
+// Máximo de niveles a subir por parentNode antes de rendirse. En una reunión
+// real el nombre apareció 3 niveles arriba del indicador; este límite da
+// margen amplio sin arriesgarse a recorrer todo el documento si el DOM de
+// Meet reestructura esto en el futuro.
+const MAX_ANCESTOR_CLIMB = 20;
+
 export function extractSpeakerNameFromIndicator(indicatorEl) {
   let node = indicatorEl.parentNode;
-  while (node) {
+  let steps = 0;
+  while (node && steps < MAX_ANCESTOR_CLIMB) {
+    steps++;
     const soyData = node.__soy?.data;
     if (soyData && typeof soyData === "object") {
       const dataKey = Object.keys(soyData).find((key) => typeof soyData[key] === "object" && soyData[key] !== null);
-      if (!dataKey) return null;
-      const spaceObj = soyData[dataKey];
-      const spaceKey = Object.keys(spaceObj)[0];
-      const space = spaceKey !== undefined ? spaceObj[spaceKey] : null;
-      const candidate = Array.isArray(space) ? space[28] : undefined;
-      if (typeof candidate === "string" && candidate.trim().length > 0 && candidate.length <= MAX_SPEAKER_NAME_LENGTH) {
-        return candidate.trim();
+      if (dataKey) {
+        const spaceObj = soyData[dataKey];
+        const spaceKey = Object.keys(spaceObj)[0];
+        const space = spaceKey !== undefined ? spaceObj[spaceKey] : null;
+        const candidate = Array.isArray(space) ? space[28] : undefined;
+        if (typeof candidate === "string" && candidate.trim().length > 0 && candidate.length <= MAX_SPEAKER_NAME_LENGTH) {
+          return candidate.trim();
+        }
       }
-      return null;
+      // Este ancestro tiene __soy.data pero no un nombre usable (ej. un
+      // wrapper intermedio sin contenido relevante, confirmado que existe en
+      // una reunión real) — seguir subiendo en vez de rendirse acá, el
+      // ancestro correcto puede estar más arriba.
     }
     node = node.parentNode;
   }
