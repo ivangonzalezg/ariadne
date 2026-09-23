@@ -59,36 +59,40 @@ describe("startSpeakerObserver", () => {
     stop();
   });
 
-  it("emits a silence label (speakerName: null) after MAX_SILENCE_DURATION_MS of no change", async () => {
+  it("keeps the window open across a long gap with no further mutation (no synthetic silence timeout)", async () => {
+    // Verificado contra una reunión real (Tarea 8): el indicador de Meet no
+    // pulsa de forma continua mientras alguien sigue hablando, así que un
+    // timeout sintético le cortaba la cobertura sin ninguna señal real. Ya no
+    // existe ese timeout — pasar mucho tiempo sin otra mutación no debe
+    // emitir ningún label adicional (ni "silencio" ni repetido).
     const indicator = appendIndicatorWithName("Ivan Gonzalez");
     const onSpeakerLabel = vi.fn();
     const stop = startSpeakerObserver({ onSpeakerLabel });
 
     indicator.setAttribute("class", "is-speaking");
     await flush();
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(60000);
     await flush();
 
-    expect(onSpeakerLabel).toHaveBeenLastCalledWith({ speakerName: null, timestampMs: expect.any(Number) });
+    expect(onSpeakerLabel).toHaveBeenCalledTimes(1);
+    expect(onSpeakerLabel).toHaveBeenCalledWith({ speakerName: "Ivan Gonzalez", timestampMs: expect.any(Number) });
     stop();
   });
 
-  it("renews the silence timer on repeated activity from the same speaker instead of timing out", async () => {
-    const indicator = appendIndicatorWithName("Ivan Gonzalez");
+  it("emits again when a different speaker's indicator changes after a gap", async () => {
+    const indicatorA = appendIndicatorWithName("Ivan Gonzalez");
+    const indicatorB = appendIndicatorWithName("Fulano Detal");
     const onSpeakerLabel = vi.fn();
     const stop = startSpeakerObserver({ onSpeakerLabel });
 
-    indicator.setAttribute("class", "is-speaking");
+    indicatorA.setAttribute("class", "is-speaking");
     await flush();
-    vi.advanceTimersByTime(1500);
-    indicator.setAttribute("class", "is-speaking-again");
-    await flush();
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(10000);
+    indicatorB.setAttribute("class", "is-speaking");
     await flush();
 
-    // Pasaron 3000ms en total, pero la actividad a los 1500ms debió reiniciar
-    // el timer de silencio — todavía no deberían pasar 2000ms sin actividad.
-    expect(onSpeakerLabel).not.toHaveBeenCalledWith({ speakerName: null, timestampMs: expect.any(Number) });
+    expect(onSpeakerLabel).toHaveBeenCalledTimes(2);
+    expect(onSpeakerLabel).toHaveBeenLastCalledWith({ speakerName: "Fulano Detal", timestampMs: expect.any(Number) });
     stop();
   });
 

@@ -1,7 +1,6 @@
 import { findSpeakerAwareIndicators, extractSpeakerNameFromIndicator } from "./speaker-dom.js";
 import { findByIconText } from "../content/meet-selectors.js";
 
-const MAX_SILENCE_DURATION_MS = 2000;
 const RESCAN_DEBOUNCE_MS = 200;
 
 export function startSpeakerObserver({ onSpeakerLabel: rawOnSpeakerLabel, log = () => {} }) {
@@ -11,34 +10,25 @@ export function startSpeakerObserver({ onSpeakerLabel: rawOnSpeakerLabel, log = 
   };
   const observedIndicators = new WeakSet();
   const indicatorObservers = [];
-  let silenceTimer = null;
   let lastSpeakerName = null;
   let rescanTimer = null;
 
-  function resetSilenceTimer() {
-    if (silenceTimer) clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(() => emit(null), MAX_SILENCE_DURATION_MS);
-  }
-
-  function emit(speakerName) {
-    lastSpeakerName = speakerName;
-    onSpeakerLabel({ speakerName, timestampMs: Date.now() });
-    if (speakerName !== null) resetSilenceTimer();
-  }
-
+  // No hay temporizador de "silencio": verificado contra una reunión real
+  // (Tarea 8 del plan) que el indicador de Meet solo muta una vez al empezar
+  // a hablar, no de forma continua mientras la persona sigue hablando — un
+  // timeout sintético (como el que tenía esta función antes, copiado de
+  // Fireflies) le cortaba la cobertura a intervenciones largas sin ninguna
+  // señal real que lo justificara. La ventana de cada hablante simplemente
+  // se extiende hasta el próximo cambio real de indicador (el mismo u otro),
+  // lo cual es seguro acá porque `speaker-label-reconciler.js` solo usa estas
+  // ventanas para resolver captions que Meet YA atribuyó a "You" — nunca para
+  // reemplazar el nombre de otra persona real.
   function handleIndicatorChange(indicatorEl) {
     const speakerName = extractSpeakerNameFromIndicator(indicatorEl);
     log("speaker-observer-indicator-change", { speakerName, indicatorClass: indicatorEl.getAttribute("class") });
-    if (speakerName === null) return;
-    if (speakerName === lastSpeakerName) {
-      // Sigue siendo el mismo hablante activo — no es un cambio para emitir,
-      // pero sí es actividad real: sin este reset, alguien que habla de forma
-      // continua por más de MAX_SILENCE_DURATION_MS dispararía igual el
-      // marcador sintético de "silencio" a mitad de su propia intervención.
-      resetSilenceTimer();
-      return;
-    }
-    emit(speakerName);
+    if (speakerName === null || speakerName === lastSpeakerName) return;
+    lastSpeakerName = speakerName;
+    onSpeakerLabel({ speakerName, timestampMs: Date.now() });
   }
 
   function observeIndicator(indicatorEl) {
@@ -77,7 +67,6 @@ export function startSpeakerObserver({ onSpeakerLabel: rawOnSpeakerLabel, log = 
     for (const observer of indicatorObservers) observer.disconnect();
     indicatorObservers.length = 0;
     layoutObserver?.disconnect();
-    if (silenceTimer) clearTimeout(silenceTimer);
     if (rescanTimer) clearTimeout(rescanTimer);
   };
 }
