@@ -19,6 +19,8 @@
   "settings.title": "Settings",
   "settings.videoPresetLabel": "Video speed and quality",
   "settings.videoPresetHelper": "Faster = less quality/compression, slower = better compression.",
+  "settings.debugLoggingLabel": "Debug logging",
+  "settings.debugLoggingHelper": "Prints detailed logs to the browser console while recording. Leave off unless you're troubleshooting an issue.",
   "popup.settingsAria": "Settings",
   "popup.autoDetectLabel": "Detect meetings in Meet",
   "popup.autoDetectHelper": "Starts capture automatically when you join a Meet call. This applies to any meeting, not just the current one.",
