@@ -63,7 +63,7 @@ describe("startSpeakerObserver", () => {
     // Verificado contra una reunión real (Tarea 8): el indicador de Meet no
     // pulsa de forma continua mientras alguien sigue hablando, así que un
     // timeout sintético le cortaba la cobertura sin ninguna señal real. Ya no
-    // existe ese timeout — pasar mucho tiempo sin otra mutación no debe
+    // existe ese timeout - pasar mucho tiempo sin otra mutación no debe
     // emitir ningún label adicional (ni "silencio" ni repetido).
     const indicator = appendIndicatorWithName("Ivan Gonzalez");
     const onSpeakerLabel = vi.fn();

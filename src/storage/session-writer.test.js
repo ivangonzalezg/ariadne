@@ -235,7 +235,7 @@ describe("SessionWriter conversion flow", () => {
 
     // endTime es 3000 (no 1000): al haber un solo snapshot, el segmento queda
     // "abierto" hasta que finalizeCurrent(endedAt) lo cierra al final de la
-    // sesión — mismo comportamiento que CaptionParser ya tiene hoy para el
+    // sesión - mismo comportamiento que CaptionParser ya tiene hoy para el
     // último segmento de cualquier transcripción (ver el test existente
     // "writes transcripcion.json..." más arriba en este archivo, donde el
     // segmento de Luis también termina en endedAt y no en su propio timestamp).

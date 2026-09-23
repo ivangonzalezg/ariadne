@@ -38,7 +38,7 @@ installReplaceTrackPatch({
   onAudioTrackReplaced: (newTrack) => {
     if (!newTrack) {
       // replaceTrack(null) es un uso legítimo de la API (Meet deja de enviar
-      // audio saliente por esa conexión) — no significa que el micrófono real
+      // audio saliente por esa conexión) - no significa que el micrófono real
       // dejó de andar, así que seguimos usando el último track bueno que
       // tenemos en vez de cortar la grabación. Se deja logueado explícitamente
       // para poder ver si esto pasa en la práctica.
@@ -48,7 +48,7 @@ installReplaceTrackPatch({
     micTrack = newTrack;
     if (session) {
       // Grabación en curso: no alcanza con actualizar `micTrack` para la
-      // próxima vez — hay que reconectar el mixer YA con el track nuevo, o
+      // próxima vez - hay que reconectar el mixer YA con el track nuevo, o
       // seguiríamos mezclando el viejo hasta el final de la sesión.
       //
       // Límite conocido, no resuelto en este plan: MeetingAudioMixer.setMicTrack()
@@ -58,7 +58,7 @@ installReplaceTrackPatch({
       // sonar con un salto/click perceptible en el archivo grabado. No se
       // agrega una rampa acá todavía porque no hay evidencia de que esto pase
       // en la práctica (un replaceTrack en vivo, a mitad de una grabación, es
-      // el caso menos común de los que este plan cubre) — si la verificación
+      // el caso menos común de los que este plan cubre) - si la verificación
       // manual (Tarea 3) confirma que sí se nota, esa rampa es el siguiente
       // paso, no algo para adivinar ahora.
       mixer.setMicTrack(newTrack, { initiallyMuted: currentlyMuted });

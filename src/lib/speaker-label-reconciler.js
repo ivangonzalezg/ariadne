@@ -11,7 +11,7 @@ function buildWindows(sortedLabels, maxLabelDistanceMs) {
   const collapsed = [];
   for (const window of raw) {
     const prev = collapsed[collapsed.length - 1];
-    // Ojo: no comparar contra prev.endMs — en las ventanas crudas (antes de
+    // Ojo: no comparar contra prev.endMs - en las ventanas crudas (antes de
     // colapsar) prev.endMs siempre coincide exactamente con window.startMs (una
     // termina donde arranca la siguiente), así que esa resta siempre daría 0 y
     // colapsaría cualquier par del mismo hablante sin importar cuánto tiempo
@@ -30,7 +30,7 @@ function findMatch(eligibleWindows, timestampMs, maxLabelDistanceMs) {
   // Dos ventanas de hablantes adyacentes, cada una con su margen de tolerancia,
   // se solapan cerca de la transición. Hay que preferir siempre la ventana que
   // contiene el timestamp de forma exacta (sin tolerancia) antes de caer al
-  // matching tolerante — si no, .find() puede devolver la ventana anterior
+  // matching tolerante - si no, .find() puede devolver la ventana anterior
   // (la primera en el array) para un caption que en realidad cae dentro de la
   // ventana siguiente.
   const exactMatch = eligibleWindows.find((window) => timestampMs >= window.startMs && timestampMs < window.endMs);
@@ -81,7 +81,7 @@ export function reconcileCaptionSnapshots({ captions, speakerLabels, maxLabelDis
   );
 
   // Las ventanas de hablante SOLO se usan para resolver "You" -> nombre real.
-  // Una caption que Meet ya atribuyó a otra persona real nunca se toca — su
+  // Una caption que Meet ya atribuyó a otra persona real nunca se toca - su
   // panel de captions es la fuente de verdad para todos menos para uno mismo,
   // así que un solape de ventanas nunca le puede robar la línea a un tercero.
   const selfName = resolveSelfName(captions, eligibleWindows, maxLabelDistanceMs);

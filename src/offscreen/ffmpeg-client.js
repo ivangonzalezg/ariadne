@@ -29,11 +29,11 @@ async function getFfmpeg() {
 
 let jobCounter = 0;
 
-// Encola el trabajo detrás de cualquier otro ya en curso — nunca se corren dos
+// Encola el trabajo detrás de cualquier otro ya en curso - nunca se corren dos
 // exec() en simultáneo sobre la misma instancia de ffmpeg.
 export function runFfmpegJob({ inputBytes, inputExt, outputExt, args, onProgress }) {
   const result = queueTail.then(() => _runJob({ inputBytes, inputExt, outputExt, args, onProgress }));
-  // Si este job falla, la cola debe seguir viva para el siguiente — no propagar el
+  // Si este job falla, la cola debe seguir viva para el siguiente - no propagar el
   // rechazo hacia queueTail.
   queueTail = result.catch(() => {});
   return result;

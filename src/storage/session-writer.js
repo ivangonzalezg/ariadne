@@ -14,7 +14,7 @@ function sanitizeForFolderName(text) {
 
 function meetingFolderName(startedAt, meetingTitle) {
   const iso = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
-  return `${sanitizeForFolderName(meetingTitle)} — ${iso}`;
+  return `${sanitizeForFolderName(meetingTitle)} - ${iso}`;
 }
 
 function sendConversionMessage(message) {
@@ -85,7 +85,7 @@ export class SessionWriter {
 
   async finalize({ muteManifest, endedAt }) {
     // Se usa el momento real en que el usuario detuvo la grabación (capturado en
-    // MainWorldSession.stop()), no cuándo finalize() llegó a ejecutarse acá —
+    // MainWorldSession.stop()), no cuándo finalize() llegó a ejecutarse acá -
     // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.
     this.endedAt = endedAt ?? Date.now();
     await this.ready;
@@ -129,7 +129,7 @@ export class SessionWriter {
       videoConversionStatus: this.hasVideo ? "pending" : "skipped",
     });
 
-    // No se espera esta promesa — la sesión ya se considera "finalizada" con los
+    // No se espera esta promesa - la sesión ya se considera "finalizada" con los
     // webm originales a salvo; la conversión sigue en segundo plano y actualiza
     // el manifest cuando termina (éxito o fallo).
     this.scheduleConversions(muteManifest, this.endedAt);

@@ -4,7 +4,7 @@ import { MeetingAudioMixer } from "./audio-mixer.js";
 // jsdom doesn't implement MediaStream at all. audio-mixer.js's addRemoteTrack
 // and setMicTrack both do `new MediaStream([track])` for real (the fake
 // AudioContext below only fakes the AudioContext methods, not MediaStream
-// itself) — without this stub every test that reaches those lines throws
+// itself) - without this stub every test that reaches those lines throws
 // "MediaStream is not defined".
 class FakeMediaStream {
   constructor(tracks = []) {
@@ -141,7 +141,7 @@ describe("MeetingAudioMixer remote sources", () => {
   it("ignores a late lifecycle event from a track that was already replaced", () => {
     // Regression test for a real bug Codex's review caught in an earlier version
     // of this plan: the old track's "ended"/"mute"/"unmute" listeners closed
-    // over `key`, not over the specific track they were attached for — so a
+    // over `key`, not over the specific track they were attached for - so a
     // late-firing event from the REPLACED track would incorrectly tear down or
     // stale-mark the NEW track's entry, since both live at the same key.
     const { mixer, sourceNodes } = makeMixer();
@@ -165,11 +165,11 @@ describe("MeetingAudioMixer remote sources", () => {
   it("treats the same stream id as the same logical source across different connections (replaces, not duplicates)", () => {
     // This is the targeted hypothesis for the echo the user confirmed via an A/B
     // recording against Fireflies (not yet confirmed as THE cause against a real
-    // Meet call — see Task 2's logging and Task 3's manual verification for how
+    // Meet call - see Task 2's logging and Task 3's manual verification for how
     // that gets confirmed or ruled out): IF Google Meet reuses the same
     // MediaStream.id for a participant across a connection replacement (new
     // RTCPeerConnection, new connectionId), the old and new copies must not both
-    // stay connected to the mix — that would produce an audible doubling.
+    // stay connected to the mix - that would produce an audible doubling.
     const { mixer, sourceNodes } = makeMixer();
     const firstTrack = fakeTrack("t1");
     const secondTrack = fakeTrack("t2");
@@ -184,7 +184,7 @@ describe("MeetingAudioMixer remote sources", () => {
   it("does not remove a replaced source when its OLD connection later closes, and the replacement stays removable under its real owner", () => {
     // Locks in that connectionKeys bookkeeping still follows the entry's actual
     // owning connection (tracked separately from the key string itself), not the
-    // connection that originally created the key — both directions: closing the
+    // connection that originally created the key - both directions: closing the
     // OLD connection must not touch the replacement, and closing the NEW
     // (actual owning) connection must still clean it up correctly.
     const { mixer, sourceNodes } = makeMixer();
@@ -202,7 +202,7 @@ describe("MeetingAudioMixer remote sources", () => {
 
   it("keeps sources from different connections separate when falling back to mid (no stream), even with the same mid", () => {
     // mid ("0", "1", ...) is a per-connection SDP media-line id, not globally
-    // unique — unlike stream.id, it's NOT safe to treat as the same logical
+    // unique - unlike stream.id, it's NOT safe to treat as the same logical
     // source across connections. This test locks in that the mid fallback stays
     // connection-scoped.
     const { mixer } = makeMixer();
@@ -216,7 +216,7 @@ describe("MeetingAudioMixer remote sources", () => {
     // There is no alias/migration mechanism between the two keying schemes. If a
     // track first arrives with no stream (falls back to conn:<id>:mid:<mid>) and
     // a later track for the same connection+mid DOES have a stream (keys as
-    // stream:<id>), they're treated as two unrelated sources, not one — this
+    // stream:<id>), they're treated as two unrelated sources, not one - this
     // test documents that as a known, deliberately-accepted gap (Codex's review
     // flagged it as an untested risk; YAGNI applies until real evidence from the
     // Task 2 diagnostic logging shows this transition actually happens against a

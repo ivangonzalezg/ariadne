@@ -22,12 +22,12 @@ export class MeetingAudioMixer {
   // en su configuración por defecto. NOTA (agregada tras la revisión de
   // Codex): por spec, MediaStreamAudioDestinationNode YA viene por defecto
   // con channelCount=2/channelCountMode="explicit"/channelInterpretation=
-  // "speakers" — así que forzar esto en `destination` es casi seguro un
+  // "speakers" - así que forzar esto en `destination` es casi seguro un
   // no-op, no una reparación confirmada. Lo mantenemos igual porque no
   // cuesta nada y Codex lo recomendó como hardening defensivo, pero NO debe
   // presentarse como "la solución" sin evidencia de un caso real donde el
   // valor por defecto haya sido distinto. Por eso este método loguea el
-  // valor ANTES de pisarlo — es la evidencia real que nos falta hoy.
+  // valor ANTES de pisarlo - es la evidencia real que nos falta hoy.
   _forceStereoChannelConfig(node, label) {
     this.log("mixer-channel-config-before", {
       node: label,
@@ -45,19 +45,19 @@ export class MeetingAudioMixer {
     return this.remoteSources.size;
   }
 
-  // Global por stream.id cuando hay un MediaStream disponible — así, SI Meet
+  // Global por stream.id cuando hay un MediaStream disponible - así, SI Meet
   // reutiliza el mismo MediaStream.id para el mismo participante al reconectar o
   // renegociar (con una RTCPeerConnection nueva, y por lo tanto un connectionId
   // distinto), lo tratamos como la MISMA fuente y la reemplazamos (ver
   // addRemoteTrack) en vez de sumar una copia adicional. Esta es la hipótesis
   // objetivo para el eco que el usuario detectó comparando contra Fireflies
-  // (cuyo código usa este mismo esquema global) — confirmada como plausible por
+  // (cuyo código usa este mismo esquema global) - confirmada como plausible por
   // dos revisiones de Codex, pero todavía no confirmada contra una reunión real;
   // ver el logging de diagnóstico en rtc-patch.js y la verificación manual del
   // plan que introdujo este cambio para cómo se termina de confirmar o
   // descartar. `mid` NO es seguro tratarlo así: son enteros chicos ("0", "1",
   // ...) que se reinician por conexión, así que dos conexiones distintas casi
-  // seguro van a tener el mismo mid para participantes DISTINTOS — por eso ese
+  // seguro van a tener el mismo mid para participantes DISTINTOS - por eso ese
   // fallback (y el de track.id) se mantienen scopeados a la conexión.
   _remoteKey(connectionId, { streamId, mid, track }) {
     if (streamId) return `stream:${streamId}`;
@@ -71,7 +71,7 @@ export class MeetingAudioMixer {
     if (existing && existing.track === track) return;
     if (existing) this._teardownEntry(key, existing, "replaced by a newer track for the same slot");
 
-    // Siempre envolvemos solo este track en su propio MediaStream — nunca usamos
+    // Siempre envolvemos solo este track en su propio MediaStream - nunca usamos
     // `stream` (el MediaStream completo del evento) directamente acá, porque si
     // ese stream tuviera más de un track, createMediaStreamSource podría tomar
     // uno distinto al que realmente nos interesa. `stream` se usa únicamente
@@ -94,7 +94,7 @@ export class MeetingAudioMixer {
     // el `_teardownEntry` de arriba) pero el track viejo sigue vivo un rato y
     // dispara "ended"/"mute"/"unmute" más tarde, esos listeners viejos
     // encontrarían la entrada NUEVA en `this.remoteSources.get(key)` (misma
-    // key) y la purgarían/marcarían por error — un bug real que la revisión
+    // key) y la purgarían/marcarían por error - un bug real que la revisión
     // de Codex encontró en una versión anterior de este mismo plan.
     track.addEventListener("ended", () => {
       if (this.remoteSources.get(key)?.track === track) this._removeRemoteSource(key, "track ended");
@@ -175,7 +175,7 @@ export class MeetingAudioMixer {
     const keysForConnection = this.connectionKeys.get(entry.connectionId);
     if (keysForConnection) {
       keysForConnection.delete(key);
-      // El mixer vive toda la pestaña y nunca se cierra entre sesiones — si no
+      // El mixer vive toda la pestaña y nunca se cierra entre sesiones - si no
       // borramos los Sets vacíos acá, connectionKeys crece sin límite a lo
       // largo de una reunión larga con muchas reconexiones.
       if (keysForConnection.size === 0) this.connectionKeys.delete(entry.connectionId);
@@ -217,7 +217,7 @@ export class MeetingAudioMixer {
     if (!this.micGainNode) return;
     const now = this.audioContext.currentTime;
     const targetGain = muted ? 0 : 1;
-    // Rampa corta en vez de asignar gain.value directo — evita un "click" audible
+    // Rampa corta en vez de asignar gain.value directo - evita un "click" audible
     // en la transición.
     this.micGainNode.gain.cancelScheduledValues(now);
     this.micGainNode.gain.setValueAtTime(this.micGainNode.gain.value, now);

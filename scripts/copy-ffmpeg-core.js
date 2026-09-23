@@ -13,7 +13,7 @@ const FILES = [
 await mkdir(DEST_DIR, { recursive: true });
 for (const { source: src, destination } of FILES) {
   if (!existsSync(src)) {
-    throw new Error(`No se encontró ${src} — revisar el layout real de node_modules/@ffmpeg`);
+    throw new Error(`No se encontró ${src} - revisar el layout real de node_modules/@ffmpeg`);
   }
   await copyFile(src, `${DEST_DIR}/${destination}`);
 }

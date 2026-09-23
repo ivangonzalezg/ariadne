@@ -29,7 +29,7 @@ export class MainWorldSession {
   _startRecorder(stream, streamLabel, mimeType) {
     const recorder = new MediaRecorder(stream, { mimeType });
     // Cadena secuencial: cada chunk espera a que el anterior termine de procesarse
-    // y mandarse antes de seguir — evita que lleguen desordenados, y stop() puede
+    // y mandarse antes de seguir - evita que lleguen desordenados, y stop() puede
     // esperar a que esta cadena termine para saber que el último chunk ya salió.
     let writeChain = Promise.resolve();
     recorder.ondataavailable = (event) => {
@@ -88,7 +88,7 @@ export class MainWorldSession {
     await Promise.all(stopped);
 
     // Esperar a que el último chunk (el que dispara el evento "stop") termine de
-    // procesarse y enviarse — si no, se podía señalar el fin de sesión antes de
+    // procesarse y enviarse - si no, se podía señalar el fin de sesión antes de
     // que ese último pedazo de audio/video llegara al offscreen document.
     await Promise.all([this._meetingWrites?.(), this._videoWrites?.()].filter(Boolean));
 

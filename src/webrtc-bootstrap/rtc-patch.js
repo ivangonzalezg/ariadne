@@ -10,7 +10,7 @@ export const diagnostics = {
 
 let nextConnectionId = 1;
 const connectionIds = new WeakMap();
-// Conexiones parcheadas que siguen abiertas — permite, en cualquier momento,
+// Conexiones parcheadas que siguen abiertas - permite, en cualquier momento,
 // mirar qué track de audio se está enviando AHORA (ver getCurrentLocalAudioTrack),
 // en vez de depender únicamente del track que getUserMedia devolvió una sola
 // vez al principio.
@@ -94,7 +94,7 @@ export function installGetUserMediaPatch({ onMicStream }) {
 
 // Busca, entre las conexiones parcheadas que siguen abiertas, el track de
 // audio que ACTUALMENTE se está enviando (el que devuelve cada
-// RTCRtpSender.track) — a diferencia de installGetUserMediaPatch, que solo
+// RTCRtpSender.track) - a diferencia de installGetUserMediaPatch, que solo
 // ve el track original de la primera vez que Meet pidió el micrófono. Si
 // Meet reemplazó ese track más tarde (ver installReplaceTrackPatch), esto
 // devuelve el reemplazo; el original capturado por getUserMedia queda
@@ -103,7 +103,7 @@ export function installGetUserMediaPatch({ onMicStream }) {
 // Puede haber más de un candidato (más de una conexión con un sender de
 // audio activo). Entre ellos, se prioriza uno cuya conexión esté realmente
 // "connected" por sobre uno que simplemente no llegó todavía a "closed"/
-// "failed" (p. ej. "new" o "disconnected") — Codex's review señaló que
+// "failed" (p. ej. "new" o "disconnected") - Codex's review señaló que
 // tomar el primer candidato sin este criterio podía elegir una conexión
 // obsoleta en vez de la realmente activa. Se loguean todos los candidatos
 // considerados (no solo el elegido) para poder diagnosticar esto si hace
@@ -151,7 +151,7 @@ export function getCurrentLocalAudioTrack({ log = () => {} } = {}) {
 let replaceTrackPatchInstalled = false;
 
 // Detecta cuándo Meet reemplaza el track de audio que efectivamente se está
-// enviando (RTCRtpSender.replaceTrack) — algo que installGetUserMediaPatch,
+// enviando (RTCRtpSender.replaceTrack) - algo que installGetUserMediaPatch,
 // por sí solo, nunca ve, porque esa función solo se entera del track
 // original devuelto por getUserMedia() la primera vez. Hipótesis de esta
 // investigación (revisada por Codex dos veces como plausible pero NO
@@ -163,11 +163,11 @@ let replaceTrackPatchInstalled = false;
 // su código).
 //
 // onAudioTrackReplaced se dispara DESPUÉS de que el replaceTrack original se
-// resuelve con éxito, no antes — si Meet intenta un reemplazo que termina
+// resuelve con éxito, no antes - si Meet intenta un reemplazo que termina
 // rechazado, no queremos que el mixer igual cambie de track (bug real que
 // Codex encontró en la primera versión de este plan). Se dispara para
 // CUALQUIER reemplazo exitoso de un sender de audio, incluido un reemplazo a
-// `null` (Meet deja de enviar audio, un uso legítimo de replaceTrack) — esta
+// `null` (Meet deja de enviar audio, un uso legítimo de replaceTrack) - esta
 // función no filtra ese caso; es quien la llama el que decide qué hacer con
 // un `newTrack` nulo (ver bootstrap.js, que documenta explícitamente esa
 // decisión en vez de ignorarla en silencio).

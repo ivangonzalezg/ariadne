@@ -1,7 +1,7 @@
 // src/shared/debug-log.js
 // Sin dependencia de chrome.* a propósito: este módulo se bundlea por
 // separado en cada contexto (ISOLATED, MAIN world, offscreen) y cada uno
-// tiene su propia copia independiente del estado — ver el plan que agregó
+// tiene su propia copia independiente del estado - ver el plan que agregó
 // este archivo para el porqué.
 let debugEnabled = false;
 

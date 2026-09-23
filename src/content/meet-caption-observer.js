@@ -4,10 +4,10 @@ import { debugLog } from "../shared/debug-log.js";
 
 function findCaptionsContainer() {
   const regions = document.querySelectorAll('[role="region"]');
-  debugLog("[Ariadne:debug] findCaptionsContainer — regiones encontradas:", regions.length);
+  debugLog("[Ariadne:debug] findCaptionsContainer - regiones encontradas:", regions.length);
   const captionsToggleButton = document.querySelector(SELECTORS.captionsToggleButton);
   for (const region of regions) {
-    debugLog("[Ariadne:debug] findCaptionsContainer — región:", {
+    debugLog("[Ariadne:debug] findCaptionsContainer - región:", {
       id: region.id,
       ariaLabel: region.getAttribute("aria-label"),
       captionsToggle: captionsToggleButton
@@ -20,7 +20,7 @@ function findCaptionsContainer() {
     });
     if (region.querySelector(SELECTORS.captionUtteranceBlock)) return region;
   }
-  debugLog("[Ariadne:debug] findCaptionsContainer — ninguna región tenía captionUtteranceBlock");
+  debugLog("[Ariadne:debug] findCaptionsContainer - ninguna región tenía captionUtteranceBlock");
   return null;
 }
 
@@ -55,10 +55,10 @@ function observeCaptions(onSnapshot) {
 
 function isCaptionsCurrentlyOn(button) {
   const icons = Array.from(button.querySelectorAll("i")).map((icon) => icon.textContent.trim());
-  debugLog("[Ariadne:debug] isCaptionsCurrentlyOn — íconos encontrados en el botón:", icons);
+  debugLog("[Ariadne:debug] isCaptionsCurrentlyOn - íconos encontrados en el botón:", icons);
   const icon = button.querySelector("i");
   const result = icon?.textContent.trim() === "closed_caption";
-  debugLog("[Ariadne:debug] isCaptionsCurrentlyOn — resultado:", result);
+  debugLog("[Ariadne:debug] isCaptionsCurrentlyOn - resultado:", result);
   return result;
 }
 
@@ -69,10 +69,10 @@ function ensureCaptionsEnabled({ retries, delayMs }) {
       const button = document.querySelector(SELECTORS.captionsToggleButton);
       if (button) {
         const alreadyOn = isCaptionsCurrentlyOn(button);
-        debugLog("[Ariadne:debug] ensureCaptionsEnabled — botón encontrado, alreadyOn:", alreadyOn);
+        debugLog("[Ariadne:debug] ensureCaptionsEnabled - botón encontrado, alreadyOn:", alreadyOn);
         if (!alreadyOn) {
           button.click();
-          debugLog("[Ariadne:debug] ensureCaptionsEnabled — click ejecutado");
+          debugLog("[Ariadne:debug] ensureCaptionsEnabled - click ejecutado");
         }
         resolve(true);
         return;

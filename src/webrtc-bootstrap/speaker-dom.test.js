@@ -3,7 +3,7 @@ import { findSpeakerAwareIndicators, extractSpeakerNameFromIndicator } from "./s
 
 // Forma validada contra una reunión real de Meet (ver Tarea 8 del plan): un
 // único <div jscontroller> con __soy.key incluyendo "speakerAwareVolumeIndicator"
-// y un solo hijo — no tres hijos con extremos sin hijos propios, como asumía
+// y un solo hijo - no tres hijos con extremos sin hijos propios, como asumía
 // una versión anterior de este archivo.
 function makeIndicator({ soyKey = "iEqC6d27:speakerAwareVolumeIndicator", childCount = 1 } = {}) {
   const el = document.createElement("div");
@@ -78,7 +78,7 @@ describe("extractSpeakerNameFromIndicator", () => {
   it("keeps climbing past an ancestor with __soy.data that has no usable name (real Meet DOM has these)", () => {
     // Caso real encontrado en producción (Tarea 8): el indicador vive dentro
     // de varios wrappers intermedios que sí tienen __soy.data (ej. solo con
-    // clases CSS y una función de render) pero sin ningún nombre — el nombre
+    // clases CSS y una función de render) pero sin ningún nombre - el nombre
     // real está más arriba. Antes de esta corrección, la función se rendía en
     // el primer wrapper y nunca llegaba al ancestro correcto.
     const indicator = makeIndicator();

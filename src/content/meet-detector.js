@@ -80,7 +80,7 @@ async function startRecording() {
   let isFirstMuteReport = true;
 
   // observeMuteState informa el estado actual de forma síncrona en su primera
-  // llamada — se aprovecha eso para mandar "start-session" recién ahí, con el
+  // llamada - se aprovecha eso para mandar "start-session" recién ahí, con el
   // estado real de mute ya conocido (el GainNode del mic necesita arrancar en
   // el valor correcto desde el primer instante, ver Task 13 del plan).
   stopMuteObserver = observeMuteState((muted, timestampMs) => {

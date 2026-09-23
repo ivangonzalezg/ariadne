@@ -292,7 +292,7 @@ describe("getCurrentLocalAudioTrack", () => {
     pc._setSenders([{ track: fakeAudioTrack("mic-1") }]);
     // Mutated directly (not via _setConnectionState, which would also fire our
     // own "connectionstatechange" listener and remove this pc from
-    // activeConnections) — this exercises getCurrentLocalAudioTrack's own
+    // activeConnections) - this exercises getCurrentLocalAudioTrack's own
     // internal closed/failed guard specifically, independent of that cleanup,
     // per Codex's review: the original version of this test only exercised the
     // Set-removal side effect, never the guard itself.

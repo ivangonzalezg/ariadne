@@ -6,7 +6,7 @@ let offscreenCreationPromise = null;
 
 function updateBadge() {
   // Un texto que cambia constantemente (letra de fase + porcentaje) resulta
-  // muy distractor sobre el ícono — solo mostramos cuántas reuniones se
+  // muy distractor sobre el ícono - solo mostramos cuántas reuniones se
   // están procesando en simultáneo, que cambia poco.
   const text = conversionStates.size > 0 ? String(conversionStates.size) : "";
 

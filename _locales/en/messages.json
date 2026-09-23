@@ -1,10 +1,10 @@
 {
   "extensionName": {
-    "message": "Ariadne — Meeting Recorder",
+    "message": "Ariadne - Meeting Recorder",
     "description": "Extension name shown in the Chrome Web Store and chrome://extensions."
   },
   "extensionDescription": {
-    "message": "Automatically record, transcribe, and save your meetings locally — no cloud, no subscriptions.",
+    "message": "Automatically record, transcribe, and save your meetings locally - no cloud, no subscriptions.",
     "description": "Extension description shown in the Chrome Web Store and chrome://extensions."
   }
 }

@@ -1,10 +1,10 @@
 {
   "extensionName": {
-    "message": "Ariadne — Enregistreur de Réunions",
+    "message": "Ariadne - Enregistreur de Réunions",
     "description": "Nom de l'extension affiché dans le Chrome Web Store et sur chrome://extensions."
   },
   "extensionDescription": {
-    "message": "Enregistrez, transcrivez et sauvegardez vos réunions localement et automatiquement — sans cloud, sans abonnement.",
+    "message": "Enregistrez, transcrivez et sauvegardez vos réunions localement et automatiquement - sans cloud, sans abonnement.",
     "description": "Description de l'extension affichée dans le Chrome Web Store et sur chrome://extensions."
   }
 }

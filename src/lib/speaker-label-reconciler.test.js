@@ -24,7 +24,7 @@ describe("reconcileCaptionSnapshots", () => {
   it("never overwrites a caption Meet already attributed to a real (non-'You') speaker, even if a window overlaps it", () => {
     // Corregido tras verificación manual contra una reunión real (Tarea 8):
     // el panel de captions de Meet ya es la fuente de verdad para cualquier
-    // hablante que no sea uno mismo — las ventanas de indicador solo sirven
+    // hablante que no sea uno mismo - las ventanas de indicador solo sirven
     // para resolver "You", nunca para "corregir" un nombre que Meet ya dio bien.
     const captions = [{ speaker: "Beto", text: "Hola", timestampMs: 1000 }];
     const speakerLabels = [{ speakerName: "Ana", timestampMs: 950 }];
@@ -90,7 +90,7 @@ describe("reconcileCaptionSnapshots", () => {
     // veces (matcheando su propia ventana), pero en un momento el indicador
     // de "Fulano" se solapa por casualidad con una de sus captions "You". Sin
     // el voto de mayoría, esa caption se hubiera atribuido incorrectamente a
-    // "Fulano (You)" — con él, la identidad ya establecida ("Ivan Gonzalez")
+    // "Fulano (You)" - con él, la identidad ya establecida ("Ivan Gonzalez")
     // gana, y la caption que solo matchea a Fulano cae al fallback seguro.
     const captions = [
       { speaker: "You", text: "Hola", timestampMs: 1000 },

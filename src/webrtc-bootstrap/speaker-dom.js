@@ -1,6 +1,6 @@
 // Lee una propiedad interna no documentada de Meet (`__soy`, del framework Closure/
 // Soy de Google) que no está pensada como API pública y puede cambiar sin aviso
-// entre versiones de Meet. Toda esta fragilidad queda encapsulada acá — si algo
+// entre versiones de Meet. Toda esta fragilidad queda encapsulada acá - si algo
 // no calza con lo esperado, se devuelve null y quien llama cae al nombre que ya
 // muestra el panel de captions (".NWpY1d", "You" incluido).
 
@@ -9,7 +9,7 @@ const MAX_SPEAKER_NAME_LENGTH = 200;
 // La forma exacta de este indicador se validó contra una reunión real de Meet
 // (ver docs/superpowers/plans/2026-09-22-real-name-transcript-speaker.md, Tarea 8):
 // es un único <div jscontroller> con __soy.key conteniendo "speakerAwareVolumeIndicator"
-// y un solo hijo — NO tres hijos con extremos sin hijos propios, como asumía una
+// y un solo hijo - NO tres hijos con extremos sin hijos propios, como asumía una
 // versión anterior de este archivo copiada de un build viejo/distinto de un
 // competidor. Esa forma puede volver a cambiar sin aviso en el futuro.
 export function findSpeakerAwareIndicators() {
@@ -48,7 +48,7 @@ export function extractSpeakerNameFromIndicator(indicatorEl) {
       }
       // Este ancestro tiene __soy.data pero no un nombre usable (ej. un
       // wrapper intermedio sin contenido relevante, confirmado que existe en
-      // una reunión real) — seguir subiendo en vez de rendirse acá, el
+      // una reunión real) - seguir subiendo en vez de rendirse acá, el
       // ancestro correcto puede estar más arriba.
     }
     node = node.parentNode;
