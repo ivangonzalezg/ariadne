@@ -110,9 +110,8 @@ function render(status, autoStart, conversionStatus) {
     <div class="timer" id="timer">00:00</div>
     <div class="card-box">
       ${sourceRow("file-text", t("common.transcript"), status.hasTranscript, t("popup.activeFem"), t("common.notAvailable"))}
-      ${sourceRow("volume-2", t("common.meetingAudioLabel"), true, t("popup.activeMasc"), "")}
-      ${sourceRow("mic", t("popup.micLabel"), !status.micMuted, t("popup.activeFem"), t("popup.micMutedLabel"))}
-      ${sourceRow("app-window", t("popup.tabVideoLabel"), status.videoEnabled, t("popup.activeMasc"), t("popup.notActive"))}
+      ${sourceRow("volume-2", t("common.audio"), true, t("popup.activeMasc"), "")}
+      ${sourceRow("video", t("common.video"), status.videoEnabled, t("popup.activeMasc"), t("popup.notActive"))}
     </div>
     <button class="danger" id="stop-capture">${icon("square", { size: 14 })}${t("popup.stopCapture")}</button>
     ${footer(autoStart)}

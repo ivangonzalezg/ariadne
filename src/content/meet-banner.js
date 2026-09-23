@@ -59,9 +59,8 @@ function renderRecording() {
     ? `<div class="divider"></div>
       <div class="sources">
         ${sourceRow("file-text", t("common.transcript"), Boolean(currentMeta.hasTranscript), t("popup.activeFem"), t("common.notAvailable"))}
-        ${sourceRow("volume-2", t("common.meetingAudioLabel"), true, t("popup.activeMasc"), "")}
-        ${sourceRow("mic", t("popup.micLabel"), !currentMeta.micMuted, t("popup.activeFem"), t("popup.micMutedLabel"))}
-        ${sourceRow("app-window", t("popup.tabVideoLabel"), Boolean(currentMeta.videoEnabled), t("popup.activeMasc"), t("popup.notActive"))}
+        ${sourceRow("volume-2", t("common.audio"), true, t("popup.activeMasc"), "")}
+        ${sourceRow("video", t("common.video"), Boolean(currentMeta.videoEnabled), t("popup.activeMasc"), t("popup.notActive"))}
       </div>
       <div class="info-row">${icon("info", { size: 16, color: "var(--text-secondary)" })}<span>${t("banner.recordingInfo")}</span></div>`
     : "";
