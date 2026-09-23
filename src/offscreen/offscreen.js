@@ -3,7 +3,17 @@ import { SessionWriter } from "../storage/session-writer.js";
 import { base64ToArrayBuffer } from "../lib/base64.js";
 import { setDebugEnabled } from "../shared/debug-log.js";
 
-const debugLoggingReady = chrome.storage.local.get({ debugLogging: false }).then(({ debugLogging }) => setDebugEnabled(debugLogging));
+// chrome.storage puede venir undefined por un instante en algunos reloads en
+// caliente de la extensión sin empaquetar (el documento offscreen viejo se
+// destruye y uno nuevo se crea mientras el binding de la API todavía no está
+// listo) — sin este guard, esa carrera tiraba una excepción no controlada acá
+// que rompía todo el listener de mensajes de abajo, no solo el logging.
+const debugLoggingReady = Promise.resolve()
+  .then(() => chrome.storage.local.get({ debugLogging: false }))
+  .then(({ debugLogging }) => setDebugEnabled(debugLogging))
+  .catch((error) => {
+    console.error("[Ariadne] No se pudo leer la configuración de debug logging (se deja apagado):", error);
+  });
 
 const sessions = new Map();
 

@@ -6,10 +6,19 @@ import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner
 import { arrayBufferToBase64 } from "../lib/base64.js";
 import { debugLog, isDebugEnabled, setDebugEnabled } from "../shared/debug-log.js";
 
-const debugLoggingReady = chrome.storage.local.get({ debugLogging: false }).then(({ debugLogging }) => {
-  setDebugEnabled(debugLogging);
-  debugLog("[Ariadne:debug] content script (ISOLATED) cargado", { url: location.href });
-});
+// Nunca debe rechazar: startRecording()/waitForMeeting() esperan esta promesa
+// antes de arrancar, así que si chrome.storage.local.get fallara (ej. una
+// carrera transitoria en un reload en caliente de la extensión) sin este
+// catch, se rompería la grabación completa, no solo el logging de debug.
+const debugLoggingReady = chrome.storage.local
+  .get({ debugLogging: false })
+  .then(({ debugLogging }) => {
+    setDebugEnabled(debugLogging);
+    debugLog("[Ariadne:debug] content script (ISOLATED) cargado", { url: location.href });
+  })
+  .catch((error) => {
+    console.error("[Ariadne] No se pudo leer la configuración de debug logging (se deja apagado):", error);
+  });
 
 function isInActiveMeeting() {
   return findByIconText("call_end") !== null;
