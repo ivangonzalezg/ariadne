@@ -1,5 +1,6 @@
 // src/storage/session-writer.js
 import { CaptionParser } from "../lib/caption-parser.js";
+import { reconcileCaptionSnapshots } from "../lib/speaker-label-reconciler.js";
 import { runFfmpegJob } from "../offscreen/ffmpeg-client.js";
 
 const STREAM_FILE_NAMES = {
@@ -33,6 +34,8 @@ export class SessionWriter {
     this.writablesByStream = new Map();
     this.writeQueueByStream = new Map();
     this.captionParser = new CaptionParser();
+    this.captionSnapshots = [];
+    this.speakerLabels = [];
     this.hasCaption = false;
     this.streamsUsed = new Set();
     this.ready = this._init();
@@ -73,7 +76,11 @@ export class SessionWriter {
 
   onCaptionSnapshot(snapshot) {
     this.hasCaption = true;
-    this.captionParser.onSnapshot(snapshot);
+    this.captionSnapshots.push(snapshot);
+  }
+
+  onSpeakerLabel(label) {
+    this.speakerLabels.push(label);
   }
 
   async finalize({ muteManifest, endedAt }) {
@@ -82,7 +89,6 @@ export class SessionWriter {
     // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.
     this.endedAt = endedAt ?? Date.now();
     await this.ready;
-    this.captionParser.finalizeCurrent(this.endedAt);
 
     await Promise.all(this.writeQueueByStream.values());
 
@@ -91,6 +97,15 @@ export class SessionWriter {
     }
 
     if (this.hasCaption) {
+      const reconciled = reconcileCaptionSnapshots({
+        captions: this.captionSnapshots,
+        speakerLabels: this.speakerLabels,
+      });
+      for (const snapshot of reconciled) {
+        this.captionParser.onSnapshot(snapshot);
+      }
+      this.captionParser.finalizeCurrent(this.endedAt);
+
       // segment.startMs/endMs son epoch absoluto (Date.now() en meet-caption-observer.js);
       // se restan contra startedAt para guardar offsets relativos al inicio de la
       // grabación, iguales a los que usa el resto del manifest.

@@ -217,4 +217,47 @@ describe("SessionWriter conversion flow", () => {
 
     expect(writer.meetingHandle.files.has("transcripcion.json")).toBe(false);
   });
+
+  it("uses the reconciled speaker label instead of the raw caption speaker when one is available", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    writer.onSpeakerLabel({ speakerName: "Ivan Gonzalez", timestampMs: writer.startedAt + 900 });
+    writer.onCaptionSnapshot({ speaker: "You", text: "Hola a todos", timestampMs: writer.startedAt + 1000 });
+
+    const endedAt = writer.startedAt + 3000;
+    await writer.finalize({ muteManifest: { intervals: [] }, endedAt });
+    await finished;
+
+    const bytes = writer.meetingHandle.files.get("transcripcion.json").bytes;
+    const segments = JSON.parse(new TextDecoder().decode(bytes));
+
+    // endTime es 3000 (no 1000): al haber un solo snapshot, el segmento queda
+    // "abierto" hasta que finalizeCurrent(endedAt) lo cierra al final de la
+    // sesión — mismo comportamiento que CaptionParser ya tiene hoy para el
+    // último segmento de cualquier transcripción (ver el test existente
+    // "writes transcripcion.json..." más arriba en este archivo, donde el
+    // segmento de Luis también termina en endedAt y no en su propio timestamp).
+    expect(segments).toEqual([
+      { index: 0, startTime: 1000, endTime: 3000, text: "Hola a todos", speaker: "Ivan Gonzalez (You)" },
+    ]);
+  });
+
+  it("keeps the original caption speaker when no speaker label was ever received", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    writer.onCaptionSnapshot({ speaker: "You", text: "Hola", timestampMs: writer.startedAt + 1000 });
+
+    const endedAt = writer.startedAt + 2000;
+    await writer.finalize({ muteManifest: { intervals: [] }, endedAt });
+    await finished;
+
+    const bytes = writer.meetingHandle.files.get("transcripcion.json").bytes;
+    const segments = JSON.parse(new TextDecoder().decode(bytes));
+
+    expect(segments).toEqual([{ index: 0, startTime: 1000, endTime: 2000, text: "Hola", speaker: "You" }]);
+  });
 });
