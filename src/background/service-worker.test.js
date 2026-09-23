@@ -71,3 +71,43 @@ describe("active session registry", () => {
     expect(await findActiveSessionIdsForTab(43)).toEqual(["session-2"]);
   });
 });
+
+describe("emergency finalize on tab close", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("sends asterion:session-ended for a session whose tab was closed", async () => {
+    let onRemovedHandler;
+    const sendMessage = vi.fn();
+    globalThis.chrome = {
+      ...baseChromeMock(),
+      runtime: { ...baseChromeMock().runtime, sendMessage },
+      tabs: { onRemoved: { addListener: (fn) => { onRemovedHandler = fn; } } },
+    };
+
+    const { registerActiveSession } = await import("./service-worker.js");
+    await registerActiveSession("session-1", 42, "Daily sync");
+
+    await onRemovedHandler(42);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "asterion:session-ended", sessionId: "session-1", muteManifest: null })
+    );
+  });
+
+  it("does nothing when the closed tab has no active session", async () => {
+    let onRemovedHandler;
+    const sendMessage = vi.fn();
+    globalThis.chrome = {
+      ...baseChromeMock(),
+      runtime: { ...baseChromeMock().runtime, sendMessage },
+      tabs: { onRemoved: { addListener: (fn) => { onRemovedHandler = fn; } } },
+    };
+
+    await import("./service-worker.js");
+    await onRemovedHandler(999);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+});

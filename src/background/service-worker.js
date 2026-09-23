@@ -139,3 +139,26 @@ function appendToHistory(meta) {
     chrome.storage.local.set({ meetingHistory: meetingHistory.slice(0, 200) });
   });
 }
+
+function finalizeAbandonedSession(sessionId) {
+  // No se desregistra acá: si el envío del mensaje o la finalización fallan,
+  // se pierde la única referencia durable para poder reintentar más adelante.
+  // El registro se limpia como siempre, desde el handler de
+  // "asterion:session-finalized" que ya corre cuando el offscreen document
+  // termina de verdad (ver Tarea 1).
+  return ensureOffscreenDocument().then(() => {
+    chrome.runtime.sendMessage({
+      type: "asterion:session-ended",
+      sessionId,
+      muteManifest: null,
+      endedAt: Date.now(),
+    });
+  });
+}
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const sessionIds = await findActiveSessionIdsForTab(tabId);
+  for (const sessionId of sessionIds) {
+    await finalizeAbandonedSession(sessionId);
+  }
+});
