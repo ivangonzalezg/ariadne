@@ -9,13 +9,12 @@ import {
 import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
 import { startSpeakerObserver } from "./speaker-observer.js";
+import { debugDebug, debugLog, setDebugEnabled } from "../shared/debug-log.js";
 
-const rtcPatchLog = (event, details) => console.debug(`[Ariadne:rtc-patch] ${event}`, details);
-
-console.log("[Ariadne:debug] bootstrap (MAIN world) cargado");
+const rtcPatchLog = (event, details) => debugDebug(`[Ariadne:rtc-patch] ${event}`, details);
 
 const mixer = new MeetingAudioMixer({
-  log: (event, details) => console.debug(`[Ariadne:audio-mixer] ${event}`, details),
+  log: (event, details) => debugDebug(`[Ariadne:audio-mixer] ${event}`, details),
 });
 mixer.resume().catch(() => {});
 let micTrack = null;
@@ -77,10 +76,11 @@ window.addEventListener("message", async (event) => {
   const message = event.data;
   if (!message || message.source !== "asterion-isolated-world") return;
 
-  console.log("[Ariadne:debug] mensaje recibido desde ISOLATED world", { type: message.type });
+  debugLog("[Ariadne:debug] mensaje recibido desde ISOLATED world", { type: message.type });
 
   if (message.type === "asterion:start-session") {
-    console.log("[Ariadne:debug] asterion:start-session recibido; se intentará crear MainWorldSession e iniciar mixer", {
+    setDebugEnabled(message.debugLogging);
+    debugLog("[Ariadne:debug] asterion:start-session recibido; se intentará crear MainWorldSession e iniciar mixer", {
       sessionId: message.sessionId,
       mixer,
       session,
@@ -103,9 +103,9 @@ window.addEventListener("message", async (event) => {
       return;
     }
     mixer.setMicTrack(trackToUse, { initiallyMuted: currentlyMuted });
-    console.log("[Ariadne] AudioContext state antes de resume():", mixer.audioContext.state);
+    debugLog("[Ariadne] AudioContext state antes de resume():", mixer.audioContext.state);
     await mixer.resume();
-    console.log("[Ariadne] AudioContext state después de resume():", mixer.audioContext.state);
+    debugLog("[Ariadne] AudioContext state después de resume():", mixer.audioContext.state);
     session = new MainWorldSession({
       sessionId: message.sessionId,
       mixer,
@@ -140,7 +140,7 @@ document.addEventListener(
     const target = event.composedPath().find((el) => el instanceof Element && el.matches("[data-asterion-enable-video]"));
     if (!target || !session) return;
 
-    console.log("[Ariadne] userActivation.isActive antes de getDisplayMedia:", navigator.userActivation?.isActive);
+    debugLog("[Ariadne] userActivation.isActive antes de getDisplayMedia:", navigator.userActivation?.isActive);
 
     try {
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
