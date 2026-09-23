@@ -38,6 +38,7 @@ export class SessionWriter {
     this.speakerLabels = [];
     this.hasCaption = false;
     this.streamsUsed = new Set();
+    this._finalizePromise = null;
     this.ready = this._init();
   }
 
@@ -83,7 +84,12 @@ export class SessionWriter {
     this.speakerLabels.push(label);
   }
 
-  async finalize({ muteManifest, endedAt }) {
+  finalize(args) {
+    if (!this._finalizePromise) this._finalizePromise = this._finalizeOnce(args);
+    return this._finalizePromise;
+  }
+
+  async _finalizeOnce({ muteManifest, endedAt }) {
     // Se usa el momento real en que el usuario detuvo la grabación (capturado en
     // MainWorldSession.stop()), no cuándo finalize() llegó a ejecutarse acá -
     // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.

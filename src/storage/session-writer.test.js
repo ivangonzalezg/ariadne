@@ -218,6 +218,21 @@ describe("SessionWriter conversion flow", () => {
     expect(writer.meetingHandle.files.has("transcripcion.json")).toBe(false);
   });
 
+  it("finalize() called twice returns the same result and does not run conversions twice", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    const [first, second] = await Promise.all([
+      writer.finalize({ muteManifest: { intervals: [] } }),
+      writer.finalize({ muteManifest: { intervals: [] } }),
+    ]);
+    await finished;
+
+    expect(first).toEqual(second);
+    expect(ffmpeg.runFfmpegJob).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the reconciled speaker label instead of the raw caption speaker when one is available", async () => {
     ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
