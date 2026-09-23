@@ -19,6 +19,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     });
   } else if (message.type === "asterion:caption-snapshot") {
     sessions.get(message.sessionId)?.onCaptionSnapshot(message.snapshot);
+  } else if (message.type === "asterion:speaker-label") {
+    sessions.get(message.sessionId)?.onSpeakerLabel(message.label);
   } else if (message.type === "asterion:session-ended") {
     const writer = sessions.get(message.sessionId);
     if (!writer) return;
