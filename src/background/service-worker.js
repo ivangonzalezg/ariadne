@@ -1,6 +1,43 @@
 // src/background/service-worker.js
 const OFFSCREEN_URL = "src/offscreen/offscreen.html";
-const activeSessionTabIds = new Map();
+const ACTIVE_SESSIONS_KEY = "activeRecordingSessions";
+
+// Serializa las lecturas/escrituras del registro para que dos llamadas
+// concurrentes (ej. dos reuniones arrancando casi al mismo tiempo) no se
+// pisen: sin esto, dos "get -> mutar -> set" en paralelo podrían leer el
+// mismo estado viejo y la segunda escritura descartaría lo que agregó la
+// primera.
+let registryQueue = Promise.resolve();
+
+function withRegistryLock(mutator) {
+  const result = registryQueue.then(async () => {
+    const { [ACTIVE_SESSIONS_KEY]: activeSessions } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
+    mutator(activeSessions);
+    await chrome.storage.local.set({ [ACTIVE_SESSIONS_KEY]: activeSessions });
+  });
+  registryQueue = result.catch(() => {});
+  return result;
+}
+
+export function registerActiveSession(sessionId, tabId, meetingTitle) {
+  return withRegistryLock((activeSessions) => {
+    activeSessions[sessionId] = { tabId, meetingTitle };
+  });
+}
+
+export function unregisterActiveSession(sessionId) {
+  return withRegistryLock((activeSessions) => {
+    delete activeSessions[sessionId];
+  });
+}
+
+export async function findActiveSessionIdsForTab(tabId) {
+  const { [ACTIVE_SESSIONS_KEY]: activeSessions } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
+  return Object.entries(activeSessions)
+    .filter(([, session]) => session.tabId === tabId)
+    .map(([sessionId]) => sessionId);
+}
+
 const conversionStates = new Map();
 let offscreenCreationPromise = null;
 
@@ -41,12 +78,13 @@ async function ensureOffscreenDocument() {
 // navegador o recargar la extensión.
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "asterion:session-starting") {
-    activeSessionTabIds.set(message.sessionId, sender.tab?.id ?? null);
-    ensureOffscreenDocument().then(() => {
+    registerActiveSession(message.sessionId, sender.tab?.id ?? null, message.meetingTitle)
+    .then(() => ensureOffscreenDocument())
+    .then(() => {
       chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId: message.sessionId, meetingTitle: message.meetingTitle });
     });
   } else if (message.type === "asterion:session-finalized") {
-    activeSessionTabIds.delete(message.sessionId);
+    unregisterActiveSession(message.sessionId);
     appendToHistory(message);
   } else if (message.type === "asterion:conversion-started") {
     conversionStates.set(message.sessionId, {
