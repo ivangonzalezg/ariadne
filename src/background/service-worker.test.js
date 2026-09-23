@@ -110,4 +110,40 @@ describe("emergency finalize on tab close", () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
   });
+
+  it("sends asterion:session-ended when the top frame of a recording tab navigates away", async () => {
+    let onCommittedHandler;
+    const sendMessage = vi.fn();
+    globalThis.chrome = {
+      ...baseChromeMock(),
+      runtime: { ...baseChromeMock().runtime, sendMessage },
+      webNavigation: { onCommitted: { addListener: (fn) => { onCommittedHandler = fn; } } },
+    };
+
+    const { registerActiveSession } = await import("./service-worker.js");
+    await registerActiveSession("session-1", 42, "Daily sync");
+
+    await onCommittedHandler({ tabId: 42, frameId: 0 });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "asterion:session-ended", sessionId: "session-1", muteManifest: null })
+    );
+  });
+
+  it("ignores onCommitted events for subframes (frameId !== 0)", async () => {
+    let onCommittedHandler;
+    const sendMessage = vi.fn();
+    globalThis.chrome = {
+      ...baseChromeMock(),
+      runtime: { ...baseChromeMock().runtime, sendMessage },
+      webNavigation: { onCommitted: { addListener: (fn) => { onCommittedHandler = fn; } } },
+    };
+
+    const { registerActiveSession } = await import("./service-worker.js");
+    await registerActiveSession("session-1", 42, "Daily sync");
+
+    await onCommittedHandler({ tabId: 42, frameId: 7 });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
 });

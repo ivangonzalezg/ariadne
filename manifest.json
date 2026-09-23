@@ -11,7 +11,7 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage", "offscreen", "unlimitedStorage", "downloads"],
+  "permissions": ["storage", "offscreen", "unlimitedStorage", "downloads", "webNavigation"],
   "host_permissions": ["https://meet.google.com/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

@@ -162,3 +162,11 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await finalizeAbandonedSession(sessionId);
   }
 });
+
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+  if (details.frameId !== 0) return;
+  const sessionIds = await findActiveSessionIdsForTab(details.tabId);
+  for (const sessionId of sessionIds) {
+    await finalizeAbandonedSession(sessionId);
+  }
+});
