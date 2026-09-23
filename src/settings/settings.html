@@ -78,6 +78,22 @@
         font-size: 13px;
         line-height: 1.4;
       }
+
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .checkbox-row label {
+        margin-bottom: 0;
+      }
+
+      .checkbox-row input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent-blue);
+      }
     </style>
   </head>
   <body>
@@ -100,6 +116,15 @@
           <option value="veryslow">Veryslow</option>
         </select>
         <p id="video-preset-helper" class="helper">Más rápido = menos calidad/compresión, más lento = mejor compresión.</p>
+      </section>
+      <section class="setting-card">
+        <div class="checkbox-row">
+          <input type="checkbox" id="debug-logging" />
+          <label id="debug-logging-label" for="debug-logging">Registro de depuración</label>
+        </div>
+        <p id="debug-logging-helper" class="helper">
+          Imprime logs detallados en la consola del navegador mientras se graba.
+        </p>
       </section>
     </main>
     <script type="module" src="settings.js"></script>
