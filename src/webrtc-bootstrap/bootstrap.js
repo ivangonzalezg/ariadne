@@ -8,6 +8,7 @@ import {
 } from "./rtc-patch.js";
 import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
+import { startSpeakerObserver } from "./speaker-observer.js";
 
 const rtcPatchLog = (event, details) => console.debug(`[Ariadne:rtc-patch] ${event}`, details);
 
@@ -20,6 +21,7 @@ mixer.resume().catch(() => {});
 let micTrack = null;
 let session = null;
 let currentlyMuted = false;
+let stopSpeakerObserver = () => {};
 
 installRtcPatch({
   onRemoteAudioTrack: (payload) => mixer.addRemoteTrack(payload),
@@ -113,6 +115,10 @@ window.addEventListener("message", async (event) => {
     session.start();
     mixer.startReconciliation();
     postToIsolated({ type: "asterion:session-started", sessionId: message.sessionId });
+    stopSpeakerObserver = startSpeakerObserver({
+      onSpeakerLabel: (label) => postToIsolated({ type: "asterion:speaker-label", sessionId: message.sessionId, label }),
+      log: rtcPatchLog,
+    });
   } else if (message.type === "asterion:mic-muted") {
     currentlyMuted = true;
     session?.onMicMuted(message.timestampMs);
@@ -123,6 +129,8 @@ window.addEventListener("message", async (event) => {
     session?.stop();
     session = null;
     mixer.stopReconciliation();
+    stopSpeakerObserver();
+    stopSpeakerObserver = () => {};
   }
 });
 
