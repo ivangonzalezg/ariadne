@@ -1,10 +1,14 @@
 // src/offscreen/offscreen.js
 import { SessionWriter } from "../storage/session-writer.js";
 import { base64ToArrayBuffer } from "../lib/base64.js";
+import { setDebugEnabled } from "../shared/debug-log.js";
+
+const debugLoggingReady = chrome.storage.local.get({ debugLogging: false }).then(({ debugLogging }) => setDebugEnabled(debugLogging));
 
 const sessions = new Map();
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener(async (message, sender) => {
+  await debugLoggingReady;
   if (message.type === "asterion:session-starting") {
     if (sessions.has(message.sessionId)) return;
     const writer = new SessionWriter({ sessionId: message.sessionId, tabId: sender.tab?.id ?? null, meetingTitle: message.meetingTitle });

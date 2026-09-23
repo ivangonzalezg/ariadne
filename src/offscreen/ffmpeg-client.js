@@ -1,5 +1,6 @@
 // src/offscreen/ffmpeg-client.js
 import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { debugLog } from "../shared/debug-log.js";
 
 let ffmpegInstance = null;
 let loadPromise = null;
@@ -9,10 +10,10 @@ async function getFfmpeg() {
   if (!ffmpegInstance) {
     ffmpegInstance = new FFmpeg();
     ffmpegInstance.on("log", ({ type, message }) => {
-      console.log(`[Ariadne ffmpeg:core] ${type}: ${message}`);
+      debugLog(`[Ariadne ffmpeg:core] ${type}: ${message}`);
     });
     ffmpegInstance.on("progress", ({ progress, time }) => {
-      console.log(`[Ariadne ffmpeg:core] progress=${progress} time=${time}`);
+      debugLog(`[Ariadne ffmpeg:core] progress=${progress} time=${time}`);
     });
   }
   if (!loadPromise) {
@@ -43,7 +44,7 @@ async function _runJob({ inputBytes, inputExt, outputExt, args, onProgress }) {
   const inputName = `input_${jobId}.${inputExt}`;
   const outputName = `output_${jobId}.${outputExt}`;
   const startedAt = Date.now();
-  console.log(`[Ariadne ffmpeg] job ${jobId}: iniciando (${inputBytes.byteLength} bytes de entrada)`);
+  debugLog(`[Ariadne ffmpeg] job ${jobId}: iniciando (${inputBytes.byteLength} bytes de entrada)`);
 
   const ffmpeg = await getFfmpeg();
   let progressHandler;
@@ -56,7 +57,7 @@ async function _runJob({ inputBytes, inputExt, outputExt, args, onProgress }) {
     if (!outputData || outputData.byteLength === 0) {
       throw new Error("ffmpeg produjo un archivo de salida vacío");
     }
-    console.log(
+    debugLog(
       `[Ariadne ffmpeg] job ${jobId}: terminado en ${Date.now() - startedAt}ms (${outputData.byteLength} bytes de salida)`
     );
     return outputData;
