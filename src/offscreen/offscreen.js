@@ -16,6 +16,7 @@ const debugLoggingReady = Promise.resolve()
   });
 
 const sessions = new Map();
+const finalizingSessionIds = new Set();
 
 chrome.runtime.onMessage.addListener(async (message, sender) => {
   await debugLoggingReady;
@@ -37,8 +38,12 @@ chrome.runtime.onMessage.addListener(async (message, sender) => {
     sessions.get(message.sessionId)?.onSpeakerLabel(message.label);
   } else if (message.type === "asterion:session-ended") {
     const writer = sessions.get(message.sessionId);
-    if (!writer) return;
-    writer.onConversionsFinished = () => sessions.delete(message.sessionId);
+    if (!writer || finalizingSessionIds.has(message.sessionId)) return;
+    finalizingSessionIds.add(message.sessionId);
+    writer.onConversionsFinished = () => {
+      sessions.delete(message.sessionId);
+      finalizingSessionIds.delete(message.sessionId);
+    };
     writer
       .finalize({ muteManifest: message.muteManifest, endedAt: message.endedAt })
       .then((meta) => {
@@ -47,6 +52,7 @@ chrome.runtime.onMessage.addListener(async (message, sender) => {
       .catch((error) => {
         console.error("[Ariadne] Error finalizando la sesión:", error);
         sessions.delete(message.sessionId);
+        finalizingSessionIds.delete(message.sessionId);
       });
   }
 });
