@@ -233,6 +233,17 @@ describe("SessionWriter conversion flow", () => {
     expect(ffmpeg.runFfmpegJob).toHaveBeenCalledTimes(1);
   });
 
+  it("writes a degraded muteManifest marker when none is provided (emergency finalize path)", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false });
+    const finished = finishConversions(writer);
+
+    await writer.finalize({ muteManifest: null });
+    await finished;
+
+    expect(manifestOf(writer).muteManifest).toEqual({ intervals: [], degraded: true });
+  });
+
   it("uses the reconciled speaker label instead of the raw caption speaker when one is available", async () => {
     ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });

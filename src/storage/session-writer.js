@@ -90,6 +90,13 @@ export class SessionWriter {
   }
 
   async _finalizeOnce({ muteManifest, endedAt }) {
+    // Cuando la sesión se finaliza desde un camino de emergencia (cierre de
+    // pestaña/navegación, ver service-worker.js) no hay forma de reconstruir
+    // el historial real de mute/unmute — vivía en la pestaña que ya se fue.
+    // degraded:true dice explícitamente "no se pudo reconstruir este dato",
+    // nunca "el mic nunca se desmuteó" (que sería lo que {intervals: []}
+    // solo, sin la marca, parecería implicar).
+    const resolvedMuteManifest = muteManifest ?? { intervals: [], degraded: true };
     // Se usa el momento real en que el usuario detuvo la grabación (capturado en
     // MainWorldSession.stop()), no cuándo finalize() llegó a ejecutarse acá -
     // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.
@@ -130,7 +137,7 @@ export class SessionWriter {
 
     this.hasVideo = this.streamsUsed.has("video");
     await this._writeManifest({
-      muteManifest,
+      muteManifest: resolvedMuteManifest,
       audioConversionStatus: this.streamsUsed.has("meeting") ? "pending" : "skipped",
       videoConversionStatus: this.hasVideo ? "pending" : "skipped",
     });
@@ -138,7 +145,7 @@ export class SessionWriter {
     // No se espera esta promesa - la sesión ya se considera "finalizada" con los
     // webm originales a salvo; la conversión sigue en segundo plano y actualiza
     // el manifest cuando termina (éxito o fallo).
-    this.scheduleConversions(muteManifest, this.endedAt);
+    this.scheduleConversions(resolvedMuteManifest, this.endedAt);
 
     return {
       sessionId: this.sessionId,
