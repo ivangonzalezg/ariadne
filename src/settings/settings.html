@@ -17,13 +17,16 @@
         width: min(100%, 720px);
         margin: 0 auto;
         padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }
 
       .page-header {
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-bottom: 24px;
+        margin-bottom: 8px;
       }
 
       .back-button {
@@ -79,20 +82,35 @@
         line-height: 1.4;
       }
 
-      .checkbox-row {
+      .toggle-row {
         display: flex;
+        justify-content: space-between;
         align-items: center;
         gap: 10px;
       }
 
-      .checkbox-row label {
+      .toggle-row label {
         margin-bottom: 0;
       }
 
-      .checkbox-row input[type="checkbox"] {
+      .toggle {
+        width: 42px;
+        height: 24px;
+        border-radius: 12px;
+        padding: 3px;
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        border: 0;
+        flex-shrink: 0;
+      }
+
+      .toggle-knob {
         width: 18px;
         height: 18px;
-        accent-color: var(--accent-blue);
+        border-radius: 50%;
+        background: #ffffff;
+        transition: transform 0.15s;
       }
     </style>
   </head>
@@ -118,9 +136,18 @@
         <p id="video-preset-helper" class="helper">Más rápido = menos calidad/compresión, más lento = mejor compresión.</p>
       </section>
       <section class="setting-card">
-        <div class="checkbox-row">
-          <input type="checkbox" id="debug-logging" />
+        <div class="toggle-row">
           <label id="debug-logging-label" for="debug-logging">Registro de depuración</label>
+          <button
+            id="debug-logging"
+            class="toggle"
+            type="button"
+            role="switch"
+            aria-checked="false"
+            style="background: var(--toggle-off); justify-content: flex-start"
+          >
+            <span class="toggle-knob"></span>
+          </button>
         </div>
         <p id="debug-logging-helper" class="helper">
           Imprime logs detallados en la consola del navegador mientras se graba.

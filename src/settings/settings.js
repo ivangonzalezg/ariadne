@@ -9,7 +9,7 @@ const videoPresetSelect = document.getElementById("video-preset");
 const pageHeadingEl = document.getElementById("page-heading");
 const videoPresetLabelEl = document.getElementById("video-preset-label");
 const videoPresetHelperEl = document.getElementById("video-preset-helper");
-const debugLoggingCheckbox = document.getElementById("debug-logging");
+const debugLoggingToggle = document.getElementById("debug-logging");
 const debugLoggingLabelEl = document.getElementById("debug-logging-label");
 const debugLoggingHelperEl = document.getElementById("debug-logging-helper");
 
@@ -38,10 +38,18 @@ videoPresetSelect.addEventListener("change", () => {
   chrome.storage.local.set({ videoPreset: videoPresetSelect.value });
 });
 
+function renderDebugLoggingToggle(enabled) {
+  debugLoggingToggle.setAttribute("aria-checked", String(enabled));
+  debugLoggingToggle.style.background = enabled ? "var(--accent-blue)" : "var(--toggle-off)";
+  debugLoggingToggle.style.justifyContent = enabled ? "flex-end" : "flex-start";
+}
+
 chrome.storage.local.get({ debugLogging: false }, ({ debugLogging }) => {
-  debugLoggingCheckbox.checked = debugLogging;
+  renderDebugLoggingToggle(debugLogging);
 });
 
-debugLoggingCheckbox.addEventListener("change", () => {
-  chrome.storage.local.set({ debugLogging: debugLoggingCheckbox.checked });
+debugLoggingToggle.addEventListener("click", () => {
+  const enabled = debugLoggingToggle.getAttribute("aria-checked") !== "true";
+  renderDebugLoggingToggle(enabled);
+  chrome.storage.local.set({ debugLogging: enabled });
 });
