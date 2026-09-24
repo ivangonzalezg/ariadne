@@ -122,10 +122,10 @@ describe("installCaptionsDataChannelPatch", () => {
     new FakePeerConnection().createDataChannel("captions_v2");
 
     expect(info).toHaveBeenNthCalledWith(1,
-      "[Asterion:rtc-patch] caption-datachannel-peer-connection-marker",
+      "[Asterion:rtc-patch] caption-datachannel-peer-connection-marker channelLabel=captions patchedPeerConnection=true",
       { channelLabel: "captions", patchedPeerConnection: true });
     expect(info).toHaveBeenNthCalledWith(2,
-      "[Asterion:rtc-patch] caption-datachannel-peer-connection-marker",
+      "[Asterion:rtc-patch] caption-datachannel-peer-connection-marker channelLabel=captions_v2 patchedPeerConnection=false",
       { channelLabel: "captions_v2", patchedPeerConnection: false });
     expect(diagnostics.unmarkedCaptionDataChannels).toBe(1);
   });

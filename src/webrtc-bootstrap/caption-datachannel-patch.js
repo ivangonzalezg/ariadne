@@ -27,7 +27,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
     const channel = originalCreateDataChannel.apply(this, args);
     const channelLabel = args[0];
 
-    log("caption-datachannel-created", {
+    log(`caption-datachannel-created channelLabel=${channelLabel}`, {
       channelLabel,
       readyState: channel.readyState,
     });
@@ -37,7 +37,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
     const patchedPeerConnection = isPatchedRtcPeerConnection(this);
     // This deliberately bypasses debug logging: it must reveal connections
     // created before a recording session enables debug output.
-    console.info("[Asterion:rtc-patch] caption-datachannel-peer-connection-marker", {
+    console.info(`[Asterion:rtc-patch] caption-datachannel-peer-connection-marker channelLabel=${channelLabel} patchedPeerConnection=${patchedPeerConnection}`, {
       channelLabel,
       patchedPeerConnection,
     });
@@ -60,7 +60,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
       }
 
       if (!bytes) {
-        log("caption-datachannel-message-discarded", {
+        log(`caption-datachannel-message-discarded channelLabel=${channelLabel} reason=non-binary`, {
           channelLabel,
           readyState: channel.readyState,
           rawByteLength,
@@ -73,7 +73,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
       try {
         const inflated = await maybeGunzip(bytes);
         if (inflated === null) {
-          log("caption-datachannel-message-discarded", {
+          log(`caption-datachannel-message-discarded channelLabel=${channelLabel} reason=inflate-failed`, {
             channelLabel,
             readyState: channel.readyState,
             rawByteLength,
@@ -87,7 +87,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
           ? decodeCaptionV1(inflated)
           : decodeCaptionV2(inflated);
         if (decoded === null) {
-          log("caption-datachannel-message-discarded", {
+          log(`caption-datachannel-message-discarded channelLabel=${channelLabel} reason=decode-failed`, {
             channelLabel,
             readyState: channel.readyState,
             rawByteLength,
@@ -97,7 +97,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
           return;
         }
 
-        log("caption-datachannel-decoded", {
+        log(`caption-datachannel-decoded channelLabel=${channelLabel} captionId=${decoded.captionId} deviceSpace=${decoded.deviceSpace}`, {
           channelLabel,
           readyState: channel.readyState,
           rawByteLength,
@@ -109,7 +109,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
         });
         onCaptionMessage(decoded, { channelLabel, receivedAtMs });
       } catch {
-        log("caption-datachannel-message-discarded", {
+        log(`caption-datachannel-message-discarded channelLabel=${channelLabel} reason=processing-failed`, {
           channelLabel,
           readyState: channel.readyState,
           rawByteLength,
