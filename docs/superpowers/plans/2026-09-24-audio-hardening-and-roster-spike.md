@@ -72,6 +72,84 @@ Casos explícitos que caen en **"señal insuficiente"** (Fase B4, categoría 2),
 - Para el DOM, no extraer `textContent`/`aria-label`/HTML completo por defecto (casi seguro contienen nombres reales) — solo nombres de atributos, y valores que ya coincidan con un `deviceSpace` previamente observado (o un hash local del valor, para demostrar correlación sin exponer el dato).
 - Nota operativa importante: hoy `setDebugEnabled()` solo se activa al recibir `asterion:start-session`, así que cualquier canal/dato que aparezca al ENTRAR a la reunión (antes de arrancar la grabación) no se vería con el mecanismo de logging actual. Para este spike hace falta un buffer acotado de METADATA (nunca contenido) desde la carga temprana de la página, exportable solo bajo el modo de diagnóstico explícito.
 
+#### Guía operativa temporal (implementación B2)
+
+El sniffer productivo temporal vive en `src/webrtc-bootstrap/roster-spike-diagnostics.js`. Encadena su propio wrapper de `createDataChannel` después del patch de captions, en lugar de ampliar `caption-datachannel-patch.js`: ese patch sigue siendo dueño exclusivo del decoding de los dos labels conocidos, mientras que este probe observa metadata de todos los labels sin alterar ni duplicar el decoder.
+
+Antes de entrar a la reunión, activar el opt-in explícito (en una consola con contexto de la extensión, donde `chrome.storage` esté disponible):
+
+```js
+chrome.storage.local.set({ rosterSpikeDiagnostics: true })
+```
+
+El flag es independiente de `debugLogging`. El bootstrap mantiene un ring buffer máximo de 200 entradas de metadata desde la carga temprana, aun antes de `asterion:start-session`; no retiene `event.data`, bytes, texto ni nombres. Con el flag activo, para exportar el buffer desde la consola de la página de Meet ejecutar:
+
+```js
+window.postMessage({
+  source: "asterion-isolated-world",
+  type: "asterion:export-roster-diagnostics",
+}, "*");
+```
+
+Eso genera `console.table` y `console.log` con el buffer de metadata. No ejecutar B3 ni inferir una ruta solo de estos logs: el criterio de señal suficiente de B1 sigue siendo el gate para B4.
+
+##### Snippet temporal de DevTools: atributos del panel de participantes
+
+Con el panel de participantes visible, pegar este snippet en la consola de la página de Meet. Reemplazar los ejemplos de `deviceSpaces` por IDs ya observados en captions. Nunca imprime `textContent`, `aria-label`, HTML ni valores de atributos, excepto un valor cuyo contenido completo sea exactamente uno de esos `deviceSpace` ya suministrados.
+
+```js
+(() => {
+  const deviceSpaces = new Set([
+    // "deviceSpace-observado-1",
+    // "deviceSpace-observado-2",
+  ]);
+
+  const rowSelector = [
+    "[data-participant-id]",
+    "[data-requested-participant-id]",
+    '[role="listitem"]',
+    '[role="row"]',
+  ].join(", ");
+  const panelSelector = '[role="dialog"], [role="complementary"], [data-participants-panel], [data-panel-id]';
+  const isVisible = (element) => element.getClientRects().length > 0;
+  const seenRows = new Set();
+  const rows = [];
+
+  // Se intenta acotar a contenedores de panel primero. Si la UI actual de Meet
+  // no expone uno de esos contenedores, el fallback conserva solo filas visibles.
+  const panelRoots = [...document.querySelectorAll(panelSelector)];
+  const scopes = panelRoots.length ? panelRoots : [document];
+
+  for (const scope of scopes) {
+    for (const row of scope.querySelectorAll(rowSelector)) {
+      if (!isVisible(row) || seenRows.has(row)) continue;
+      seenRows.add(row);
+
+      const attributeNames = new Set();
+      const deviceSpaceMatches = [];
+      for (const element of [row, ...row.querySelectorAll("*")]) {
+        for (const { name, value } of element.attributes) {
+          attributeNames.add(name);
+          // `value` is never logged unless it is exactly a caller-provided ID.
+          if (deviceSpaces.has(value)) deviceSpaceMatches.push({ attribute: name, value });
+        }
+      }
+
+      rows.push({
+        tagName: row.tagName.toLowerCase(),
+        attributeNames: [...attributeNames].sort(),
+        deviceSpaceMatches,
+      });
+    }
+  }
+
+  console.table(rows);
+  return rows;
+})();
+```
+
+Si no devuelve filas, abrir el panel de participantes y volver a ejecutarlo; si devuelve filas ajenas al roster, restringir `panelSelector` en la consola a un contenedor que se haya identificado visualmente, sin inspeccionar ni copiar texto/nombres.
+
 ### Fase B3 — Ejecución manual (el usuario, con consentimiento)
 
 No delegable — requiere una reunión real. Recomendación de Codex: pocos participantes, identidades conocidas, con consentimiento explícito de que se está probando instrumentación de diagnóstico (los logs de metadata, aunque minimizados, podrían de todas formas correlacionar quién habló cuándo).

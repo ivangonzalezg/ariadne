@@ -32,6 +32,23 @@ function postToMainWorld(message) {
   window.postMessage({ source: "asterion-isolated-world", ...message }, "*");
 }
 
+// El bootstrap WebRTC vive en MAIN y no tiene chrome.storage. Este puente solo
+// comunica el opt-in booleano; los metadatos de canales nunca pasan a este mundo.
+function syncRosterSpikeDiagnostics(enabled) {
+  postToMainWorld({ type: "asterion:roster-spike-diagnostics-config", enabled: Boolean(enabled) });
+}
+
+chrome.storage.local
+  .get({ rosterSpikeDiagnostics: false })
+  .then(({ rosterSpikeDiagnostics }) => syncRosterSpikeDiagnostics(rosterSpikeDiagnostics))
+  .catch(() => syncRosterSpikeDiagnostics(false));
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes.rosterSpikeDiagnostics) {
+    syncRosterSpikeDiagnostics(changes.rosterSpikeDiagnostics.newValue);
+  }
+});
+
 let sessionId = null;
 let currentState = "idle";
 let meetingTitle = null;

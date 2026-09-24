@@ -11,6 +11,7 @@ import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
 import { startSpeakerObserver } from "./speaker-observer.js";
 import { installCaptionsDataChannelPatch } from "./caption-datachannel-patch.js";
+import { installRosterSpikeDiagnostics } from "./roster-spike-diagnostics.js";
 import { createCaptionAssembler } from "./caption-assembler.js";
 import { debugDebug, debugLog, setDebugEnabled } from "../shared/debug-log.js";
 
@@ -108,6 +109,8 @@ installCaptionsDataChannelPatch({
   log: rtcPatchLog,
 });
 
+const rosterSpikeDiagnostics = installRosterSpikeDiagnostics();
+
 function postToIsolated(message, transfer = []) {
   window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
 }
@@ -119,7 +122,11 @@ window.addEventListener("message", async (event) => {
 
   debugLog("[Ariadne:debug] mensaje recibido desde ISOLATED world", { type: message.type });
 
-  if (message.type === "asterion:start-session") {
+  if (message.type === "asterion:roster-spike-diagnostics-config") {
+    rosterSpikeDiagnostics?.setEnabled(message.enabled);
+  } else if (message.type === "asterion:export-roster-diagnostics") {
+    rosterSpikeDiagnostics?.exportBuffer();
+  } else if (message.type === "asterion:start-session") {
     captionAssembler.reset();
     setDebugEnabled(message.debugLogging);
     debugLog("[Ariadne:debug] asterion:start-session recibido; se intentará crear MainWorldSession e iniciar mixer", {
