@@ -144,6 +144,42 @@ describe("createCaptionAssembler", () => {
     });
   });
 
+  it("drops an identical caption retransmitted shortly after finalization", () => {
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized });
+    const finalCaption = caption({ version: 3, text: "Texto final", isFinal: true });
+
+    assembler.onCaptionMessage(finalCaption, { receivedAtMs: 100 });
+    assembler.onCaptionMessage(finalCaption, { receivedAtMs: 5000 });
+
+    expect(onCaptionFinalized).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows an identical caption again after the finalized-caption TTL expires", () => {
+    vi.useFakeTimers();
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized, finalizedCaptionTtlMs: 30_000 });
+    const finalCaption = caption({ version: 3, text: "Texto final", isFinal: true });
+
+    assembler.onCaptionMessage(finalCaption, { receivedAtMs: 100 });
+    vi.advanceTimersByTime(30_000);
+    assembler.onCaptionMessage(finalCaption, { receivedAtMs: 30_100 });
+
+    expect(onCaptionFinalized).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds the recently finalized caption cache by size", () => {
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized, maxFinalizedCaptionFingerprints: 2 });
+
+    assembler.onCaptionMessage(caption({ captionId: 1, text: "Primero", isFinal: true }), { receivedAtMs: 100 });
+    assembler.onCaptionMessage(caption({ captionId: 2, text: "Segundo", isFinal: true }), { receivedAtMs: 200 });
+    assembler.onCaptionMessage(caption({ captionId: 3, text: "Tercero", isFinal: true }), { receivedAtMs: 300 });
+    assembler.onCaptionMessage(caption({ captionId: 1, text: "Primero", isFinal: true }), { receivedAtMs: 400 });
+
+    expect(onCaptionFinalized).toHaveBeenCalledTimes(4);
+  });
+
   it("drops messages with nullish key parts to prevent fallback-key collisions", () => {
     const onCaptionFinalized = vi.fn();
     const assembler = createCaptionAssembler({ onCaptionFinalized });
