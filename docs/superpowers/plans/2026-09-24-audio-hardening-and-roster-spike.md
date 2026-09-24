@@ -48,11 +48,17 @@ Ambas piezas fueron diseñadas con una consulta de arquitectura a Codex (sesión
 
 **Esto no es una tarea de implementación cerrada — es una investigación time-boxed con una salida honesta posible de "no encontramos nada usable".** Estructura recomendada por Codex: 4 fases con un gate de decisión explícito antes de cualquier captura más sensible, para que "investigar un poco más" no se convierta en ingeniería inversa sin límite.
 
-### Fase B1 — Contrato del spike y criterio de salida (antes de escribir código)
+### Fase B1 — Contrato del spike y criterio de salida (cerrado)
 
-Definir por escrito (Claude, antes de delegar nada):
-- Qué cuenta como "señal suficiente" para pasar a implementación: un canal o atributo DOM que contenga, de forma repetible entre reuniones, algo correlacionable 1:1 con los `deviceSpace` que ya vemos en las captions.
-- Duración máxima: una sesión de instrumentación + una ronda de análisis. Si no hay señal clara ahí, el spike termina documentando la conclusión negativa (no se abre una segunda ronda amplia).
+**Criterio de "señal suficiente"** para pasar a la mini-ronda de la Fase B4 (y eventualmente a la Fase B5): un candidato concreto — un label de data channel (local o remoto) o un atributo DOM puntual — tal que, **para cada `deviceSpace` distinto observado en las captions durante la misma reunión**, exista un valor correlacionado de forma consistente (mismo `deviceSpace` → mismo valor candidato, sin excepciones, en los datos de esa única sesión de instrumentación). Una sola coincidencia aislada (un `deviceSpace` que por casualidad aparece cerca de un valor candidato una vez) NO alcanza — tiene que sostenerse para todos los participantes que hablaron en esa reunión.
+
+Casos explícitos que caen en **"señal insuficiente"** (Fase B4, categoría 2), no en "ruta viable":
+- Un candidato que correlaciona con algunos `deviceSpace` pero no con todos los observados.
+- Un candidato que requiere mirar el contenido decodificado (texto real) de un canal no identificado para "ver si tiene sentido" — si hace falta activar el flag de captura de bytes crudos solo para poder EVALUAR si hay señal, eso ya no es la instrumentación segura de la Fase B2, es directamente la mini-ronda de la Fase B4, y necesita su propio gate de aprobación antes de activarse (ver Fase B4).
+
+**Duración máxima**: una única sesión de instrumentación (una reunión real) + una ronda de análisis de lo que esa sesión exportó. Si al terminar esa ronda de análisis no hay un candidato que cumpla el criterio de arriba, el spike termina en "señal insuficiente" o "sin ruta" (Fase B4, categorías 2 o 3) — no se agenda una segunda reunión de instrumentación sin que el usuario lo pida explícitamente de nuevo, y no se amplía la superficie instrumentada (por ejemplo, agregar `fetch`/`XMLHttpRequest`/WebSocket) dentro de este mismo spike.
+
+**Qué NO es parte de este spike** (reconfirmando el alcance ya acordado, para que quede escrito en un solo lugar): no se instrumenta `fetch`/`XMLHttpRequest`/WebSocket; no se captura contenido (`event.data`) de ningún canal no identificado como captions salvo bajo el flag explícito de la Fase B4; no se extrae `textContent`/`aria-label`/HTML del DOM por defecto.
 
 ### Fase B2 — Instrumentación de diagnóstico (segura por defecto)
 
