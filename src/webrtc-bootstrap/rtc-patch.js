@@ -15,6 +15,7 @@ const connectionIds = new WeakMap();
 // en vez de depender únicamente del track que getUserMedia devolvió una sola
 // vez al principio.
 const activeConnections = new Set();
+let onRemoteAudioTrackForReconciliation = null;
 
 function getConnectionId(pc) {
   if (!connectionIds.has(pc)) connectionIds.set(pc, nextConnectionId++);
@@ -24,6 +25,7 @@ function getConnectionId(pc) {
 export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = () => {} }) {
   const OriginalRTCPeerConnection = window.RTCPeerConnection;
   if (!OriginalRTCPeerConnection) return;
+  onRemoteAudioTrackForReconciliation = onRemoteAudioTrack;
 
   function PatchedRTCPeerConnection(...args) {
     const pc = new OriginalRTCPeerConnection(...args);
@@ -65,6 +67,8 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
         diagnostics.connectionsClosed += 1;
         activeConnections.delete(pc);
         onConnectionClosed(connectionId);
+      } else if (pc.connectionState === "connected") {
+        reconcileRemoteReceivers();
       }
     });
 
@@ -74,6 +78,40 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
   PatchedRTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
   Object.setPrototypeOf(PatchedRTCPeerConnection, OriginalRTCPeerConnection);
   window.RTCPeerConnection = PatchedRTCPeerConnection;
+}
+
+// Descubre receivers que Meet pudo haber creado sin emitir (o antes de emitir)
+// el evento "track". getReceivers no expone ni stream ni mid: el primero no
+// está disponible en esta API y el segundo se obtiene del transceiver dueño.
+export function reconcileRemoteReceivers() {
+  if (!onRemoteAudioTrackForReconciliation) return;
+  for (const pc of activeConnections) {
+    if (pc.connectionState === "closed" || pc.connectionState === "failed") continue;
+    let receivers;
+    try {
+      receivers = pc.getReceivers();
+    } catch {
+      continue;
+    }
+    let transceivers = [];
+    try {
+      transceivers = pc.getTransceivers();
+    } catch {
+      // Sin transceivers todavía se puede entregar el track con el fallback de
+      // track.id del mixer; no se debe abortar el resto del barrido.
+    }
+    for (const receiver of receivers) {
+      const track = receiver.track;
+      if (track?.kind !== "audio" || track.readyState !== "live") continue;
+      const transceiver = transceivers.find((candidate) => candidate.receiver === receiver);
+      onRemoteAudioTrackForReconciliation({
+        track,
+        stream: null,
+        mid: transceiver?.mid ?? null,
+        connectionId: getConnectionId(pc),
+      });
+    }
+  }
 }
 
 export function installGetUserMediaPatch({ onMicStream }) {

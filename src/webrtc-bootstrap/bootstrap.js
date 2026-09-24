@@ -4,6 +4,7 @@ import {
   installGetUserMediaPatch,
   installReplaceTrackPatch,
   getCurrentLocalAudioTrack,
+  reconcileRemoteReceivers,
   diagnostics,
 } from "./rtc-patch.js";
 import { MeetingAudioMixer } from "./audio-mixer.js";
@@ -24,6 +25,22 @@ let session = null;
 let currentlyMuted = false;
 let stopSpeakerObserver = () => {};
 let captionSequence = 0;
+let reconciliationTimer = null;
+const RECONCILE_INTERVAL_MS = 5000;
+
+function startReconciliation() {
+  if (reconciliationTimer) return;
+  reconciliationTimer = setInterval(() => {
+    mixer.reconcile();
+    reconcileRemoteReceivers();
+  }, RECONCILE_INTERVAL_MS);
+}
+
+function stopReconciliation() {
+  if (!reconciliationTimer) return;
+  clearInterval(reconciliationTimer);
+  reconciliationTimer = null;
+}
 
 const captionAssembler = createCaptionAssembler({
   onCaptionFinalized: ({ text, endMs }) => {
@@ -138,7 +155,7 @@ window.addEventListener("message", async (event) => {
       initialMicMuted: Boolean(message.initialMicMuted),
     });
     session.start();
-    mixer.startReconciliation();
+    startReconciliation();
     postToIsolated({ type: "asterion:session-started", sessionId: message.sessionId });
     stopSpeakerObserver = startSpeakerObserver({
       onSpeakerLabel: (label) => postToIsolated({ type: "asterion:speaker-label", sessionId: message.sessionId, label }),
@@ -156,7 +173,7 @@ window.addEventListener("message", async (event) => {
     captionAssembler.flush();
     session?.stop();
     session = null;
-    mixer.stopReconciliation();
+    stopReconciliation();
     stopSpeakerObserver();
     stopSpeakerObserver = () => {};
   }

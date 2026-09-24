@@ -212,20 +212,82 @@ describe("MeetingAudioMixer remote sources", () => {
     expect(mixer.activeRemoteSourceCount).toBe(2);
   });
 
-  it("does NOT migrate an entry from a mid-fallback key to a stream key if a stream becomes available later on the same connection+mid (known, accepted gap)", () => {
-    // There is no alias/migration mechanism between the two keying schemes. If a
-    // track first arrives with no stream (falls back to conn:<id>:mid:<mid>) and
-    // a later track for the same connection+mid DOES have a stream (keys as
-    // stream:<id>), they're treated as two unrelated sources, not one - this
-    // test documents that as a known, deliberately-accepted gap (Codex's review
-    // flagged it as an untested risk; YAGNI applies until real evidence from the
-    // Task 2 diagnostic logging shows this transition actually happens against a
-    // real Meet call and causes a problem worth fixing).
+  it("migrates a receiver-first track to its canonical stream key when track arrives later", () => {
     const { mixer } = makeMixer();
-    mixer.addRemoteTrack({ track: fakeTrack("t1"), stream: null, mid: "0", connectionId: 1 });
-    mixer.addRemoteTrack({ track: fakeTrack("t2"), stream: fakeStream("s1"), mid: "0", connectionId: 1 });
+    const track = fakeTrack("t1");
+    mixer.addRemoteTrack({ track, stream: null, mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track, stream: fakeStream("s1"), mid: "0", connectionId: 1 });
 
-    expect(mixer.activeRemoteSourceCount).toBe(2);
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(mixer.remoteSources.has("stream:s1")).toBe(true);
+  });
+
+  it("keeps a track-first source at its canonical stream key when the receiver arrives later", () => {
+    const { mixer } = makeMixer();
+    const track = fakeTrack("t1");
+    mixer.addRemoteTrack({ track, stream: fakeStream("s1"), mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track, stream: null, mid: "0", connectionId: 1 });
+
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(mixer.remoteSources.has("stream:s1")).toBe(true);
+  });
+
+  it("uses the track-id fallback when a receiver has no mid", () => {
+    const { mixer } = makeMixer();
+    const track = fakeTrack("t1");
+    mixer.addRemoteTrack({ track, stream: null, mid: null, connectionId: 1 });
+
+    expect(mixer.remoteSources.has("conn:1:track:t1")).toBe(true);
+  });
+
+  it("keeps ended, mute, and removeConnection lifecycle cleanup working after migration", () => {
+    const { mixer, sourceNodes, advanceNow } = makeMixer();
+    const endedTrack = fakeTrack("ended");
+    mixer.addRemoteTrack({ track: endedTrack, stream: null, mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track: endedTrack, stream: fakeStream("s1"), mid: "0", connectionId: 1 });
+    endedTrack._emit("ended");
+
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+    expect(sourceNodes[0].disconnect).toHaveBeenCalledTimes(1);
+
+    const mutedTrack = fakeTrack("muted");
+    mixer.addRemoteTrack({ track: mutedTrack, stream: null, mid: "1", connectionId: 2 });
+    mixer.addRemoteTrack({ track: mutedTrack, stream: fakeStream("s2"), mid: "1", connectionId: 2 });
+    mutedTrack._emit("mute");
+    advanceNow(16000);
+    mixer.reconcile();
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+
+    const connectionTrack = fakeTrack("connection");
+    mixer.addRemoteTrack({ track: connectionTrack, stream: null, mid: "2", connectionId: 3 });
+    mixer.addRemoteTrack({ track: connectionTrack, stream: fakeStream("s3"), mid: "2", connectionId: 3 });
+    mixer.removeConnection(3);
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+  });
+
+  it("registers removetrack when a stream arrives after a receiver fallback", () => {
+    const { mixer } = makeMixer();
+    const track = fakeTrack("t1");
+    const stream = fakeStream("s1");
+    mixer.addRemoteTrack({ track, stream: null, mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track, stream, mid: "0", connectionId: 1 });
+
+    stream._emit("removetrack", { track });
+
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+  });
+
+  it("replaces an occupied stream key when migrating a track to it", () => {
+    const { mixer, sourceNodes } = makeMixer();
+    const migratingTrack = fakeTrack("receiver-track");
+    mixer.addRemoteTrack({ track: migratingTrack, stream: null, mid: "0", connectionId: 1 });
+    mixer.addRemoteTrack({ track: fakeTrack("occupied"), stream: fakeStream("s1"), mid: null, connectionId: 2 });
+
+    mixer.addRemoteTrack({ track: migratingTrack, stream: fakeStream("s1"), mid: "0", connectionId: 1 });
+
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(mixer.remoteSources.get("stream:s1")?.track).toBe(migratingTrack);
+    expect(sourceNodes[1].disconnect).toHaveBeenCalledTimes(1);
   });
 
   it("removes a source when its track fires ended", () => {
@@ -308,42 +370,6 @@ describe("MeetingAudioMixer remote sources", () => {
     mixer.reconcile();
 
     expect(mixer.activeRemoteSourceCount).toBe(1);
-  });
-});
-
-describe("MeetingAudioMixer reconciliation scheduling", () => {
-  it("starts and stops a periodic call to reconcile", () => {
-    vi.useFakeTimers();
-    try {
-      const { mixer } = makeMixer();
-      const reconcileSpy = vi.spyOn(mixer, "reconcile");
-
-      mixer.startReconciliation(1000);
-      vi.advanceTimersByTime(3500);
-      expect(reconcileSpy).toHaveBeenCalledTimes(3);
-
-      mixer.stopReconciliation();
-      vi.advanceTimersByTime(5000);
-      expect(reconcileSpy).toHaveBeenCalledTimes(3);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("calling startReconciliation twice does not schedule a second interval", () => {
-    vi.useFakeTimers();
-    try {
-      const { mixer } = makeMixer();
-      const reconcileSpy = vi.spyOn(mixer, "reconcile");
-
-      mixer.startReconciliation(1000);
-      mixer.startReconciliation(1000);
-      vi.advanceTimersByTime(1000);
-
-      expect(reconcileSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });
 

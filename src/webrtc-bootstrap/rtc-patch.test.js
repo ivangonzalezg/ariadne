@@ -5,6 +5,8 @@ class FakePeerConnection {
     this.connectionState = "new";
     this._listeners = {};
     this._senders = [];
+    this._receivers = [];
+    this._transceivers = [];
   }
   addEventListener(type, handler) {
     (this._listeners[type] ??= []).push(handler);
@@ -21,6 +23,18 @@ class FakePeerConnection {
   }
   _setSenders(senders) {
     this._senders = senders;
+  }
+  getReceivers() {
+    return this._receivers;
+  }
+  getTransceivers() {
+    return this._transceivers;
+  }
+  _setReceivers(receivers) {
+    this._receivers = receivers;
+  }
+  _setTransceivers(transceivers) {
+    this._transceivers = transceivers;
   }
 }
 
@@ -322,6 +336,67 @@ describe("getCurrentLocalAudioTrack", () => {
     expect(logs[0].details.candidateCount).toBe(2);
     expect(logs[0].details.candidates.map((c) => c.trackId).sort()).toEqual(["connected-mic", "disconnected-mic"]);
     expect(logs[0].details.selectedTrackId).toBe("connected-mic");
+  });
+});
+
+describe("reconcileRemoteReceivers", () => {
+  it("discovers live audio receiver tracks and finds their mid through the matching transceiver", async () => {
+    vi.resetModules();
+    const { installRtcPatch, reconcileRemoteReceivers } = await import("./rtc-patch.js");
+    const onRemoteAudioTrack = vi.fn();
+    installRtcPatch({ onRemoteAudioTrack, onConnectionClosed: () => {} });
+    const pc = new window.RTCPeerConnection();
+    const audioTrack = { kind: "audio", id: "receiver-audio", readyState: "live" };
+    const receiver = { track: audioTrack };
+    pc._setReceivers([receiver, { track: { kind: "video", id: "video", readyState: "live" } }]);
+    pc._setTransceivers([{ receiver, mid: "7" }]);
+
+    reconcileRemoteReceivers();
+
+    expect(onRemoteAudioTrack).toHaveBeenCalledWith({
+      track: audioTrack,
+      stream: null,
+      mid: "7",
+      connectionId: expect.any(Number),
+    });
+  });
+
+  it("runs an immediate receiver sweep when a connection becomes connected", async () => {
+    vi.resetModules();
+    const { installRtcPatch } = await import("./rtc-patch.js");
+    const onRemoteAudioTrack = vi.fn();
+    installRtcPatch({ onRemoteAudioTrack, onConnectionClosed: () => {} });
+    const pc = new window.RTCPeerConnection();
+    const track = { kind: "audio", id: "receiver-audio", readyState: "live" };
+    const receiver = { track };
+    pc._setReceivers([receiver]);
+    pc._setTransceivers([{ receiver, mid: "0" }]);
+
+    pc._setConnectionState("connected");
+
+    expect(onRemoteAudioTrack).toHaveBeenCalledWith(expect.objectContaining({ track, mid: "0" }));
+  });
+
+  it("continues the sweep when getReceivers or getTransceivers throws", async () => {
+    vi.resetModules();
+    const { installRtcPatch, reconcileRemoteReceivers } = await import("./rtc-patch.js");
+    const onRemoteAudioTrack = vi.fn();
+    installRtcPatch({ onRemoteAudioTrack, onConnectionClosed: () => {} });
+    const brokenReceivers = new window.RTCPeerConnection();
+    brokenReceivers.getReceivers = () => { throw new Error("receivers unavailable"); };
+    const brokenTransceivers = new window.RTCPeerConnection();
+    const noMidTrack = { kind: "audio", id: "no-mid", readyState: "live" };
+    brokenTransceivers._setReceivers([{ track: noMidTrack }]);
+    brokenTransceivers.getTransceivers = () => { throw new Error("transceivers unavailable"); };
+    const working = new window.RTCPeerConnection();
+    const track = { kind: "audio", id: "working", readyState: "live" };
+    const receiver = { track };
+    working._setReceivers([{ track: receiver.track }]);
+    working._setTransceivers([{ receiver: working.getReceivers()[0], mid: "3" }]);
+
+    expect(() => reconcileRemoteReceivers()).not.toThrow();
+    expect(onRemoteAudioTrack).toHaveBeenCalledWith(expect.objectContaining({ track: noMidTrack, mid: null }));
+    expect(onRemoteAudioTrack).toHaveBeenCalledWith(expect.objectContaining({ track, mid: "3" }));
   });
 });
 
