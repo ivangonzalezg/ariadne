@@ -107,9 +107,13 @@ async function startRecording() {
   });
 
   const cleanup = await enableCaptionsAndObserve((snapshot) => {
-    hasTranscript = true;
-    updateBannerState(currentState, bannerMeta());
-    chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
+    if (isDebugEnabled()) {
+      debugLog("[Ariadne:debug] snapshot de captions DOM observado", {
+        timestampMs: snapshot.timestampMs,
+        textLength: snapshot.text.length,
+        hasSpeaker: Boolean(snapshot.speaker),
+      });
+    }
   });
   stopCaptionObserver = cleanup ?? (() => {});
   stopMeetingEndObserver = observeMeetingEnd();
@@ -147,6 +151,14 @@ window.addEventListener("message", (event) => {
       type: "asterion:speaker-label",
       sessionId: message.sessionId,
       label: message.label,
+    });
+  } else if (message.type === "asterion:caption-snapshot") {
+    hasTranscript = true;
+    updateBannerState(currentState, bannerMeta());
+    chrome.runtime.sendMessage({
+      type: "asterion:caption-snapshot",
+      sessionId: message.sessionId,
+      snapshot: message.snapshot,
     });
   } else if (message.type === "asterion:video-enabled") {
     videoEnabled = true;

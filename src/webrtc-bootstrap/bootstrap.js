@@ -9,6 +9,8 @@ import {
 import { MeetingAudioMixer } from "./audio-mixer.js";
 import { MainWorldSession } from "./session.js";
 import { startSpeakerObserver } from "./speaker-observer.js";
+import { installCaptionsDataChannelPatch } from "./caption-datachannel-patch.js";
+import { createCaptionAssembler } from "./caption-assembler.js";
 import { debugDebug, debugLog, setDebugEnabled } from "../shared/debug-log.js";
 
 const rtcPatchLog = (event, details) => debugDebug(`[Ariadne:rtc-patch] ${event}`, details);
@@ -21,6 +23,22 @@ let micTrack = null;
 let session = null;
 let currentlyMuted = false;
 let stopSpeakerObserver = () => {};
+
+const captionAssembler = createCaptionAssembler({
+  onCaptionFinalized: ({ captionId, deviceSpace, text, endMs }) => {
+    if (!session) return;
+    postToIsolated({
+      type: "asterion:caption-snapshot",
+      sessionId: session.sessionId,
+      snapshot: {
+        speaker: "unknown",
+        text,
+        timestampMs: endMs,
+        captionId: `${deviceSpace}:${captionId}`,
+      },
+    });
+  },
+});
 
 installRtcPatch({
   onRemoteAudioTrack: (payload) => mixer.addRemoteTrack(payload),
@@ -67,6 +85,11 @@ installReplaceTrackPatch({
   log: rtcPatchLog,
 });
 
+installCaptionsDataChannelPatch({
+  onCaptionMessage: captionAssembler.onCaptionMessage,
+  log: rtcPatchLog,
+});
+
 function postToIsolated(message, transfer = []) {
   window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
 }
@@ -79,6 +102,7 @@ window.addEventListener("message", async (event) => {
   debugLog("[Ariadne:debug] mensaje recibido desde ISOLATED world", { type: message.type });
 
   if (message.type === "asterion:start-session") {
+    captionAssembler.reset();
     setDebugEnabled(message.debugLogging);
     debugLog("[Ariadne:debug] asterion:start-session recibido; se intentará crear MainWorldSession e iniciar mixer", {
       sessionId: message.sessionId,
@@ -126,6 +150,9 @@ window.addEventListener("message", async (event) => {
     currentlyMuted = false;
     session?.onMicUnmuted(message.timestampMs);
   } else if (message.type === "asterion:stop-session") {
+    // Flush before clearing the active session so a pending v1 caption is
+    // delivered to the isolated world instead of being discarded by the gate.
+    captionAssembler.flush();
     session?.stop();
     session = null;
     mixer.stopReconciliation();
