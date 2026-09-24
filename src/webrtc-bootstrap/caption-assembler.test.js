@@ -72,6 +72,66 @@ describe("createCaptionAssembler", () => {
     });
   });
 
+  it("emits one finalized caption for parallel caption IDs from the same device space", () => {
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized });
+
+    assembler.onCaptionMessage(caption({ captionId: 10, text: "La frase" }), { receivedAtMs: 100 });
+    assembler.onCaptionMessage(caption({ captionId: 11, text: "La frase completa" }), { receivedAtMs: 101 });
+    assembler.onCaptionMessage(caption({ captionId: 10, version: 2, text: "La frase final", isFinal: true }), { receivedAtMs: 200 });
+    assembler.onCaptionMessage(caption({ captionId: 11, version: 2, text: "La frase completa final", isFinal: true }), { receivedAtMs: 201 });
+
+    expect(onCaptionFinalized).toHaveBeenCalledTimes(1);
+    expect(onCaptionFinalized).toHaveBeenCalledWith({
+      captionId: 10, deviceSpace: "device-a", text: "La frase completa final", startMs: 100, endMs: 201,
+    });
+  });
+
+  it("keeps genuinely separated utterances from one device space independent", () => {
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized });
+
+    assembler.onCaptionMessage(caption({ captionId: 10, text: "Primera", isFinal: true }), { receivedAtMs: 100 });
+    assembler.onCaptionMessage(caption({ captionId: 11, text: "Segunda", isFinal: true }), { receivedAtMs: 10_000 });
+
+    expect(onCaptionFinalized).toHaveBeenNthCalledWith(1, {
+      captionId: 10, deviceSpace: "device-a", text: "Primera", startMs: 100, endMs: 100,
+    });
+    expect(onCaptionFinalized).toHaveBeenNthCalledWith(2, {
+      captionId: 11, deviceSpace: "device-a", text: "Segunda", startMs: 10_000, endMs: 10_000,
+    });
+  });
+
+  it("drops a late message for a caption ID from an emitted parallel group", () => {
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized });
+
+    assembler.onCaptionMessage(caption({ captionId: 10, text: "Duplicada" }), { receivedAtMs: 100 });
+    assembler.onCaptionMessage(caption({ captionId: 11, text: "Duplicada mejor" }), { receivedAtMs: 101 });
+    assembler.onCaptionMessage(caption({ captionId: 10, version: 2, isFinal: true }), { receivedAtMs: 200 });
+    assembler.onCaptionMessage(caption({ captionId: 11, version: 2, isFinal: true }), { receivedAtMs: 201 });
+    assembler.onCaptionMessage(caption({ captionId: 11, version: 3, text: "Mensaje tardío", isFinal: true }), { receivedAtMs: 300 });
+
+    expect(onCaptionFinalized).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a shadow caption to finalize during the 500ms grace window", () => {
+    vi.useFakeTimers();
+    const onCaptionFinalized = vi.fn();
+    const assembler = createCaptionAssembler({ onCaptionFinalized });
+
+    assembler.onCaptionMessage(caption({ captionId: 10, text: "Texto corto" }), { receivedAtMs: 100 });
+    assembler.onCaptionMessage(caption({ captionId: 11, text: "Texto más largo" }), { receivedAtMs: 101 });
+    assembler.onCaptionMessage(caption({ captionId: 10, version: 2, text: "Texto corto final", isFinal: true }), { receivedAtMs: 200 });
+    vi.advanceTimersByTime(300);
+    assembler.onCaptionMessage(caption({ captionId: 11, version: 2, text: "Texto más largo final", isFinal: true }), { receivedAtMs: 500 });
+
+    expect(onCaptionFinalized).toHaveBeenCalledTimes(1);
+    expect(onCaptionFinalized).toHaveBeenCalledWith({
+      captionId: 10, deviceSpace: "device-a", text: "Texto más largo final", startMs: 100, endMs: 500,
+    });
+  });
+
   it("discards a stale revision without changing the pending caption", () => {
     const onCaptionFinalized = vi.fn();
     const assembler = createCaptionAssembler({ onCaptionFinalized });

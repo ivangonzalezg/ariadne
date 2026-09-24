@@ -1,4 +1,5 @@
 const DEFAULT_INACTIVITY_MS = 2000;
+const DEFAULT_GROUP_FINALIZATION_GRACE_MS = 500;
 const DEFAULT_FINALIZED_CAPTION_TTL_MS = 30_000;
 const DEFAULT_MAX_FINALIZED_CAPTION_FINGERPRINTS = 512;
 
@@ -23,6 +24,10 @@ function finalizedCaptionFingerprint(caption) {
     .join("|");
 }
 
+function groupedCaptionIdFingerprint(deviceSpace, captionId) {
+  return [deviceSpace, captionId].map(fingerprintValue).join("|");
+}
+
 /**
  * Collects caption revisions until Meet marks one final or a v1 caption goes idle.
  *
@@ -33,11 +38,13 @@ function finalizedCaptionFingerprint(caption) {
 export function createCaptionAssembler({
   onCaptionFinalized,
   inactivityMs = DEFAULT_INACTIVITY_MS,
+  groupFinalizationGraceMs = DEFAULT_GROUP_FINALIZATION_GRACE_MS,
   finalizedCaptionTtlMs = DEFAULT_FINALIZED_CAPTION_TTL_MS,
   maxFinalizedCaptionFingerprints = DEFAULT_MAX_FINALIZED_CAPTION_FINGERPRINTS,
 }) {
-  const captions = new Map();
+  const captionGroups = new Map();
   const recentlyFinalized = new Map();
+  const recentlyFinalizedGroupedCaptionIds = new Map();
 
   function pruneRecentlyFinalized(now) {
     for (const [fingerprint, finalizedAtMs] of recentlyFinalized) {
@@ -55,38 +62,88 @@ export function createCaptionAssembler({
     pruneRecentlyFinalized(now);
   }
 
-  function finalize(key, entry) {
-    if (captions.get(key) !== entry) return;
-    if (entry.inactivityTimer !== null) clearTimeout(entry.inactivityTimer);
-    captions.delete(key);
-    rememberFinalizedCaption(entry);
+  function pruneRecentlyFinalizedGroupedCaptionIds(now) {
+    for (const [captionKey, finalizedAtMs] of recentlyFinalizedGroupedCaptionIds) {
+      if (now - finalizedAtMs < finalizedCaptionTtlMs) break;
+      recentlyFinalizedGroupedCaptionIds.delete(captionKey);
+    }
+    while (recentlyFinalizedGroupedCaptionIds.size > maxFinalizedCaptionFingerprints) {
+      recentlyFinalizedGroupedCaptionIds.delete(recentlyFinalizedGroupedCaptionIds.keys().next().value);
+    }
+  }
+
+  function finalizeGroup(group) {
+    if (captionGroups.get(group.deviceSpace) !== group) return;
+    if (group.finalizationGraceTimer !== null) clearTimeout(group.finalizationGraceTimer);
+    captionGroups.delete(group.deviceSpace);
+
+    const entries = [...group.entries.values()];
+    for (const entry of entries) {
+      if (entry.inactivityTimer !== null) clearTimeout(entry.inactivityTimer);
+      rememberFinalizedCaption(entry);
+    }
+    if (entries.length > 1) {
+      const now = Date.now();
+      for (const entry of entries) {
+        recentlyFinalizedGroupedCaptionIds.set(groupedCaptionIdFingerprint(entry.deviceSpace, entry.captionId), now);
+      }
+      pruneRecentlyFinalizedGroupedCaptionIds(now);
+    }
+
+    const longestEntry = entries.reduce((longest, entry) => (
+      entry.text.length > longest.text.length ? entry : longest
+    ));
     onCaptionFinalized({
-      captionId: entry.captionId,
-      deviceSpace: entry.deviceSpace,
-      text: entry.text,
-      startMs: entry.firstReceivedAtMs,
-      endMs: entry.lastUpdatedAtMs,
+      captionId: group.leaderCaptionId,
+      deviceSpace: group.deviceSpace,
+      text: longestEntry.text,
+      startMs: Math.min(...entries.map((entry) => entry.firstReceivedAtMs)),
+      endMs: Math.max(...entries.map((entry) => entry.lastUpdatedAtMs)),
     });
   }
 
-  function scheduleV1Finalization(key, entry) {
+  function completeEntry(group, entry) {
+    if (captionGroups.get(group.deviceSpace) !== group || entry.isComplete) return;
+    entry.isComplete = true;
+    if (entry.inactivityTimer !== null) {
+      clearTimeout(entry.inactivityTimer);
+      entry.inactivityTimer = null;
+    }
+
+    if ([...group.entries.values()].every((candidate) => candidate.isComplete)) {
+      finalizeGroup(group);
+    } else if (entry.captionId === group.leaderCaptionId) {
+      group.finalizationGraceTimer = setTimeout(() => finalizeGroup(group), groupFinalizationGraceMs);
+    }
+  }
+
+  function scheduleV1Finalization(group, entry) {
     if (entry.inactivityTimer !== null) clearTimeout(entry.inactivityTimer);
-    entry.inactivityTimer = setTimeout(() => finalize(key, entry), inactivityMs);
+    entry.inactivityTimer = setTimeout(() => completeEntry(group, entry), inactivityMs);
   }
 
   function onCaptionMessage(caption, metadata) {
     if (!caption || isNullish(caption.deviceSpace) || isNullish(caption.captionId)) return;
 
-    const key = `${caption.deviceSpace}:${caption.captionId}`;
     const updatedAtMs = receivedAt(metadata);
     const now = Date.now();
     const fingerprint = finalizedCaptionFingerprint(caption);
     pruneRecentlyFinalized(now);
     if (recentlyFinalized.has(fingerprint)) return;
-    let entry = captions.get(key);
+    pruneRecentlyFinalizedGroupedCaptionIds(now);
+    if (recentlyFinalizedGroupedCaptionIds.has(groupedCaptionIdFingerprint(caption.deviceSpace, caption.captionId))) return;
+    let group = captionGroups.get(caption.deviceSpace);
+    if (!group) {
+      group = {
+        deviceSpace: caption.deviceSpace,
+        leaderCaptionId: caption.captionId,
+        entries: new Map(),
+        finalizationGraceTimer: null,
+      };
+      captionGroups.set(caption.deviceSpace, group);
+    }
+    let entry = group.entries.get(caption.captionId);
 
-    // Entries are removed at finalization, so a later revision deliberately starts
-    // a new segment rather than reopening a finalized one.
     if (!entry) {
       entry = {
         schema: caption.schema,
@@ -98,10 +155,12 @@ export function createCaptionAssembler({
         lastSeenVersion: caption.version,
         text: caption.text,
         isFinal: caption.isFinal,
+        isComplete: false,
         inactivityTimer: null,
       };
-      captions.set(key, entry);
+      group.entries.set(caption.captionId, entry);
     } else {
+      if (entry.isComplete) return;
       if (caption.version < entry.lastSeenVersion) return;
       entry.lastSeenVersion = caption.version;
       entry.version = caption.version;
@@ -112,9 +171,9 @@ export function createCaptionAssembler({
     }
 
     if (caption.isFinal === true) {
-      finalize(key, entry);
+      completeEntry(group, entry);
     } else if (caption.schema === "v1") {
-      scheduleV1Finalization(key, entry);
+      scheduleV1Finalization(group, entry);
     } else if (entry.inactivityTimer !== null) {
       // A v2 revision must not inherit a v1 idle timer for the same key.
       clearTimeout(entry.inactivityTimer);
@@ -123,14 +182,17 @@ export function createCaptionAssembler({
   }
 
   function flush() {
-    for (const [key, entry] of [...captions]) finalize(key, entry);
+    for (const group of [...captionGroups.values()]) finalizeGroup(group);
   }
 
   function reset() {
-    for (const entry of captions.values()) {
-      if (entry.inactivityTimer !== null) clearTimeout(entry.inactivityTimer);
+    for (const group of captionGroups.values()) {
+      if (group.finalizationGraceTimer !== null) clearTimeout(group.finalizationGraceTimer);
+      for (const entry of group.entries.values()) {
+        if (entry.inactivityTimer !== null) clearTimeout(entry.inactivityTimer);
+      }
     }
-    captions.clear();
+    captionGroups.clear();
   }
 
   return { onCaptionMessage, flush, reset };
