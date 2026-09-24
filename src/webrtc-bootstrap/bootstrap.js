@@ -23,9 +23,10 @@ let micTrack = null;
 let session = null;
 let currentlyMuted = false;
 let stopSpeakerObserver = () => {};
+let captionSequence = 0;
 
 const captionAssembler = createCaptionAssembler({
-  onCaptionFinalized: ({ captionId, deviceSpace, text, endMs }) => {
+  onCaptionFinalized: ({ text, endMs }) => {
     if (!session) return;
     postToIsolated({
       type: "asterion:caption-snapshot",
@@ -34,7 +35,7 @@ const captionAssembler = createCaptionAssembler({
         speaker: "unknown",
         text,
         timestampMs: endMs,
-        captionId: `${deviceSpace}:${captionId}`,
+        captionId: ++captionSequence,
       },
     });
   },
