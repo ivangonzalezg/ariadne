@@ -72,7 +72,7 @@ function resolveSelfName(captions, eligibleWindows, maxLabelDistanceMs) {
 
 export function reconcileCaptionSnapshots({ captions, speakerLabels, maxLabelDistanceMs = 100, minLabelDurationMs = 100 }) {
   if (!speakerLabels || speakerLabels.length === 0) {
-    return captions.map(({ speaker, text, timestampMs }) => ({ speaker, text, timestampMs }));
+    return captions.map((caption) => ({ ...caption }));
   }
 
   const sortedLabels = [...speakerLabels].sort((a, b) => a.timestampMs - b.timestampMs);
@@ -86,10 +86,11 @@ export function reconcileCaptionSnapshots({ captions, speakerLabels, maxLabelDis
   // así que un solape de ventanas nunca le puede robar la línea a un tercero.
   const selfName = resolveSelfName(captions, eligibleWindows, maxLabelDistanceMs);
 
-  return captions.map(({ speaker, text, timestampMs }) => {
-    if (speaker !== "You" || selfName === null) return { speaker, text, timestampMs };
+  return captions.map((caption) => {
+    const { speaker, timestampMs } = caption;
+    if (speaker !== "You" || selfName === null) return { ...caption };
     const match = findMatch(eligibleWindows, timestampMs, maxLabelDistanceMs);
-    if (!match || match.speakerName !== selfName) return { speaker, text, timestampMs };
-    return { speaker: `${selfName} (You)`, text, timestampMs };
+    if (!match || match.speakerName !== selfName) return { ...caption };
+    return { ...caption, speaker: `${selfName} (You)` };
   });
 }

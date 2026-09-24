@@ -6,10 +6,15 @@ export class CaptionParser {
     this.current = null;
   }
 
-  onSnapshot({ speaker, text, timestampMs }) {
+  onSnapshot({ speaker, text, timestampMs, captionId }) {
     const normalizedSpeaker = speaker ?? UNKNOWN_SPEAKER;
+    const hasCaptionId = captionId !== undefined && captionId !== null;
 
-    if (this.current && this.current.speaker === normalizedSpeaker) {
+    const continuesCurrent = hasCaptionId
+      ? this.current?.captionId === captionId
+      : this.current?.captionId === null && this.current.speaker === normalizedSpeaker;
+
+    if (continuesCurrent) {
       this.current.text = text;
       this.current.endMs = timestampMs;
       return;
@@ -24,6 +29,7 @@ export class CaptionParser {
       text,
       startMs: timestampMs,
       endMs: timestampMs,
+      captionId: hasCaptionId ? captionId : null,
     };
   }
 

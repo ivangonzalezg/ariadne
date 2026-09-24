@@ -2,14 +2,28 @@ import { describe, expect, it } from "vitest";
 import { reconcileCaptionSnapshots } from "./speaker-label-reconciler.js";
 
 describe("reconcileCaptionSnapshots", () => {
-  it("returns captions unchanged when there are no speaker labels", () => {
+  it("returns captions unchanged, including extra fields, when there are no speaker labels", () => {
     const captions = [
-      { speaker: "You", text: "Hola", timestampMs: 1000 },
+      { speaker: "You", text: "Hola", timestampMs: 1000, captionId: "caption-1", source: "webrtc" },
       { speaker: "Ana", text: "Hola de vuelta", timestampMs: 2000 },
     ];
     expect(reconcileCaptionSnapshots({ captions, speakerLabels: [] })).toEqual([
-      { speaker: "You", text: "Hola", timestampMs: 1000 },
+      { speaker: "You", text: "Hola", timestampMs: 1000, captionId: "caption-1", source: "webrtc" },
       { speaker: "Ana", text: "Hola de vuelta", timestampMs: 2000 },
+    ]);
+  });
+
+  it("preserves extra fields when reconciling a 'You' caption", () => {
+    const captions = [{ speaker: "You", text: "Hola", timestampMs: 1000, captionId: "caption-1", source: "webrtc" }];
+    const speakerLabels = [{ speakerName: "Ivan Gonzalez", timestampMs: 950 }];
+    expect(reconcileCaptionSnapshots({ captions, speakerLabels })).toEqual([
+      {
+        speaker: "Ivan Gonzalez (You)",
+        text: "Hola",
+        timestampMs: 1000,
+        captionId: "caption-1",
+        source: "webrtc",
+      },
     ]);
   });
 
