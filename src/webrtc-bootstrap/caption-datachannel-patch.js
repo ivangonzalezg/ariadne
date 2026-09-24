@@ -103,6 +103,7 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
           rawByteLength,
           receivedAtMs,
           captionId: decoded.captionId,
+          deviceSpace: decoded.deviceSpace,
           version: decoded.version,
           isFinal: decoded.isFinal,
         });
