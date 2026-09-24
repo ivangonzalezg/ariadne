@@ -64,6 +64,15 @@ describe("installRtcPatch", () => {
     expect(diagnostics.peerConnectionsCreated).toBe(2);
   });
 
+  it("marks peer connections created through the patched constructor", async () => {
+    vi.resetModules();
+    const { installRtcPatch, isPatchedRtcPeerConnection } = await import("./rtc-patch.js");
+    installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed: () => {} });
+
+    expect(isPatchedRtcPeerConnection(new window.RTCPeerConnection())).toBe(true);
+    expect(isPatchedRtcPeerConnection(new FakePeerConnection())).toBe(false);
+  });
+
   it("calls onRemoteAudioTrack with track, stream, mid and a connectionId for an audio track event", async () => {
     vi.resetModules();
     const { installRtcPatch } = await import("./rtc-patch.js");

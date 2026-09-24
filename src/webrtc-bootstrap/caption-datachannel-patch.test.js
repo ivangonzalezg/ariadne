@@ -29,6 +29,12 @@ class FakeDataChannel {
 }
 
 class FakePeerConnection {
+  constructor() {
+    this.connectionState = "new";
+  }
+
+  addEventListener() {}
+
   createDataChannel(label) {
     return new FakeDataChannel(label);
   }
@@ -102,6 +108,26 @@ describe("installCaptionsDataChannelPatch", () => {
 
     expect(channel).toBeInstanceOf(FakeDataChannel);
     expect(channel._listeners.message).toBeUndefined();
+  });
+
+  it("reports whether a caption channel came from a patched peer connection and counts unmarked ones", async () => {
+    vi.resetModules();
+    const { installRtcPatch, diagnostics } = await import("./rtc-patch.js");
+    const { installCaptionsDataChannelPatch } = await import("./caption-datachannel-patch.js");
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed: () => {} });
+    installCaptionsDataChannelPatch({ onCaptionMessage: vi.fn() });
+
+    new window.RTCPeerConnection().createDataChannel("captions");
+    new FakePeerConnection().createDataChannel("captions_v2");
+
+    expect(info).toHaveBeenNthCalledWith(1,
+      "[Asterion:rtc-patch] caption-datachannel-peer-connection-marker",
+      { channelLabel: "captions", patchedPeerConnection: true });
+    expect(info).toHaveBeenNthCalledWith(2,
+      "[Asterion:rtc-patch] caption-datachannel-peer-connection-marker",
+      { channelLabel: "captions_v2", patchedPeerConnection: false });
+    expect(diagnostics.unmarkedCaptionDataChannels).toBe(1);
   });
 
   it("discards a message when gzip inflation fails", async () => {

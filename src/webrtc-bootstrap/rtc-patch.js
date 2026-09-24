@@ -6,7 +6,14 @@ export const diagnostics = {
   micTracksSeen: 0,
   connectionsClosed: 0,
   audioSenderReplacements: 0,
+  unmarkedCaptionDataChannels: 0,
 };
+
+export const PATCHED_RTC_PEER_CONNECTION = Symbol("asterion.patchedRTCPeerConnection");
+
+export function isPatchedRtcPeerConnection(peerConnection) {
+  return peerConnection?.[PATCHED_RTC_PEER_CONNECTION] === true;
+}
 
 let nextConnectionId = 1;
 const connectionIds = new WeakMap();
@@ -29,6 +36,7 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
 
   function PatchedRTCPeerConnection(...args) {
     const pc = new OriginalRTCPeerConnection(...args);
+    Object.defineProperty(pc, PATCHED_RTC_PEER_CONNECTION, { value: true });
     diagnostics.peerConnectionsCreated += 1;
     // Asignado acá mismo (no de forma perezosa en el primer "track"/close) para
     // que cada conexión parcheada tenga su identidad desde el momento en que se

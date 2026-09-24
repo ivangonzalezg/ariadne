@@ -1,5 +1,6 @@
 import { maybeGunzip } from "../lib/gzip-inflate.js";
 import { decodeCaptionV1, decodeCaptionV2 } from "../lib/caption-protobuf-decoder.js";
+import { diagnostics, isPatchedRtcPeerConnection } from "./rtc-patch.js";
 
 const CAPTION_CHANNELS = new Set(["captions", "captions_v2"]);
 
@@ -32,6 +33,15 @@ export function installCaptionsDataChannelPatch({ onCaptionMessage, log = () => 
     });
 
     if (!CAPTION_CHANNELS.has(channelLabel)) return channel;
+
+    const patchedPeerConnection = isPatchedRtcPeerConnection(this);
+    // This deliberately bypasses debug logging: it must reveal connections
+    // created before a recording session enables debug output.
+    console.info("[Asterion:rtc-patch] caption-datachannel-peer-connection-marker", {
+      channelLabel,
+      patchedPeerConnection,
+    });
+    if (!patchedPeerConnection) diagnostics.unmarkedCaptionDataChannels += 1;
 
     let firstMessageReceived = false;
     channel.addEventListener("message", async (event) => {
