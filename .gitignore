@@ -5,3 +5,6 @@ dist/
 .agents/skills
 .claude/skills
 skills-lock.json
+
+# paquetes .zip generados para subir a Chrome Web Store
+dist-release/
