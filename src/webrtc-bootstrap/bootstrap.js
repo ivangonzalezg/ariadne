@@ -124,6 +124,8 @@ window.addEventListener("message", async (event) => {
 
   if (message.type === "asterion:roster-spike-diagnostics-config") {
     rosterSpikeDiagnostics?.setEnabled(message.enabled);
+  } else if (message.type === "asterion:roster-spike-raw-capture-config") {
+    rosterSpikeDiagnostics?.setRawCaptureEnabled(message.enabled);
   } else if (message.type === "asterion:export-roster-diagnostics") {
     rosterSpikeDiagnostics?.exportBuffer();
   } else if (message.type === "asterion:start-session") {

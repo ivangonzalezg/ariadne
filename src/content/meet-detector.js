@@ -38,15 +38,25 @@ function syncRosterSpikeDiagnostics(enabled) {
   postToMainWorld({ type: "asterion:roster-spike-diagnostics-config", enabled: Boolean(enabled) });
 }
 
+function syncRosterSpikeRawCapture(enabled) {
+  postToMainWorld({ type: "asterion:roster-spike-raw-capture-config", enabled: Boolean(enabled) });
+}
+
 chrome.storage.local
-  .get({ rosterSpikeDiagnostics: false })
-  .then(({ rosterSpikeDiagnostics }) => syncRosterSpikeDiagnostics(rosterSpikeDiagnostics))
-  .catch(() => syncRosterSpikeDiagnostics(false));
+  .get({ rosterSpikeDiagnostics: false, rosterSpikeRawCapture: false })
+  .then(({ rosterSpikeDiagnostics, rosterSpikeRawCapture }) => {
+    syncRosterSpikeDiagnostics(rosterSpikeDiagnostics);
+    syncRosterSpikeRawCapture(rosterSpikeRawCapture);
+  })
+  .catch(() => {
+    syncRosterSpikeDiagnostics(false);
+    syncRosterSpikeRawCapture(false);
+  });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "local" && changes.rosterSpikeDiagnostics) {
-    syncRosterSpikeDiagnostics(changes.rosterSpikeDiagnostics.newValue);
-  }
+  if (areaName !== "local") return;
+  if (changes.rosterSpikeDiagnostics) syncRosterSpikeDiagnostics(changes.rosterSpikeDiagnostics.newValue);
+  if (changes.rosterSpikeRawCapture) syncRosterSpikeRawCapture(changes.rosterSpikeRawCapture.newValue);
 });
 
 let sessionId = null;

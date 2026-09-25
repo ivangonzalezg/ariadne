@@ -112,4 +112,93 @@ describe("installRosterSpikeDiagnostics", () => {
     expect(entries).toHaveLength(3);
     expect(entries.every((entry) => entry.event === "datachannel-message-received")).toBe(true);
   });
+
+  it("exports metadata without raw bytes while raw capture is off", async () => {
+    vi.resetModules();
+    const { installRosterSpikeDiagnostics } = await import("./roster-spike-diagnostics.js");
+    const diagnostics = installRosterSpikeDiagnostics({ isEnabled: () => true });
+    const channel = new window.RTCPeerConnection().createDataChannel("collections");
+    channel.dispatchMessage(new Uint8Array([1, 2, 3]).buffer);
+
+    const exported = diagnostics.exportBuffer();
+    expect(exported).toHaveLength(2);
+    expect(exported.every((entry) => !("payloadBase64" in entry))).toBe(true);
+  });
+
+  it("does not capture raw bytes unless metadata diagnostics are also enabled", async () => {
+    vi.resetModules();
+    const { installRosterSpikeDiagnostics } = await import("./roster-spike-diagnostics.js");
+    const diagnostics = installRosterSpikeDiagnostics({ isRawCaptureEnabled: () => true });
+    const channel = new window.RTCPeerConnection().createDataChannel("collections");
+    channel.dispatchMessage(new Uint8Array([1, 2, 3]).buffer);
+
+    diagnostics.setEnabled(true);
+    expect(diagnostics.getBuffer().every((entry) => !("payloadBase64" in entry))).toBe(true);
+  });
+
+  it.each(["collections", "dcrpc"])("exports base64 raw bytes for the approved %s label", async (label) => {
+    vi.resetModules();
+    const { installRosterSpikeDiagnostics } = await import("./roster-spike-diagnostics.js");
+    const diagnostics = installRosterSpikeDiagnostics({
+      isEnabled: () => true,
+      isRawCaptureEnabled: () => true,
+    });
+    const channel = new window.RTCPeerConnection().createDataChannel(label);
+    channel.dispatchMessage(new Uint8Array([0, 1, 2]).buffer);
+
+    const message = diagnostics.exportBuffer().find((entry) => entry.event === "datachannel-message-received");
+    expect(message).toMatchObject({
+      channelLabel: label,
+      direction: "outgoing",
+      byteLength: 3,
+      payloadBase64: "AAEC",
+    });
+  });
+
+  it.each(["media-session", "captions"])("never captures raw bytes for non-approved %s labels", async (label) => {
+    vi.resetModules();
+    const { installRosterSpikeDiagnostics } = await import("./roster-spike-diagnostics.js");
+    const diagnostics = installRosterSpikeDiagnostics({
+      isEnabled: () => true,
+      isRawCaptureEnabled: () => true,
+    });
+    const channel = new window.RTCPeerConnection().createDataChannel(label);
+    channel.dispatchMessage(new Uint8Array([1, 2, 3]).buffer);
+
+    expect(diagnostics.exportBuffer().every((entry) => !("payloadBase64" in entry))).toBe(true);
+  });
+
+  it("captures at most 20 raw messages per approved label while retaining all metadata", async () => {
+    vi.resetModules();
+    const { installRosterSpikeDiagnostics } = await import("./roster-spike-diagnostics.js");
+    const diagnostics = installRosterSpikeDiagnostics({
+      isEnabled: () => true,
+      isRawCaptureEnabled: () => true,
+    });
+    const channel = new window.RTCPeerConnection().createDataChannel("dcrpc");
+    for (let index = 0; index < 21; index += 1) {
+      channel.dispatchMessage(new Uint8Array([index]).buffer);
+    }
+
+    const messages = diagnostics.exportBuffer().filter((entry) => entry.event === "datachannel-message-received");
+    expect(messages).toHaveLength(21);
+    expect(messages.filter((entry) => "payloadBase64" in entry)).toHaveLength(20);
+    expect(messages[20]).not.toHaveProperty("payloadBase64");
+  });
+
+  it("truncates an oversized raw payload to its first 2KB without dropping its metadata", async () => {
+    vi.resetModules();
+    const { installRosterSpikeDiagnostics } = await import("./roster-spike-diagnostics.js");
+    const diagnostics = installRosterSpikeDiagnostics({
+      isEnabled: () => true,
+      isRawCaptureEnabled: () => true,
+    });
+    const bytes = new Uint8Array(2049).fill(7);
+    const channel = new window.RTCPeerConnection().createDataChannel("collections");
+    channel.dispatchMessage(bytes.buffer);
+
+    const message = diagnostics.exportBuffer().find((entry) => entry.event === "datachannel-message-received");
+    expect(message).toMatchObject({ byteLength: 2049 });
+    expect(message.payloadBase64).toBe(btoa(String.fromCharCode(...bytes.subarray(0, 2048))));
+  });
 });
