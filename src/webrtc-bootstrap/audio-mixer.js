@@ -1,5 +1,4 @@
 // src/webrtc-bootstrap/audio-mixer.js
-const MUTE_STALE_THRESHOLD_MS = 15000;
 const RECONCILE_INTERVAL_MS = 5000;
 
 export class MeetingAudioMixer {
@@ -122,15 +121,13 @@ export class MeetingAudioMixer {
   }
 
   reconcile() {
-    const now = this.now();
     for (const [key, entry] of [...this.remoteSources]) {
       if (entry.track.readyState !== "live") {
         this._removeRemoteSource(key, "reconcile: track not live");
         continue;
       }
-      if (entry.staleSince !== null && now - entry.staleSince > MUTE_STALE_THRESHOLD_MS) {
-        this._removeRemoteSource(key, "reconcile: muted too long");
-      }
+      // `mute` is temporary: a live track can resume without another `track`
+      // event. Keep its node connected so recovery reaches the recorder.
     }
   }
 
@@ -155,8 +152,9 @@ export class MeetingAudioMixer {
   _clearStale(key) {
     const entry = this.remoteSources.get(key);
     if (!entry) return;
+    const mutedForMs = entry.staleSince === null ? null : this.now() - entry.staleSince;
     entry.staleSince = null;
-    this.log("remote-track-unmuted", { key });
+    this.log("remote-track-unmuted", { key, mutedForMs });
   }
 
   _removeRemoteSource(key, reason) {

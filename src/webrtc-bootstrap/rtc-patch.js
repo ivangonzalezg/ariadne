@@ -38,7 +38,7 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
       if (event.track.kind !== "audio") return;
       const streamId = event.streams?.[0]?.id ?? null;
       const mid = event.transceiver?.mid ?? null;
-      // Logueado ANTES del guard de closed/failed a propósito: si alguna vez
+      // Logueado ANTES del guard de closed a propósito: si alguna vez
       // llega un "track" tarde para una conexión ya cerrada, queremos verlo acá
       // (con connectionState reflejando ese estado) aunque onRemoteAudioTrack no
       // se termine llamando.
@@ -49,7 +49,7 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
         mid,
         trackId: event.track.id,
       });
-      if (pc.connectionState === "closed" || pc.connectionState === "failed") return;
+      if (pc.connectionState === "closed") return;
       diagnostics.remoteAudioTracksSeen += 1;
       onRemoteAudioTrack({
         track: event.track,
@@ -61,7 +61,9 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
 
     pc.addEventListener("connectionstatechange", () => {
       log("connection-state-changed", { connectionId, connectionState: pc.connectionState });
-      if (pc.connectionState === "closed" || pc.connectionState === "failed") {
+      // ICE failure can recover on this same connection. Only a real close
+      // permanently removes its tracks and its entry in activeConnections.
+      if (pc.connectionState === "closed") {
         diagnostics.connectionsClosed += 1;
         activeConnections.delete(pc);
         onConnectionClosed(connectionId);

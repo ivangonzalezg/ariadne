@@ -38,6 +38,7 @@ beforeEach(() => {
 afterEach(() => {
   window.RTCPeerConnection = originalRTCPeerConnection;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("installRtcPatch", () => {
@@ -126,13 +127,15 @@ describe("installRtcPatch", () => {
     expect(onConnectionClosed).toHaveBeenCalledWith(connectionId);
   });
 
-  it("calls onConnectionClosed when the connection fails", async () => {
+  it("only cleans up a failed connection when it actually closes", async () => {
     vi.resetModules();
     const { installRtcPatch } = await import("./rtc-patch.js");
     const onConnectionClosed = vi.fn();
     installRtcPatch({ onRemoteAudioTrack: () => {}, onConnectionClosed });
     const pc = new window.RTCPeerConnection();
     pc._setConnectionState("failed");
+    expect(onConnectionClosed).not.toHaveBeenCalled();
+    pc._setConnectionState("closed");
     expect(onConnectionClosed).toHaveBeenCalledTimes(1);
   });
 
@@ -207,6 +210,65 @@ describe("installRtcPatch", () => {
       "disconnected",
       "closed",
     ]);
+  });
+});
+
+describe("remote audio connection recovery", () => {
+  it("preserves the mixer source and sender lookup across failure and recovery without a new track event", async () => {
+    vi.resetModules();
+    const { installRtcPatch, getCurrentLocalAudioTrack, diagnostics } = await import("./rtc-patch.js");
+    const { MeetingAudioMixer } = await import("./audio-mixer.js");
+    vi.stubGlobal("MediaStream", class { constructor(tracks) { this.tracks = tracks; } });
+    const source = { connect: vi.fn(), disconnect: vi.fn() };
+    const mixer = new MeetingAudioMixer({ audioContext: {
+      createMediaStreamDestination: () => ({ stream: {} }),
+      createMediaStreamSource: () => source,
+    } });
+    installRtcPatch({
+      onRemoteAudioTrack: (payload) => mixer.addRemoteTrack(payload),
+      onConnectionClosed: (id) => mixer.removeConnection(id),
+    });
+    const pc = new window.RTCPeerConnection();
+    const remote = { ...fakeAudioTrack("remote"), readyState: "live", addEventListener() {} };
+    const mic = fakeAudioTrack("mic");
+    pc._setSenders([{ track: mic }]);
+    pc._setConnectionState("connected");
+    pc._emit("track", { track: remote, streams: [], transceiver: { mid: "0" } });
+
+    pc._setConnectionState("failed");
+    expect(getCurrentLocalAudioTrack()).toBeNull();
+    pc._setConnectionState("connecting");
+    pc._setConnectionState("connected");
+    mixer.reconcile();
+
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(source.disconnect).not.toHaveBeenCalled();
+    expect(source.connect).toHaveBeenCalledTimes(1);
+    expect(getCurrentLocalAudioTrack()).toBe(mic);
+    expect(diagnostics.connectionsClosed).toBe(0);
+
+    pc._setConnectionState("closed");
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+    expect(source.disconnect).toHaveBeenCalledTimes(1);
+    expect(getCurrentLocalAudioTrack()).toBeNull();
+    expect(diagnostics.connectionsClosed).toBe(1);
+  });
+
+  it("captures an audio track arriving while the connection is failed", async () => {
+    vi.resetModules();
+    const { installRtcPatch } = await import("./rtc-patch.js");
+    const onRemoteAudioTrack = vi.fn();
+    installRtcPatch({ onRemoteAudioTrack, onConnectionClosed: () => {} });
+    const pc = new window.RTCPeerConnection();
+    pc._setConnectionState("failed");
+    const track = fakeAudioTrack("remote");
+    pc._emit("track", { track, streams: [], transceiver: { mid: "0" } });
+    pc._setConnectionState("connected");
+
+    expect(onRemoteAudioTrack).toHaveBeenCalledTimes(1);
+    expect(onRemoteAudioTrack).toHaveBeenCalledWith({
+      track, stream: null, mid: "0", connectionId: expect.any(Number),
+    });
   });
 });
 

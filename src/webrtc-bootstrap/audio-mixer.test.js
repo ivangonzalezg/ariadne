@@ -284,16 +284,20 @@ describe("MeetingAudioMixer remote sources", () => {
     expect(mixer.activeRemoteSourceCount).toBe(1);
   });
 
-  it("reconcile purges a source that has been muted longer than the stale threshold", () => {
-    const { mixer, advanceNow } = makeMixer();
+  it("keeps the remote audio node connected when a live track recovers after a long mute", () => {
+    const { mixer, sourceNodes, advanceNow } = makeMixer();
     const track = fakeTrack("t1");
     mixer.addRemoteTrack({ track, stream: fakeStream("s1"), mid: null, connectionId: 1 });
 
     track._emit("mute");
-    advanceNow(16000);
+    advanceNow(60000);
+    mixer.reconcile();
+    track._emit("unmute");
     mixer.reconcile();
 
-    expect(mixer.activeRemoteSourceCount).toBe(0);
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(sourceNodes).toHaveLength(1);
+    expect(sourceNodes[0].disconnect).not.toHaveBeenCalled();
   });
 
   it("reconcile does not purge a source that unmuted before the stale threshold", () => {
