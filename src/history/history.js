@@ -302,7 +302,19 @@ function createMediaPlayer(activeFile, isVideo) {
   } else {
     const label = document.createElement("p"); label.className = "audio-player-label"; label.textContent = t("common.meetingAudioLabel");
     const transport = document.createElement("div"); transport.className = "audio-transport"; const rewind = createMediaButton("media-round-button", t("history.rewind10Aria"), "rotate-ccw", 16); rewind.addEventListener("click", () => { media.currentTime = Math.max(0, media.currentTime - 10); }); const forward = createMediaButton("media-round-button", t("history.forward10Aria"), "rotate-cw", 16); forward.addEventListener("click", () => { media.currentTime = Math.min(Number.isFinite(media.duration) ? media.duration : media.currentTime + 10, media.currentTime + 10); }); transport.append(rewind, play, forward, time);
-    const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", t("common.volumeAria")); volumeWrap.innerHTML = icon("volume-2", { size: 16, color: "var(--text-secondary)" }); volumeWrap.appendChild(volume); player.append(label, media, transport, seek, volumeWrap);
+    const volumeWrap = document.createElement("label"); volumeWrap.className = "media-volume-control"; volumeWrap.setAttribute("aria-label", t("common.volumeAria")); volumeWrap.innerHTML = icon("volume-2", { size: 16, color: "var(--text-secondary)" }); volumeWrap.appendChild(volume);
+    const speedWrap = document.createElement("label"); speedWrap.className = "media-speed-control";
+    const speedLabel = document.createElement("span"); speedLabel.textContent = t("history.playbackSpeed");
+    const speed = document.createElement("select"); speed.className = "media-speed";
+    [1, 1.5, 2].forEach((rate) => {
+      const option = document.createElement("option"); option.value = String(rate); option.textContent = `${rate}×`; speed.appendChild(option);
+    });
+    speed.value = "1";
+    speed.addEventListener("change", () => { media.playbackRate = Number(speed.value); });
+    media.addEventListener("ratechange", () => { speed.value = String(media.playbackRate); });
+    speedWrap.append(speedLabel, speed);
+    const settings = document.createElement("div"); settings.className = "audio-player-settings"; settings.append(volumeWrap, speedWrap);
+    player.append(label, media, transport, seek, settings);
   }
   media.src = sourceUrl; update(); return player;
 }

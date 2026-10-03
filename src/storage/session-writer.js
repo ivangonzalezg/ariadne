@@ -12,9 +12,9 @@ function sanitizeForFolderName(text) {
   return text.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80).trim() || "Reunión";
 }
 
-function meetingFolderName(startedAt, meetingTitle) {
+function meetingFolderName(startedAt, meetingTitle, sessionId) {
   const iso = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
-  return `${sanitizeForFolderName(meetingTitle)} - ${iso}`;
+  return `${sanitizeForFolderName(meetingTitle)} - ${iso} - ${sanitizeForFolderName(sessionId)}`;
 }
 
 function sendConversionMessage(message) {
@@ -31,8 +31,11 @@ export class SessionWriter {
     this.tabId = tabId;
     this.meetingTitle = meetingTitle || "Reunión sin título";
     this.startedAt = Date.now();
-    this.writablesByStream = new Map();
+    this.writeFailures = new Map();
     this.writeQueueByStream = new Map();
+    this.segments = new Map();
+    this.lastSequence = new Map();
+    this.committedChunks = 0;
     this.captionParser = new CaptionParser();
     this.captionSnapshots = [];
     this.speakerLabels = [];
@@ -44,34 +47,63 @@ export class SessionWriter {
 
   async _init() {
     const root = await navigator.storage.getDirectory();
-    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt, this.meetingTitle), {
+    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt, this.meetingTitle, this.sessionId), {
       create: true,
     });
   }
 
-  async _getWritable(streamLabel) {
-    await this.ready;
-    if (this.writablesByStream.has(streamLabel)) {
-      return this.writablesByStream.get(streamLabel);
-    }
-    const fileName = STREAM_FILE_NAMES[streamLabel];
-    const fileHandle = await this.meetingHandle.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-    this.writablesByStream.set(streamLabel, writable);
-    this.streamsUsed.add(streamLabel);
-    return writable;
-  }
-
-  writeChunk(streamLabel, buffer) {
-    // Encadenar por stream: una escritura no arranca antes de que termine la
-    // anterior del mismo archivo, y finalize() espera a que esta cola se vacíe
-    // antes de cerrar los streams (si no, se podía cortar el último chunk).
+  writeChunk(streamLabel, buffer, { sessionId = this.sessionId, seq, generation = 0, captureTs = Date.now() } = {}) {
+    if (sessionId !== this.sessionId || !Object.hasOwn(STREAM_FILE_NAMES, streamLabel) ||
+        !Number.isInteger(generation) || generation < 0 || !Number.isFinite(captureTs)) return Promise.reject(new Error("Invalid chunk identity"));
+    if (this._finalizePromise) return Promise.reject(new Error("Session already finalized"));
     const previous = this.writeQueueByStream.get(streamLabel) ?? Promise.resolve();
     const next = previous.then(async () => {
-      const writable = await this._getWritable(streamLabel);
-      await writable.write(buffer);
+      await this.ready;
+      const last = this.lastSequence.get(streamLabel) ?? 0;
+      const sequence = seq ?? last + 1;
+      if (!Number.isInteger(sequence) || sequence < 1) throw new Error("Invalid chunk sequence");
+      if (sequence <= last) {
+        const committed = this.segments.get(`${streamLabel}:${generation}`);
+        if (!committed || sequence < committed.firstSequence || sequence > committed.lastSequence) throw new Error("Conflicting chunk generation");
+        return { duplicate: true, seq: sequence, generation };
+      }
+      const latestGeneration = Math.max(-1, ...[...this.segments.values()].filter((entry) => entry.stream === streamLabel).map((entry) => entry.generation));
+      if (generation < latestGeneration) throw new Error("Stale recorder generation");
+      if (sequence !== last + 1) throw new Error("Missing chunk sequence");
+      const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+      if (!bytes.byteLength) throw new Error("Empty chunk");
+      const key = `${streamLabel}:${generation}`;
+      let segment = this.segments.get(key);
+      if (!segment) {
+        const name = generation === 0 ? STREAM_FILE_NAMES[streamLabel] : `${streamLabel}-segment-${generation}.webm`;
+        segment = { stream: streamLabel, generation, name, byteLength: 0, firstSequence: sequence, lastSequence: sequence, firstCaptureTs: captureTs, lastCaptureTs: captureTs };
+        this.segments.set(key, segment);
+      }
+      const file = await this.meetingHandle.getFileHandle(segment.name, { create: true });
+      for (let attempt = 0; ; attempt++) {
+        let writable;
+        try {
+          writable = await file.createWritable({ keepExistingData: true });
+          await writable.write({ type: "write", position: segment.byteLength, data: bytes });
+          await writable.close();
+          break;
+        } catch (error) {
+          await writable?.abort?.().catch(() => {});
+          if (attempt === 2) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+        }
+      }
+      segment.byteLength += bytes.byteLength; segment.lastCaptureTs = captureTs; segment.lastSequence = sequence;
+      this.lastSequence.set(streamLabel, sequence);
+      this.streamsUsed.add(streamLabel); this.committedChunks++;
+      this.writeFailures.delete(`${streamLabel}:${sequence}`);
+      this.writeFailures.delete(`${streamLabel}:next`);
+      return { seq: sequence, generation, captureTs };
     });
-    this.writeQueueByStream.set(streamLabel, next);
+    // Keep the queue usable for a retransmission after a failed write.
+    this.writeQueueByStream.set(streamLabel, next.catch((error) => {
+      this.writeFailures.set(`${streamLabel}:${seq ?? "next"}`, String(error.message ?? error));
+    }));
     return next;
   }
 
@@ -89,7 +121,12 @@ export class SessionWriter {
     return this._finalizePromise;
   }
 
-  async _finalizeOnce({ muteManifest, endedAt }) {
+  async _finalizeOnce({ muteManifest, endedAt, persistenceErrors = [] }) {
+    for (const error of persistenceErrors) {
+      this.writeFailures.set(error.chunk, error.message);
+      const stream = error.chunk?.split(":")[0];
+      if (Object.hasOwn(STREAM_FILE_NAMES, stream)) this.streamsUsed.add(stream);
+    }
     // Cuando la sesión se finaliza desde un camino de emergencia (cierre de
     // pestaña/navegación, ver service-worker.js) no hay forma de reconstruir
     // el historial real de mute/unmute — vivía en la pestaña que ya se fue.
@@ -105,9 +142,6 @@ export class SessionWriter {
 
     await Promise.all(this.writeQueueByStream.values());
 
-    for (const writable of this.writablesByStream.values()) {
-      await writable.close();
-    }
 
     if (this.hasCaption) {
       const reconciled = reconcileCaptionSnapshots({
@@ -177,6 +211,10 @@ export class SessionWriter {
           videoConversionStatus,
           hasAudioMp3: hasAudioMp3 ?? false,
           hasVideoMp4: hasVideoMp4 ?? false,
+          captureSegments: [...this.segments.values()].map((entry) => ({ ...entry })),
+          committedChunks: this.committedChunks,
+          sessionId: this.sessionId,
+          persistenceErrors: [...this.writeFailures.entries()].map(([chunk, message]) => ({ chunk, message })),
         },
         null,
         2
@@ -225,7 +263,7 @@ export class SessionWriter {
             targetFileName: "audio-reunion.mp3",
             inputExt: "webm",
             outputExt: "mp3",
-            args: ["-vn"],
+            args: [],
             onProgress: createProgressReporter("meeting"),
           });
           audioConversionStatus = "succeeded";
@@ -281,7 +319,36 @@ export class SessionWriter {
   }
 
   async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args, onProgress }) {
-    const sourceHandle = await this.meetingHandle.getFileHandle(sourceFileName);
+    const streamLabel = outputExt === "mp3" ? "meeting" : "video";
+    if ([...this.writeFailures.keys()].some((key) => key.startsWith(`${streamLabel}:`))) throw new Error("Recording has uncommitted chunks");
+    const segments = [...this.segments.values()].filter((entry) => entry.stream === streamLabel && entry.byteLength > 0).sort((a, b) => a.generation - b.generation);
+    if (segments.length > 1) {
+      const inputs = [];
+      for (const segment of segments) {
+        const file = await (await this.meetingHandle.getFileHandle(segment.name)).getFile();
+        if (file.size !== undefined && file.size !== segment.byteLength) throw new Error("Segment size mismatch");
+        inputs.push(new Uint8Array(await file.arrayBuffer()));
+      }
+      const outputBytes = await runFfmpegJob({ inputs, inputExt, outputExt, args, onProgress });
+      const target = await this.meetingHandle.getFileHandle(targetFileName, { create: true });
+      const writable = await target.createWritable();
+      await writable.write(outputBytes); await writable.close();
+      // Produce the public WebM from the same complete segment list.
+      const combined = await runFfmpegJob({ inputs, inputExt, outputExt: "webm", args: ["-c", "copy"] });
+      const first = segments.find((segment) => segment.name === sourceFileName);
+      if (first) {
+        const backupName = `${streamLabel}-segment-${first.generation}.webm`;
+        const backup = await this.meetingHandle.getFileHandle(backupName, { create: true });
+        const backupWritable = await backup.createWritable();
+        await backupWritable.write(inputs[segments.indexOf(first)]); await backupWritable.close();
+        first.name = backupName;
+      }
+      const source = await this.meetingHandle.getFileHandle(sourceFileName, { create: true });
+      const combinedWritable = await source.createWritable();
+      await combinedWritable.write(combined); await combinedWritable.close();
+      return;
+    }
+    const sourceHandle = await this.meetingHandle.getFileHandle(segments[0]?.name ?? sourceFileName);
     const sourceFile = await sourceHandle.getFile();
     const inputBytes = new Uint8Array(await sourceFile.arrayBuffer());
     const outputBytes = await runFfmpegJob({ inputBytes, inputExt, outputExt, args, onProgress });
@@ -289,5 +356,10 @@ export class SessionWriter {
     const targetWritable = await targetHandle.createWritable();
     await targetWritable.write(outputBytes);
     await targetWritable.close();
+    if (segments[0] && segments[0].name !== sourceFileName) {
+      const publicSource = await this.meetingHandle.getFileHandle(sourceFileName, { create: true });
+      const writable = await publicSource.createWritable();
+      await writable.write(inputBytes); await writable.close();
+    }
   }
 }

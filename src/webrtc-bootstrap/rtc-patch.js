@@ -15,15 +15,17 @@ const connectionIds = new WeakMap();
 // en vez de depender únicamente del track que getUserMedia devolvió una sola
 // vez al principio.
 const activeConnections = new Set();
+const trackMetadata = new WeakMap();
+const receiverMetadata = new WeakMap();
 
 function getConnectionId(pc) {
   if (!connectionIds.has(pc)) connectionIds.set(pc, nextConnectionId++);
   return connectionIds.get(pc);
 }
 
-export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = () => {} }) {
+export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, onLocalAudioTrack = () => {}, onDataChannel = () => {}, onConnectionStateChange = () => {}, log = () => {} }) {
   const OriginalRTCPeerConnection = window.RTCPeerConnection;
-  if (!OriginalRTCPeerConnection) return;
+  if (!OriginalRTCPeerConnection || OriginalRTCPeerConnection.__ariadnePatched) return;
 
   function PatchedRTCPeerConnection(...args) {
     const pc = new OriginalRTCPeerConnection(...args);
@@ -33,6 +35,23 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
     // crea, no solo desde su primer evento.
     const connectionId = getConnectionId(pc);
     activeConnections.add(pc);
+    pc.addEventListener("datachannel", ({ channel }) => {
+      try { onDataChannel(channel); } catch (error) { log("data-channel-observer-error", { message: error.message }); }
+    });
+    const createDataChannel = pc.createDataChannel;
+    if (createDataChannel) pc.createDataChannel = function(...args) {
+      const channel = createDataChannel.apply(this, args);
+      try { onDataChannel(channel); } catch (error) { log("media-state-error", { message: error.message }); }
+      return channel;
+    };
+    const addTrack = pc.addTrack;
+    pc.addTrack = function(track, ...streams) {
+      const result = addTrack.call(this, track, ...streams);
+      if (track.kind === "audio") {
+        try { onLocalAudioTrack(track); } catch (error) { log("local-source-error", { message: error.message }); }
+      }
+      return result;
+    };
 
     pc.addEventListener("track", (event) => {
       if (event.track.kind !== "audio") return;
@@ -51,15 +70,14 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
       });
       if (pc.connectionState === "closed") return;
       diagnostics.remoteAudioTracksSeen += 1;
-      onRemoteAudioTrack({
-        track: event.track,
-        stream: event.streams?.[0] ?? null,
-        mid,
-        connectionId,
-      });
+      const metadata = { stream: event.streams?.[0] ?? null, mid };
+      trackMetadata.set(event.track, metadata);
+      if (event.receiver) receiverMetadata.set(event.receiver, metadata);
+      onRemoteAudioTrack({ track: event.track, receiver: event.receiver, ...metadata, connectionId });
     });
 
     pc.addEventListener("connectionstatechange", () => {
+      try { onConnectionStateChange(pc.connectionState); } catch (error) { log("connection-observer-error", { message: error.message }); }
       log("connection-state-changed", { connectionId, connectionState: pc.connectionState });
       // ICE failure can recover on this same connection. Only a real close
       // permanently removes its tracks and its entry in activeConnections.
@@ -75,7 +93,91 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, log = 
 
   PatchedRTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
   Object.setPrototypeOf(PatchedRTCPeerConnection, OriginalRTCPeerConnection);
+  Object.defineProperty(PatchedRTCPeerConnection, "__ariadnePatched", { value: true });
   window.RTCPeerConnection = PatchedRTCPeerConnection;
+}
+
+// Receiver lookup complements track events; it does not own or stop Meet tracks.
+export function sweepRemoteAudioTracks({ onRemoteAudioTrack, log = () => {} }) {
+  const result = { connectionsScanned: 0, tracksFound: 0, recovered: 0, errors: [], tracks: [] };
+  for (const pc of activeConnections) {
+    if (pc.connectionState === "closed" || pc.connectionState === "failed") continue;
+    const connectionId = getConnectionId(pc);
+    result.connectionsScanned += 1;
+    let receivers;
+    let transceivers = [];
+    try {
+      receivers = pc.getReceivers();
+    } catch (error) {
+      result.errors.push({ connectionId, operation: "getReceivers", message: String(error.message ?? error) });
+      continue;
+    }
+    try {
+      transceivers = pc.getTransceivers?.() ?? [];
+    } catch (error) {
+      result.errors.push({ connectionId, operation: "getTransceivers", message: String(error.message ?? error) });
+    }
+    for (const receiver of receivers) {
+      const track = receiver.track;
+      if (!track || track.kind !== "audio" || track.readyState !== "live") continue;
+      const transceiver = transceivers.find((item) => item.receiver === receiver);
+      // getReceivers also exposes live tracks on send-only/inactive transceivers.
+      if (transceiver?.stopped || (transceiver?.currentDirection != null &&
+          !["recvonly", "sendrecv"].includes(transceiver.currentDirection))) continue;
+      const known = trackMetadata.get(track) ?? receiverMetadata.get(receiver);
+      const payload = {
+        discovery: "sweep", receiver, connectionId, track, stream: known?.stream ?? null,
+        mid: transceiver?.mid ?? known?.mid ?? null,
+      };
+      result.tracksFound += 1;
+      result.tracks.push({ connectionId, trackId: track.id, connectionState: pc.connectionState });
+      try {
+        if (["added", "reconnected"].includes(onRemoteAudioTrack(payload))) result.recovered += 1;
+      } catch (error) {
+        result.errors.push({ connectionId, trackId: track.id, operation: "addRemoteTrack", message: String(error.message ?? error) });
+      }
+    }
+  }
+  for (const error of result.errors) log("receiver-sweep-error", error);
+  if (result.recovered) log("receiver-sweep-recovered", { recovered: result.recovered });
+  return result;
+}
+
+// On-demand metadata only: packet counters help distinguish receiving RTP
+// from a PCM track that actually delivers samples to Web Audio.
+export async function inspectRemoteReceivers() {
+  const receivers = [];
+  for (const pc of activeConnections) {
+    const connectionId = getConnectionId(pc);
+    let candidates;
+    try { candidates = pc.getReceivers(); }
+    catch (error) {
+      receivers.push({ connectionId, error: String(error.message ?? error) });
+      continue;
+    }
+    for (const receiver of candidates) {
+      if (receiver.track?.kind !== "audio") continue;
+      const track = receiver.track;
+      const entry = { connectionId, connectionState: pc.connectionState,
+        trackId: track.id, readyState: track.readyState, enabled: track.enabled,
+        muted: track.muted, inbound: [] };
+      try {
+        const reports = await receiver.getStats();
+        for (const report of reports.values()) {
+          if (report.type !== "inbound-rtp" || (report.kind ?? report.mediaType ?? "audio") !== "audio") continue;
+          entry.inbound.push({
+            timestamp: report.timestamp, packetsReceived: report.packetsReceived ?? null,
+            bytesReceived: report.bytesReceived ?? null, audioLevel: report.audioLevel ?? null,
+            totalAudioEnergy: report.totalAudioEnergy ?? null,
+            totalSamplesDuration: report.totalSamplesDuration ?? null,
+            codec: reports.get(report.codecId)?.mimeType ?? null,
+          });
+        }
+      } catch (error) { entry.error = String(error.message ?? error); }
+      receivers.push(entry);
+    }
+  }
+  return receivers;
 }
 
 export function installGetUserMediaPatch({ onMicStream }) {
@@ -194,9 +296,27 @@ export function installReplaceTrackPatch({ onAudioTrackReplaced, log = () => {} 
     return originalReplaceTrack.call(this, newTrack).then((result) => {
       if (kind === "audio") {
         diagnostics.audioSenderReplacements += 1;
-        onAudioTrackReplaced(newTrack, previousTrack);
+        try { onAudioTrackReplaced(newTrack, previousTrack); }
+        catch (error) { log("local-source-error", { message: error.message }); }
       }
       return result;
     });
   };
+}
+
+
+export function sweepLocalAudioTracks({ onLocalAudioTrack, log = () => {} }) {
+  const tracks = new Map();
+  for (const pc of activeConnections) {
+    if (["closed", "failed"].includes(pc.connectionState)) continue;
+    try {
+      for (const sender of pc.getSenders()) {
+        if (sender.track?.kind === "audio" && sender.track.readyState === "live") tracks.set(sender.track.id, sender.track);
+      }
+    } catch (error) { log("sender-sweep-error", { message: error.message }); }
+  }
+  for (const track of tracks.values()) {
+    try { onLocalAudioTrack(track); } catch (error) { log("local-source-error", { trackId: track.id, message: error.message }); }
+  }
+  return tracks;
 }

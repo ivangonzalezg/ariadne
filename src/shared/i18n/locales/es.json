@@ -69,6 +69,7 @@
   "history.emptyState": "Todavía no hay reuniones que coincidan con estos filtros.",
   "history.moreOptionsAria": "Más opciones",
   "history.viewDetails": "Ver detalles",
+  "history.playbackSpeed": "Velocidad",
   "history.seekAria": "Posición de reproducción",
   "history.mediaLoadError": "No se pudo cargar este archivo multimedia.",
   "history.fullscreenAria": "Pantalla completa",

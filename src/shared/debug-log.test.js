@@ -57,3 +57,25 @@ describe("debug-log", () => {
     expect(debugSpy).toHaveBeenCalledWith("[Ariadne:rtc-patch] evento", { a: 1 });
   });
 });
+
+describe("exportable diagnostic events", () => {
+  it("serializes a snapshot at log time instead of exporting only Object", async () => {
+    const { debugEvent } = await import("./debug-log.js");
+    const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    try {
+      setDebugEnabled(true);
+      const details = { tracks: [{ rms: 0.25, enabled: true }] };
+      debugEvent("audio-flow", details);
+      details.tracks[0].rms = 0;
+      const text = spy.mock.calls[0][0];
+      expect(text).toContain('"rms":0.25');
+      expect(JSON.parse(text.slice("[Ariadne:event] ".length))).toMatchObject({ event: "audio-flow", details: { tracks: [{ rms: 0.25 }] } });
+      const cyclic = {}; cyclic.self = cyclic;
+      expect(() => debugEvent("cyclic", cyclic)).not.toThrow();
+      expect(spy.mock.calls[1][0]).toContain('"serializationError":true');
+      setDebugEnabled(false);
+      debugEvent("disabled", details);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally { setDebugEnabled(false); spy.mockRestore(); }
+  });
+});

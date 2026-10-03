@@ -18,20 +18,22 @@ const debugLoggingReady = Promise.resolve()
 const sessions = new Map();
 const finalizingSessionIds = new Set();
 
-chrome.runtime.onMessage.addListener(async (message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!["asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:speaker-label", "asterion:session-ended"].includes(message.type)) return;
+  const handle = async () => {
   await debugLoggingReady;
   if (message.type === "asterion:session-starting") {
     if (sessions.has(message.sessionId)) return;
     const writer = new SessionWriter({ sessionId: message.sessionId, tabId: sender.tab?.id ?? null, meetingTitle: message.meetingTitle });
     sessions.set(message.sessionId, writer);
-    writer.ready.catch((error) => {
-      console.error("[Ariadne] No se pudo iniciar el storage de la sesión:", error);
-    });
+    await writer.ready;
   } else if (message.type === "asterion:chunk") {
     const writer = sessions.get(message.sessionId);
-    writer?.writeChunk(message.stream, base64ToArrayBuffer(message.bufferBase64)).catch((error) => {
-      console.error("[Ariadne] Error escribiendo chunk:", error);
-    });
+    if (!writer) {
+      const error = new Error("Session storage unavailable"); error.retryable = true; throw error;
+    }
+    const committed = await writer.writeChunk(message.stream, base64ToArrayBuffer(message.bufferBase64), message);
+    return { committed: true, ...committed };
   } else if (message.type === "asterion:caption-snapshot") {
     sessions.get(message.sessionId)?.onCaptionSnapshot(message.snapshot);
   } else if (message.type === "asterion:speaker-label") {
@@ -45,7 +47,7 @@ chrome.runtime.onMessage.addListener(async (message, sender) => {
       finalizingSessionIds.delete(message.sessionId);
     };
     writer
-      .finalize({ muteManifest: message.muteManifest, endedAt: message.endedAt })
+      .finalize({ muteManifest: message.muteManifest, endedAt: message.endedAt, persistenceErrors: message.persistenceErrors })
       .then((meta) => {
         chrome.runtime.sendMessage({ type: "asterion:session-finalized", ...meta });
       })
@@ -55,4 +57,10 @@ chrome.runtime.onMessage.addListener(async (message, sender) => {
         finalizingSessionIds.delete(message.sessionId);
       });
   }
+  };
+  handle().then((result) => sendResponse?.(result ?? {})).catch((error) => {
+    console.error("[Ariadne] Offscreen operation failed:", error);
+    sendResponse?.({ error: error.message, retryable: error.retryable ?? false });
+  });
+  return true;
 });

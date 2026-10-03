@@ -1,11 +1,19 @@
 // src/webrtc-bootstrap/session.js
 import { MuteManifest } from "../lib/mute-manifest.js";
 
-const CHUNK_TIMESLICE_MS = 1000;
+const CHUNK_TIMESLICE_MS = 2000;
 
 export class MainWorldSession {
-  constructor({ sessionId, mixer, postToIsolated, initialMicMuted }) {
+  constructor({ sessionId, mixer, postToIsolated, initialMicMuted, onChunk = () => {}, onRecorderError = () => {} }) {
     this.sessionId = sessionId;
+    this.onChunk = onChunk;
+    this.onRecorderError = onRecorderError;
+    this.generation = 0;
+    this.committedChunks = 0;
+    this.confirmedSequences = new Map();
+    this.receivedChunks = 0;
+    this.stopping = false;
+    this.restartPromise = null;
     this.mixer = mixer;
     this.postToIsolated = postToIsolated;
     this.muteManifest = new MuteManifest({ startedAt: Date.now() });
@@ -28,24 +36,37 @@ export class MainWorldSession {
 
   _startRecorder(stream, streamLabel, mimeType) {
     const recorder = new MediaRecorder(stream, { mimeType });
+    const generation = this.generation;
+    recorder.onerror = (event) => { if (!this.stopping) this.onRecorderError(event.error); };
     // Cadena secuencial: cada chunk espera a que el anterior termine de procesarse
     // y mandarse antes de seguir - evita que lleguen desordenados, y stop() puede
     // esperar a que esta cadena termine para saber que el último chunk ya salió.
     let writeChain = Promise.resolve();
     recorder.ondataavailable = (event) => {
+      if (streamLabel === "meeting") this.onChunk(event.data.size);
       if (event.data.size === 0) return;
+      this.receivedChunks++;
+      const captureTs = Date.now();
       this.seq[streamLabel] += 1;
       const seq = this.seq[streamLabel];
       writeChain = writeChain.then(async () => {
         const buffer = await event.data.arrayBuffer();
-        this.postToIsolated(
-          { type: "asterion:chunk", sessionId: this.sessionId, stream: streamLabel, seq, buffer },
+        await this.postToIsolated(
+          { type: "asterion:chunk", sessionId: this.sessionId, stream: streamLabel, seq, generation, captureTs, buffer },
           [buffer]
         );
       });
     };
     recorder.start(CHUNK_TIMESLICE_MS);
     return { recorder, waitForPendingWrites: () => writeChain };
+  }
+
+  confirmChunk({ sessionId, stream, seq, generation }) {
+    if (sessionId !== this.sessionId || !Object.hasOwn(this.seq, stream) || generation > this.generation || !Number.isInteger(seq) || seq < 1 || seq > this.seq[stream]) return;
+    const last = this.confirmedSequences.get(stream) ?? 0;
+    if (seq <= last) return;
+    this.confirmedSequences.set(stream, seq);
+    this.committedChunks++;
   }
 
   onMicMuted(timestampMs) {
@@ -73,32 +94,45 @@ export class MainWorldSession {
     this._videoWrites = waitForPendingWrites;
   }
 
+  async _flushRecorders() {
+    const recorders = [this.meetingRecorder, this.videoRecorder].filter(Boolean);
+    await Promise.all(recorders.map((recorder) => {
+      if (recorder.state === "inactive") return Promise.resolve();
+      return new Promise((resolve) => { recorder.onstop = resolve; recorder.stop(); });
+    }));
+    await Promise.all([this._meetingWrites?.(), this._videoWrites?.()].filter(Boolean));
+  }
+
+  restart(createMixer) {
+    if (this.stopping) return Promise.resolve(false);
+    if (this.restartPromise) return this.restartPromise;
+    this.restartPromise = (async () => {
+      await this._flushRecorders();
+      if (this.stopping) return false;
+      const mixer = await createMixer();
+      if (this.stopping) return false;
+      this.mixer = mixer;
+      this.generation++;
+      this.videoRecorder = null;
+      this.start();
+      if (this.videoStream) this.enableVideo(this.videoStream);
+      return true;
+    })().finally(() => { this.restartPromise = null; });
+    return this.restartPromise;
+  }
+
   async stop() {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopping = true;
     const endedAt = Date.now();
     this.muteManifest.finalize(endedAt);
-    const recorders = [this.meetingRecorder, this.videoRecorder].filter(Boolean);
-
-    const stopped = recorders.map(
-      (r) =>
-        new Promise((resolve) => {
-          r.onstop = resolve;
-        })
-    );
-    recorders.forEach((r) => r.stop());
-    await Promise.all(stopped);
-
-    // Esperar a que el último chunk (el que dispara el evento "stop") termine de
-    // procesarse y enviarse - si no, se podía señalar el fin de sesión antes de
-    // que ese último pedazo de audio/video llegara al offscreen document.
-    await Promise.all([this._meetingWrites?.(), this._videoWrites?.()].filter(Boolean));
-
-    this.videoStream?.getTracks().forEach((t) => t.stop());
-
-    this.postToIsolated({
-      type: "asterion:session-ended",
-      sessionId: this.sessionId,
-      muteManifest: this.muteManifest.toJSON(),
-      endedAt,
-    });
+    this.stopPromise = (async () => {
+      await this.restartPromise;
+      await this._flushRecorders();
+      this.videoStream?.getTracks().forEach((track) => track.stop());
+      await this.postToIsolated({ type: "asterion:session-ended", sessionId: this.sessionId,
+        muteManifest: this.muteManifest.toJSON(), endedAt });
+    })();
+    return this.stopPromise;
   }
 }

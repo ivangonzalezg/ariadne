@@ -32,6 +32,8 @@ function postToMainWorld(message) {
   window.postMessage({ source: "asterion-isolated-world", ...message }, "*");
 }
 
+let chunkQueue = Promise.resolve();
+const persistenceFailures = new Map();
 let sessionId = null;
 let currentState = "idle";
 let meetingTitle = null;
@@ -135,12 +137,33 @@ window.addEventListener("message", (event) => {
     cleanupObservers();
     console.error("[Ariadne] No se pudo iniciar la sesión:", message.reason);
   } else if (message.type === "asterion:chunk") {
-    chrome.runtime.sendMessage({
-      type: "asterion:chunk",
-      sessionId: message.sessionId,
-      stream: message.stream,
-      seq: message.seq,
-      bufferBase64: arrayBufferToBase64(message.buffer),
+    const chunk = { type: "asterion:chunk", sessionId: message.sessionId,
+      stream: message.stream, seq: message.seq, generation: message.generation,
+      captureTs: message.captureTs, bufferBase64: arrayBufferToBase64(message.buffer) };
+    const deliver = async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const result = await chrome.runtime.sendMessage(chunk);
+          if (!result?.committed) {
+            const error = new Error(result?.error ?? "Chunk not committed");
+            error.permanent = result?.retryable === false;
+            throw error;
+          }
+          postToMainWorld({ type: "asterion:chunk-committed", sessionId: message.sessionId,
+            stream: message.stream, seq: message.seq, generation: message.generation });
+          return;
+        } catch (error) {
+          if (error.permanent || attempt === 2) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+        }
+      }
+    };
+    chunkQueue = chunkQueue.then(deliver).catch((error) => {
+      console.error("[Ariadne] Chunk delivery failed:", error);
+      const failures = persistenceFailures.get(message.sessionId) ?? [];
+      failures.push({ chunk: `${message.stream}:${message.seq}`, message: error.message });
+      persistenceFailures.set(message.sessionId, failures);
+      postToMainWorld({ type: "asterion:chunk-failed", sessionId: message.sessionId, stream: message.stream, generation: message.generation, seq: message.seq, message: error.message });
     });
   } else if (message.type === "asterion:speaker-label") {
     chrome.runtime.sendMessage({
@@ -154,12 +177,13 @@ window.addEventListener("message", (event) => {
   } else if (message.type === "asterion:video-enable-failed") {
     updateBannerState(currentState, bannerMeta({ videoError: message.message }));
   } else if (message.type === "asterion:session-ended") {
-    chrome.runtime.sendMessage({
+    chunkQueue.then(() => chrome.runtime.sendMessage({
       type: "asterion:session-ended",
       sessionId: message.sessionId,
+      persistenceErrors: persistenceFailures.get(message.sessionId) ?? [],
       muteManifest: message.muteManifest,
       endedAt: message.endedAt,
-    });
+    })).finally(() => persistenceFailures.delete(message.sessionId));
     sessionId = null;
     meetingTitle = null;
     startedAt = null;

@@ -18,6 +18,9 @@ function fakeTrack(id, { readyState = "live", channelCount = null } = {}) {
   return {
     id,
     readyState,
+    enabled: true,
+    clone: vi.fn(function () { const copy = fakeTrack(`${id}-copy`, { readyState, channelCount }); copy.enabled = this.enabled; return copy; }),
+    stop: vi.fn(),
     addEventListener(type, handler) {
       (listeners[type] ??= []).push(handler);
     },
@@ -51,6 +54,7 @@ function fakeStream(id) {
 function fakeAudioContext() {
   const sourceNodes = [];
   const gainNodes = [];
+  const analyserNodes = [];
   let destinationNode = null;
   const context = {
     state: "running",
@@ -59,9 +63,18 @@ function fakeAudioContext() {
       destinationNode = { stream: {} };
       return destinationNode;
     },
-    createMediaStreamSource: () => {
-      const node = { connect: vi.fn(), disconnect: vi.fn() };
+    createMediaStreamSource: (stream) => {
+      const node = { stream, connect: vi.fn(), disconnect: vi.fn() };
       sourceNodes.push(node);
+      return node;
+    },
+    createAnalyser: () => {
+      const node = {
+        fftSize: 2048, value: 0,
+        getFloatTimeDomainData(samples) { samples.fill(this.value); },
+        disconnect: vi.fn(),
+      };
+      analyserNodes.push(node);
       return node;
     },
     createGain: () => {
@@ -81,14 +94,14 @@ function fakeAudioContext() {
     resume: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
   };
-  return { context, sourceNodes, gainNodes, get destinationNode() { return destinationNode; } };
+  return { context, sourceNodes, gainNodes, analyserNodes, get destinationNode() { return destinationNode; } };
 }
 
 function makeMixer(overrides = {}) {
   const audioContextFake = fakeAudioContext();
   const { context, sourceNodes, gainNodes } = audioContextFake;
   let currentNow = 0;
-  const mixer = new MeetingAudioMixer({
+  const mixer = new MeetingAudioMixer({ recordingType: "webrtc",
     audioContext: context,
     now: () => currentNow,
     log: () => {},
@@ -96,6 +109,8 @@ function makeMixer(overrides = {}) {
   });
   return {
     mixer,
+    context,
+    analyserNodes: audioContextFake.analyserNodes,
     sourceNodes,
     gainNodes,
     destinationNode: audioContextFake.destinationNode,
@@ -448,4 +463,216 @@ describe("MeetingAudioMixer channel configuration", () => {
 
     expect(logs).toContainEqual({ event: "mic-track-settings", details: { trackId: "mic-1", channelCount: null } });
   });
+});
+
+
+describe("receiver sweep identity and remote analysis", () => {
+  it("enriches a swept track with mid and stream without creating duplicate nodes", () => {
+    const { mixer, sourceNodes } = makeMixer();
+    const track = fakeTrack("track");
+    mixer.addRemoteTrack({ connectionId: 1, track });
+    mixer.addRemoteTrack({ connectionId: 1, track, mid: "0" });
+    const stream = fakeStream("stream");
+    mixer.addRemoteTrack({ connectionId: 1, track, mid: "0", stream });
+    mixer.addRemoteTrack({ connectionId: 1, track, mid: "0" });
+    expect(sourceNodes).toHaveLength(1);
+    expect([...mixer.remoteSources.keys()]).toEqual(["stream:stream"]);
+    track._emit("mute");
+    expect(mixer.remoteSources.get("stream:stream").staleSince).toBe(0);
+    stream._emit("removetrack", { track });
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+  });
+
+  it("never resurrects a displaced track when an older receiver is swept again", () => {
+    const { mixer, sourceNodes } = makeMixer();
+    const stream = fakeStream("same");
+    const old = fakeTrack("old");
+    const current = fakeTrack("current");
+    mixer.addRemoteTrack({ connectionId: 1, track: old, stream });
+    mixer.addRemoteTrack({ connectionId: 2, track: current, stream });
+    expect(mixer.addRemoteTrack({ connectionId: 1, track: old, stream })).toBe("superseded");
+    old._emit("ended");
+    mixer.removeConnection(1);
+    expect(sourceNodes).toHaveLength(2);
+    expect(mixer.remoteSources.get("stream:same").track).toBe(current);
+  });
+
+  it("retains the current source if connecting its replacement fails, then retries", () => {
+    const { mixer, context } = makeMixer();
+    const stream = fakeStream("same");
+    const old = fakeTrack("old");
+    const current = fakeTrack("current");
+    mixer.addRemoteTrack({ connectionId: 1, track: old, stream });
+    const create = context.createMediaStreamSource;
+    context.createMediaStreamSource = () => { throw new Error("temporary"); };
+    expect(() => mixer.addRemoteTrack({ connectionId: 2, track: current, stream })).toThrow("temporary");
+    expect(mixer.remoteSources.get("stream:same").track).toBe(old);
+    context.createMediaStreamSource = create;
+    expect(mixer.addRemoteTrack({ connectionId: 2, track: current, stream })).toBe("added");
+  });
+
+  it("measures only remote samples and marks suspended measurements unavailable", () => {
+    const { mixer, context, analyserNodes, advanceNow } = makeMixer();
+    mixer.setMicTrack(fakeTrack("mic"), { initiallyMuted: false });
+    mixer.addRemoteTrack({ connectionId: 1, track: fakeTrack("remote") });
+    mixer.startRemoteAnalysis();
+    mixer.sampleRemoteAudio();
+    expect(analyserNodes).toHaveLength(1);
+    expect(mixer.getRemoteAudioSnapshot()[0]).toMatchObject({ rms: 0, peak: 0, lastSignalAt: null });
+    analyserNodes[0].value = 0.25;
+    advanceNow(500);
+    mixer.sampleRemoteAudio();
+    expect(mixer.getRemoteAudioSnapshot()[0]).toMatchObject({ rms: 0.25, peak: 0.25, lastSignalAt: 500 });
+    context.state = "suspended";
+    // Snapshot must invalidate levels even before another timer tick.
+    expect(mixer.getRemoteAudioSnapshot()[0]).toMatchObject({ rms: null, peak: null, lastSignalAt: 500 });
+    mixer.sampleRemoteAudio();
+    context.state = "running";
+    expect(mixer.getRemoteAudioSnapshot()[0].rms).toBeNull();
+    mixer.stopRemoteAnalysis();
+    expect(analyserNodes[0].disconnect).toHaveBeenCalledOnce();
+    mixer.startRemoteAnalysis();
+    expect(mixer.getRemoteAudioSnapshot()[0].lastSignalAt).toBeNull();
+    mixer.sampleRemoteAudio();
+    expect(analyserNodes).toHaveLength(2);
+  });
+
+  it("keeps analysis failures out of the recording path and retries the analyser", () => {
+    const { mixer, context, sourceNodes } = makeMixer();
+    mixer.addRemoteTrack({ connectionId: 1, track: fakeTrack("remote") });
+    const create = context.createAnalyser;
+    context.createAnalyser = () => { throw new Error("analysis failed"); };
+    mixer.startRemoteAnalysis();
+    expect(mixer.sampleRemoteAudio()).toHaveLength(1);
+    expect(mixer.activeRemoteSourceCount).toBe(1);
+    expect(sourceNodes[0].disconnect).not.toHaveBeenCalled();
+    context.createAnalyser = create;
+    expect(mixer.sampleRemoteAudio()).toEqual([]);
+    expect(mixer.getRemoteAudioSnapshot()[0].rms).toBe(0);
+  });
+});
+
+
+it("keeps the newer connection when late stream metadata identifies an older swept track", () => {
+  const { mixer } = makeMixer();
+  const older = fakeTrack("older");
+  const newer = fakeTrack("newer");
+  const stream = fakeStream("same");
+  mixer.addRemoteTrack({ connectionId: 1, track: older, mid: "0" });
+  mixer.addRemoteTrack({ connectionId: 2, track: newer, stream });
+  expect(mixer.addRemoteTrack({ connectionId: 1, track: older, stream })).toBe("superseded");
+  expect(mixer.activeRemoteSourceCount).toBe(1);
+  expect(mixer.remoteSources.get("stream:same").track).toBe(newer);
+});
+
+
+describe("owned remote capture tracks", () => {
+  it("records an enabled private clone even when Meet disabled its original", () => {
+    const { mixer, sourceNodes } = makeMixer();
+    const track = fakeTrack("remote");
+    track.enabled = false;
+    mixer.addRemoteTrack({ connectionId: 1, track });
+    const capture = sourceNodes[0].stream.tracks[0];
+    expect(capture).not.toBe(track);
+    expect(capture.enabled).toBe(true);
+    expect(track.enabled).toBe(false);
+    expect(mixer.getRemoteAudioSnapshot()[0]).toMatchObject({ enabled: false, captureEnabled: true, captureTrackId: capture.id });
+    mixer.removeConnection(1);
+    expect(capture.stop).toHaveBeenCalledOnce();
+    expect(track.stop).not.toHaveBeenCalled();
+  });
+
+  it("isolates later enabled changes and does not clone again on repeated sweeps", () => {
+    const { mixer, sourceNodes } = makeMixer();
+    const track = fakeTrack("remote");
+    mixer.addRemoteTrack({ connectionId: 1, track });
+    track.enabled = false;
+    mixer.addRemoteTrack({ connectionId: 1, track });
+    expect(track.clone).toHaveBeenCalledOnce();
+    expect(sourceNodes[0].stream.tracks[0].enabled).toBe(true);
+    expect(track.enabled).toBe(false);
+  });
+
+  it("stops a failed new clone while preserving the current source for retry", () => {
+    const { mixer, context, sourceNodes } = makeMixer();
+    const stream = fakeStream("same");
+    const old = fakeTrack("old");
+    const next = fakeTrack("next");
+    mixer.addRemoteTrack({ connectionId: 1, track: old, stream });
+    const create = context.createMediaStreamSource;
+    context.createMediaStreamSource = () => { throw new Error("temporary"); };
+    expect(() => mixer.addRemoteTrack({ connectionId: 2, track: next, stream })).toThrow("temporary");
+    expect(next.clone.mock.results[0].value.stop).toHaveBeenCalledOnce();
+    expect(sourceNodes[0].stream.tracks[0].stop).not.toHaveBeenCalled();
+    context.createMediaStreamSource = create;
+    mixer.addRemoteTrack({ connectionId: 2, track: next, stream });
+    expect(sourceNodes[0].stream.tracks[0].stop).toHaveBeenCalledOnce();
+    expect(next.clone).toHaveBeenCalledTimes(2);
+    expect(old.stop).not.toHaveBeenCalled();
+    expect(next.stop).not.toHaveBeenCalled();
+  });
+
+  it("releases only owned clones when the mixer closes", async () => {
+    const { mixer, sourceNodes } = makeMixer();
+    const track = fakeTrack("remote");
+    mixer.addRemoteTrack({ connectionId: 1, track });
+    await mixer.close();
+    expect(sourceNodes[0].stream.tracks[0].stop).toHaveBeenCalledOnce();
+    expect(track.stop).not.toHaveBeenCalled();
+    expect(mixer.activeRemoteSourceCount).toBe(0);
+  });
+});
+
+
+describe("hybrid capture routes", () => {
+  it("mixes distinct HTML, Web Audio and local sources without global switching", () => {
+    const { mixer, sourceNodes } = makeMixer();
+    mixer.recordingType = "hybrid";
+    const remote = fakeTrack("remote");
+    mixer.addRemoteTrack({ connectionId: 1, track: remote });
+    expect(mixer.getRemoteAudioSnapshot()[0].connectedToMixer).toBe(false);
+    const stream = { id: "html", getAudioTracks: () => [remote] };
+    mixer.addHtmlStream(stream); mixer.addHtmlStream(stream);
+    mixer.addPlaybackStream("page", {}); mixer.addPlaybackStream("page", {});
+    expect(mixer.htmlSources.size).toBe(1);
+    expect(mixer.playbackSources.size).toBe(1);
+    expect(sourceNodes).toHaveLength(3);
+    expect(sourceNodes[1].disconnect).not.toHaveBeenCalled();
+    mixer.addRemoteTrack({ connectionId: 1, track: remote, discovery: "sweep" });
+    expect(mixer.getRemoteAudioSnapshot()[0].connectedToMixer).toBe(true);
+    mixer.removePlaybackStream("page");
+    expect(sourceNodes[1].disconnect).not.toHaveBeenCalled();
+  });
+  it("keeps a stream represented once when HTML and receivers share its identity", () => {
+    const { mixer } = makeMixer(); mixer.recordingType = "hybrid";
+    const track = fakeTrack("remote"), stream = fakeStream("same");
+    mixer.addRemoteTrack({ connectionId: 1, track, stream });
+    mixer.addHtmlStream(stream);
+    mixer.addRemoteTrack({ connectionId: 1, track, stream, discovery: "sweep" });
+    expect(mixer.getRemoteAudioSnapshot()[0].connectedToMixer).toBe(false);
+    expect(mixer.htmlSources.size).toBe(1);
+  });
+});
+
+it("keeps HTML and Web Audio confined to their internal capture modes", () => {
+  const { mixer } = makeMixer();
+  const stream = { id: "html" };
+  mixer.addHtmlStream(stream); mixer.addPlaybackStream("output", {});
+  expect(mixer.htmlSources.size).toBe(0); expect(mixer.playbackSources.size).toBe(0);
+  mixer.recordingType = "html";
+  mixer.addHtmlStream(stream); mixer.addPlaybackStream("output", {});
+  expect(mixer.htmlSources.size).toBe(1); expect(mixer.playbackSources.size).toBe(0);
+  mixer.recordingType = "hybrid";
+  mixer.addPlaybackStream("output", {});
+  expect(mixer.htmlSources.size).toBe(1); expect(mixer.playbackSources.size).toBe(1);
+});
+
+it("recreates a suspect HTML source while preserving owners and remote tracks", () => {
+  const { mixer, sourceNodes } = makeMixer(); mixer.recordingType = "hybrid";
+  const track = fakeTrack("suspect"), stream = fakeStream("shared");
+  mixer.addRemoteTrack({ connectionId: 1, track, stream }); mixer.addHtmlStream(stream);
+  expect(mixer.reconnectRemoteStream("stream:shared")).toBe(true);
+  expect(sourceNodes[1].disconnect).toHaveBeenCalledOnce();
+  expect(mixer.htmlSources.get("shared")).toBe(sourceNodes[2]);
+  expect(track.stop).not.toHaveBeenCalled(); expect(mixer.htmlSources.size).toBe(1);
 });

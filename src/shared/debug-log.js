@@ -20,3 +20,13 @@ export function debugLog(...args) {
 export function debugDebug(...args) {
   if (debugEnabled) console.debug(...args);
 }
+
+
+// Text JSON survives Chrome's "Save as" console export (objects become Object).
+export function debugEvent(event, details) {
+  if (!debugEnabled) return;
+  let payload;
+  try { payload = JSON.stringify({ timestampMs: Date.now(), event, details }); }
+  catch { payload = JSON.stringify({ timestampMs: Date.now(), event, serializationError: true }); }
+  console.debug(`[Ariadne:event] ${payload}`);
+}

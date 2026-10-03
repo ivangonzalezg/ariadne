@@ -69,6 +69,7 @@
   "history.emptyState": "No meetings match these filters yet.",
   "history.moreOptionsAria": "More options",
   "history.viewDetails": "View details",
+  "history.playbackSpeed": "Playback speed",
   "history.seekAria": "Playback position",
   "history.mediaLoadError": "This media file could not be loaded.",
   "history.fullscreenAria": "Fullscreen",

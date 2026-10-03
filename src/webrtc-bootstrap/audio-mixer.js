@@ -1,8 +1,9 @@
 // src/webrtc-bootstrap/audio-mixer.js
+import { measureAudioSamples } from "./audio-levels.js";
 const RECONCILE_INTERVAL_MS = 5000;
 
 export class MeetingAudioMixer {
-  constructor({ audioContext = new AudioContext(), now = () => Date.now(), log = () => {} } = {}) {
+  constructor({ audioContext = new AudioContext(), recordingType = "hybrid", now = () => Date.now(), log = () => {} } = {}) {
     this.audioContext = audioContext;
     this.now = now;
     this.log = log;
@@ -10,6 +11,14 @@ export class MeetingAudioMixer {
     this._forceStereoChannelConfig(this.destination, "destination");
     // key -> { connectionId, sourceNode, track, staleSince }
     this.remoteSources = new Map();
+    this.playbackSources = new Map();
+    this.recordingType = recordingType;
+    this.remoteRoute = recordingType;
+    this.htmlSources = new Map();
+    this.localSources = new Map();
+    this.trackKeys = new Map();
+    this.supersededTracks = new WeakSet();
+    this.analysisEnabled = false;
     // connectionId -> Set<key>, for O(1) purge-by-connection
     this.connectionKeys = new Map();
     this.micSourceNode = null;
@@ -17,16 +26,7 @@ export class MeetingAudioMixer {
     this.reconcileTimer = null;
   }
 
-  // Fuerza explícitamente 2 canales (estéreo) en el nodo, en vez de confiar
-  // en su configuración por defecto. NOTA (agregada tras la revisión de
-  // Codex): por spec, MediaStreamAudioDestinationNode YA viene por defecto
-  // con channelCount=2/channelCountMode="explicit"/channelInterpretation=
-  // "speakers" - así que forzar esto en `destination` es casi seguro un
-  // no-op, no una reparación confirmada. Lo mantenemos igual porque no
-  // cuesta nada y Codex lo recomendó como hardening defensivo, pero NO debe
-  // presentarse como "la solución" sin evidencia de un caso real donde el
-  // valor por defecto haya sido distinto. Por eso este método loguea el
-  // valor ANTES de pisarlo - es la evidencia real que nos falta hoy.
+  // Keep the destination channel layout stable across reconstructed pipelines.
   _forceStereoChannelConfig(node, label) {
     this.log("mixer-channel-config-before", {
       node: label,
@@ -64,22 +64,61 @@ export class MeetingAudioMixer {
     return `conn:${connectionId}:track:${track.id}`;
   }
 
-  addRemoteTrack({ track, stream, mid, connectionId }) {
-    const key = this._remoteKey(connectionId, { streamId: stream?.id ?? null, mid, track });
+  addRemoteTrack({ track, stream, mid, connectionId, receiver, discovery = "event" }) {
+    if (this.supersededTracks.has(track)) return "superseded";
+    const previousKey = this.trackKeys.get(track);
+    const previous = this.remoteSources.get(previousKey);
+    let key = this._remoteKey(connectionId, { streamId: stream?.id ?? null, mid, track });
+    // A sweep may know less than a prior event: never downgrade its identity.
+    if (previous && !stream && (previousKey.startsWith("stream:") || !mid)) key = previousKey;
     const existing = this.remoteSources.get(key);
-    if (existing && existing.track === track) return;
-    if (existing) this._teardownEntry(key, existing, "replaced by a newer track for the same slot");
+    if (existing && existing.track !== track && existing.connectionId > connectionId) {
+      this.supersededTracks.add(track);
+      if (previous) this._teardownEntry(previousKey, previous, "displaced by a newer connection");
+      return "superseded";
+    }
+    const replaceExisting = () => {
+      if (existing && existing.track !== track) {
+        this.supersededTracks.add(existing.track);
+        this._teardownEntry(key, existing, "replaced by a newer track for the same slot");
+      }
+    };
+    if (previous) {
+      previous.receiver = receiver ?? previous.receiver;
+      replaceExisting();
+      if (key !== previousKey) {
+        this.remoteSources.delete(previousKey);
+        const keys = this.connectionKeys.get(previous.connectionId);
+        keys.delete(previousKey);
+        keys.add(key);
+        this.remoteSources.set(key, previous);
+        this.trackKeys.set(track, key);
+      }
+      this._observeStream(previous, stream);
+      const reconnected = discovery === "sweep" && this._connectReceiver(key, previous);
+      return reconnected ? "reconnected" : "unchanged";
+    }
 
-    // Siempre envolvemos solo este track en su propio MediaStream - nunca usamos
-    // `stream` (el MediaStream completo del evento) directamente acá, porque si
-    // ese stream tuviera más de un track, createMediaStreamSource podría tomar
-    // uno distinto al que realmente nos interesa. `stream` se usa únicamente
-    // como identidad (su .id) y para el listener de "removetrack" más abajo.
-    const sourceNode = this.audioContext.createMediaStreamSource(new MediaStream([track]));
-    sourceNode.connect(this.destination);
+    // Keep recording independent of Meet's per-track `enabled` controls.
+    // Muting the actual remote source still affects every clone; only our own
+    // copy is enabled here. Identity and lifecycle remain tied to Meet's track.
+    const captureTrack = track.clone();
+    let sourceNode;
+    try {
+      captureTrack.enabled = true;
+      sourceNode = this.audioContext.createMediaStreamSource(new MediaStream([captureTrack]));
+      if (this.recordingType !== "hybrid") sourceNode.connect(this.destination);
+    } catch (error) {
+      sourceNode?.disconnect();
+      captureTrack.stop();
+      throw error;
+    }
 
-    const entry = { connectionId, sourceNode, track, staleSince: null };
+    // Commit a replacement only after the new source connected successfully.
+    replaceExisting();
+    const entry = { receiver, connectionId, sourceNode, track, captureTrack, staleSince: null, stream: null, listeners: [], connectedToMixer: this.recordingType !== "hybrid", analyser: null, samples: null, rms: null, peak: null, lastSignalAt: null };
     this.remoteSources.set(key, entry);
+    this.trackKeys.set(track, key);
 
     let keysForConnection = this.connectionKeys.get(connectionId);
     if (!keysForConnection) {
@@ -88,29 +127,37 @@ export class MeetingAudioMixer {
     }
     keysForConnection.add(key);
 
-    // Cada listener valida que la entrada en `key` siga siendo ESTE `track`
-    // antes de actuar. Sin esa validación, si este track es reemplazado (ver
-    // el `_teardownEntry` de arriba) pero el track viejo sigue vivo un rato y
-    // dispara "ended"/"mute"/"unmute" más tarde, esos listeners viejos
-    // encontrarían la entrada NUEVA en `this.remoteSources.get(key)` (misma
-    // key) y la purgarían/marcarían por error - un bug real que la revisión
-    // de Codex encontró en una versión anterior de este mismo plan.
-    track.addEventListener("ended", () => {
-      if (this.remoteSources.get(key)?.track === track) this._removeRemoteSource(key, "track ended");
+    const listen = (type, handler) => {
+      track.addEventListener(type, handler);
+      entry.listeners.push([type, handler]);
+    };
+    listen("ended", () => {
+      const currentKey = this.trackKeys.get(track);
+      if (currentKey) this._removeRemoteSource(currentKey, "track ended");
     });
-    track.addEventListener("mute", () => {
-      if (this.remoteSources.get(key)?.track === track) this._markStale(key);
+    listen("mute", () => {
+      const currentKey = this.trackKeys.get(track);
+      if (currentKey) this._markStale(currentKey);
     });
-    track.addEventListener("unmute", () => {
-      if (this.remoteSources.get(key)?.track === track) this._clearStale(key);
+    listen("unmute", () => {
+      const currentKey = this.trackKeys.get(track);
+      if (currentKey) this._clearStale(currentKey);
     });
-    stream?.addEventListener("removetrack", (event) => {
-      if (event.track === track && this.remoteSources.get(key)?.track === track) {
-        this._removeRemoteSource(key, "removed from its MediaStream");
-      }
-    });
-
+    this._observeStream(entry, stream);
+    if (discovery === "sweep") this._connectReceiver(key, entry);
     this.log("remote-track-added", { key, connectionId, streamId: stream?.id ?? null, mid, trackId: track.id });
+    return "added";
+  }
+
+  _observeStream(entry, stream) {
+    if (!stream || entry.stream === stream) return;
+    entry.stream?.removeEventListener?.("removetrack", entry.onRemoveTrack);
+    entry.stream = stream;
+    entry.onRemoveTrack = (event) => {
+      const key = this.trackKeys.get(entry.track);
+      if (event.track === entry.track && key) this._removeRemoteSource(key, "removed from its MediaStream");
+    };
+    stream.addEventListener?.("removetrack", entry.onRemoveTrack);
   }
 
   removeConnection(connectionId) {
@@ -131,9 +178,12 @@ export class MeetingAudioMixer {
     }
   }
 
-  startReconciliation(intervalMs = RECONCILE_INTERVAL_MS) {
+  startReconciliation(intervalMs = RECONCILE_INTERVAL_MS, afterReconcile = () => {}) {
     if (this.reconcileTimer) return;
-    this.reconcileTimer = setInterval(() => this.reconcile(), intervalMs);
+    this.reconcileTimer = setInterval(() => {
+      this.reconcile();
+      afterReconcile();
+    }, intervalMs);
   }
 
   stopReconciliation() {
@@ -169,6 +219,11 @@ export class MeetingAudioMixer {
     } catch {
       // ya pudo haber sido desconectado
     }
+    this._disconnectAnalyser(entry);
+    entry.captureTrack.stop();
+    for (const [type, handler] of entry.listeners) entry.track.removeEventListener?.(type, handler);
+    entry.stream?.removeEventListener?.("removetrack", entry.onRemoveTrack);
+    this.trackKeys.delete(entry.track);
     this.remoteSources.delete(key);
     const keysForConnection = this.connectionKeys.get(entry.connectionId);
     if (keysForConnection) {
@@ -179,6 +234,156 @@ export class MeetingAudioMixer {
       if (keysForConnection.size === 0) this.connectionKeys.delete(entry.connectionId);
     }
     this.log("remote-track-removed", { key, reason });
+  }
+
+  startRemoteAnalysis() {
+    this.analysisEnabled = true;
+    for (const entry of this.remoteSources.values()) entry.lastSignalAt = null;
+  }
+
+  _disconnectAnalyser(entry) {
+    if (entry.analyser) {
+      try { entry.sourceNode.disconnect(entry.analyser); } catch { /* source may already be disconnected */ }
+      entry.analyser.disconnect();
+    }
+    entry.analyser = null;
+    entry.samples = null;
+    entry.rms = null;
+    entry.peak = null;
+  }
+
+  stopRemoteAnalysis() {
+    this.analysisEnabled = false;
+    for (const entry of this.remoteSources.values()) this._disconnectAnalyser(entry);
+  }
+
+  sampleRemoteAudio() {
+    const errors = [];
+    for (const [key, entry] of this.remoteSources) {
+      entry.rms = null;
+      entry.peak = null;
+      if (!this.analysisEnabled || this.audioContext.state !== "running") continue;
+      try {
+        if (!entry.analyser) {
+          const analyser = this.audioContext.createAnalyser();
+          analyser.fftSize = 2048;
+          try { entry.sourceNode.connect(analyser); }
+          catch (error) { analyser.disconnect(); throw error; }
+          entry.analyser = analyser;
+          entry.samples = new Float32Array(analyser.fftSize);
+        }
+        entry.analyser.getFloatTimeDomainData(entry.samples);
+        Object.assign(entry, measureAudioSamples(entry.samples));
+        if (entry.rms > 0.001) entry.lastSignalAt = this.now();
+      } catch (error) {
+        this._disconnectAnalyser(entry);
+        errors.push({ key, operation: "sampleRemoteAudio", message: String(error.message ?? error) });
+      }
+    }
+    return errors;
+  }
+
+  getRemoteAudioSnapshot() {
+    const available = this.analysisEnabled && this.audioContext.state === "running";
+    return [...this.remoteSources].map(([key, entry]) => ({
+      key, connectionId: entry.connectionId, trackId: entry.track.id,
+      readyState: entry.track.readyState, muted: Boolean(entry.track.muted),
+      enabled: entry.track.enabled, captureTrackId: entry.captureTrack.id, captureEnabled: entry.captureTrack.enabled,
+      connectedToMixer: entry.connectedToMixer,
+      rms: available ? entry.rms : null, peak: available ? entry.peak : null,
+      lastSignalAt: entry.lastSignalAt, announcedMicOn: entry.announcedMicOn ?? null,
+    }));
+  }
+
+  addPlaybackStream(key, stream) {
+    if (this.recordingType !== "hybrid" || this.playbackSources.has(key)) return;
+    const source = this.audioContext.createMediaStreamSource(stream);
+    try { source.connect(this.destination); }
+    catch (error) { source.disconnect(); throw error; }
+    this.playbackSources.set(key, source);
+  }
+
+  removePlaybackStream(key) {
+    const source = this.playbackSources.get(key);
+    if (!source) return;
+    source.disconnect();
+    this.playbackSources.delete(key);
+  }
+
+  _connectReceiver(key, entry) {
+    if (entry.connectedToMixer || this.recordingType === "html") return;
+    if (this.htmlSources.has(entry.stream?.id)) return;
+    // Event discovery only registers hybrid receivers; sweeps also repair
+    // missing healthy sources. Silence is never used to choose a route.
+    if (entry.track.readyState === "live" && !entry.track.muted && entry.track.enabled) {
+      entry.sourceNode.connect(this.destination);
+      entry.connectedToMixer = true;
+      this.log("remote-source-reconnected", { key, connectionId: entry.connectionId });
+      return true;
+    }
+    return false;
+  }
+
+  reconnectRemoteStream(key) {
+    const entry = this.remoteSources.get(key);
+    if (!entry) return false;
+    const htmlSource = this.htmlSources.get(entry.stream?.id);
+    if (!htmlSource && !entry.connectedToMixer) return false;
+    const stream = htmlSource ? entry.stream : new MediaStream([entry.captureTrack]);
+    const source = this.audioContext.createMediaStreamSource(stream);
+    try { source.connect(this.destination); }
+    catch (error) { source.disconnect(); throw error; }
+    if (htmlSource) {
+      htmlSource.disconnect();
+      this.htmlSources.set(entry.stream.id, source);
+    } else {
+      this._disconnectAnalyser(entry);
+      entry.sourceNode.disconnect();
+      entry.sourceNode = source;
+    }
+    return true;
+  }
+
+  addHtmlStream(stream) {
+    if (this.recordingType === "webrtc" || this.htmlSources.has(stream.id)) return;
+    const remote = this.remoteSources.get(`stream:${stream.id}`);
+    if (remote?.connectedToMixer) return;
+    const source = this.audioContext.createMediaStreamSource(stream);
+    try { source.connect(this.destination); }
+    catch (error) { source.disconnect(); throw error; }
+    this.htmlSources.set(stream.id, source);
+  }
+
+  removeHtmlStream(id) {
+    this.htmlSources.get(id)?.disconnect();
+    this.htmlSources.delete(id);
+  }
+
+  addLocalTrack(track) {
+    if (this.localSources.has(track.id) || track.readyState !== "live") return;
+    if (!this.micGainNode) {
+      this.micGainNode = this.audioContext.createGain();
+      this.micGainNode.gain.value = this.micMuted ? 0 : 1;
+      this.micGainNode.connect(this.destination);
+    }
+    const source = this.audioContext.createMediaStreamSource(new MediaStream([track]));
+    source.connect(this.micGainNode);
+    const ended = () => this.removeLocalTrack(track.id);
+    track.addEventListener?.("ended", ended);
+    this.localSources.set(track.id, { track, source, ended });
+  }
+
+  removeLocalTrack(id) {
+    const entry = this.localSources.get(id);
+    if (!entry) return;
+    entry.source.disconnect();
+    entry.track.removeEventListener?.("ended", entry.ended);
+    this.localSources.delete(id);
+  }
+
+  getLocalSnapshot() {
+    return [...this.localSources.values()].map(({ track }) => ({ trackId: track.id,
+      readyState: track.readyState, enabled: track.enabled, muted: track.muted }));
   }
 
   setMicTrack(micTrack, { initiallyMuted }) {
@@ -212,6 +417,7 @@ export class MeetingAudioMixer {
   }
 
   setMicMuted(muted) {
+    this.micMuted = muted;
     if (!this.micGainNode) return;
     const now = this.audioContext.currentTime;
     const targetGain = muted ? 0 : 1;
@@ -234,6 +440,11 @@ export class MeetingAudioMixer {
 
   async close() {
     this.stopReconciliation();
-    await this.audioContext.close();
+    this.stopRemoteAnalysis();
+    for (const key of [...this.remoteSources.keys()]) this._removeRemoteSource(key, "mixer closed");
+    for (const key of [...this.playbackSources.keys()]) this.removePlaybackStream(key);
+    for (const id of [...this.htmlSources.keys()]) this.removeHtmlStream(id);
+    for (const id of [...this.localSources.keys()]) this.removeLocalTrack(id);
+    if (this.audioContext.state !== "closed") await this.audioContext.close();
   }
 }

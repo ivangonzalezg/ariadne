@@ -15,6 +15,10 @@ class MemoryFileHandle {
   async createWritable() {
     return {
       write: async (value) => {
+        if (value?.type === "write") {
+          const next = new Uint8Array(Math.max(this.bytes.length, value.position + value.data.byteLength));
+          next.set(this.bytes); next.set(value.data, value.position); this.bytes = next; return;
+        }
         if (typeof value === "string") {
           this.bytes = new TextEncoder().encode(value);
         } else if (value instanceof ArrayBuffer) {
@@ -286,4 +290,69 @@ describe("SessionWriter conversion flow", () => {
 
     expect(segments).toEqual([{ index: 0, startTime: 1000, endTime: 2000, text: "Hola", speaker: "You" }]);
   });
+  it("retries failed writes at the same offset and deduplicates committed sequences", async () => {
+    vi.useFakeTimers();
+    try {
+      const writer = await createWriter({ audio: false, video: false });
+      const file = await writer.meetingHandle.getFileHandle("audio-reunion.webm", { create: true });
+      const original = file.createWritable.bind(file);
+      let attempts = 0;
+      file.createWritable = async () => {
+        const writable = await original();
+        return { ...writable, close: async () => { if (++attempts < 3) throw new Error("temporary"); } };
+      };
+      const saved = writer.writeChunk("meeting", new Uint8Array([1, 2]), { seq: 1, generation: 0 });
+      await vi.runAllTimersAsync(); await saved;
+      expect(attempts).toBe(3); expect([...file.bytes]).toEqual([1, 2]);
+      expect(await writer.writeChunk("meeting", new Uint8Array([1, 2]), { seq: 1, generation: 0 })).toMatchObject({ duplicate: true });
+      expect(writer.committedChunks).toBe(1);
+      await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 })).rejects.toThrow("Missing chunk sequence");
+      await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 2, sessionId: "other" })).rejects.toThrow("Invalid chunk identity");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("concatenates independent generations with defaults and keeps original segments for repeated conversion", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ video: false });
+    await writer.writeChunk("meeting", new Uint8Array([3, 4]), { seq: 2, generation: 1 });
+    const finished = finishConversions(writer); await writer.finalize({}); await finished;
+    expect(ffmpeg.runFfmpegJob.mock.calls[0][0]).toMatchObject({ inputs: [new Uint8Array([1, 2]), new Uint8Array([3, 4])], args: [], outputExt: "mp3" });
+    expect(ffmpeg.runFfmpegJob.mock.calls[1][0]).toMatchObject({ outputExt: "webm", args: ["-c", "copy"] });
+    expect([...writer.meetingHandle.files.get("meeting-segment-0.webm").bytes]).toEqual([1, 2]);
+    await writer._convertStream({ sourceFileName: "audio-reunion.webm", targetFileName: "audio-reunion.mp3", inputExt: "webm", outputExt: "mp3", args: [] });
+    expect(ffmpeg.runFfmpegJob.mock.calls[2][0].inputs).toEqual([new Uint8Array([1, 2]), new Uint8Array([3, 4])]);
+  });
+
+  it("reports incomplete persistence instead of declaring a successful conversion", async () => {
+    const writer = await createWriter({ video: false });
+    await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 })).rejects.toThrow();
+    const finished = finishConversions(writer); await writer.finalize({}); await finished;
+    expect(manifestOf(writer)).toMatchObject({ audioConversionStatus: "failed", hasAudioMp3: false });
+    expect(manifestOf(writer).persistenceErrors).toHaveLength(1);
+    expect(ffmpeg.runFfmpegJob).not.toHaveBeenCalled();
+  });
+
+  it("preserves public WebM when the only populated generation follows a restart", async () => {
+    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: false, video: false });
+    await writer.writeChunk("meeting", new Uint8Array([5, 6]), { seq: 1, generation: 1 });
+    const finished = finishConversions(writer); await writer.finalize({}); await finished;
+    expect([...writer.meetingHandle.files.get("audio-reunion.webm").bytes]).toEqual([5, 6]);
+  });
+
+  it("isolates simultaneous meetings with the same title and timestamp", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = await createWriter({ audio: false, video: false });
+      const second = new SessionWriter({ sessionId: "session-2", tabId: 8, meetingTitle: first.meetingTitle });
+      await second.ready;
+      expect(first.startedAt).toBe(second.startedAt); expect(first.meetingHandle.name).not.toBe(second.meetingHandle.name);
+      await first.writeChunk("meeting", new Uint8Array([1]), { seq: 1 });
+      await second.writeChunk("meeting", new Uint8Array([2]), { seq: 1 });
+      expect([...first.meetingHandle.files.get("audio-reunion.webm").bytes]).toEqual([1]);
+      expect([...second.meetingHandle.files.get("audio-reunion.webm").bytes]).toEqual([2]);
+      await expect(first.writeChunk("meeting", new Uint8Array([3]), { seq: 1, generation: 1 })).rejects.toThrow("Conflicting chunk generation");
+    } finally { vi.useRealTimers(); }
+  });
+
 });
