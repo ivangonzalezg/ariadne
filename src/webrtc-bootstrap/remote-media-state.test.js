@@ -40,3 +40,9 @@ describe("announced remote media state", () => {
   });
 
 });
+
+it("does not interpret stale announced state as current after an incompatible message", async () => {
+  const state = new RemoteMediaState(), receiver = { getSynchronizationSources: () => [{ source: 42 }] };
+  await state.receive(message()); expect(state.get(receiver)).toBe(true);
+  await state.receive(new Uint8Array([10, 20, 1])); expect(state.get(receiver)).toBeNull();
+});

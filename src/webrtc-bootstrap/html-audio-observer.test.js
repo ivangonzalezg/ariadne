@@ -68,3 +68,22 @@ describe("stream-backed HTML capture", () => {
   });
 
 });
+
+describe("registered owners and effective sources", () => {
+  it("materializes HTML after its receiver disappears without a srcObject change", () => {
+    const { mixer, observer } = setup(); const shared = stream("handoff");
+    mixer.remoteSources = new Map([["stream:handoff", { connectedToMixer: true }]]);
+    const element = document.createElement("audio"); element.srcObject = shared; document.body.append(element); observer.start();
+    expect(observer.getSnapshot().streams[0]).toMatchObject({ htmlOwners: 1, effectiveSource: "receiver" });
+    expect(mixer.htmlSources.size).toBe(0);
+    mixer.remoteSources.clear(); observer.scan();
+    expect(observer.getSnapshot().streams[0]).toMatchObject({ htmlOwners: 1, effectiveSource: "html" });
+    observer.stop();
+  });
+  it("keeps owners after failed incorporation and retries on the next reconciliation", () => {
+    const { mixer, observer } = setup(); const element = document.createElement("audio"); element.srcObject = stream("retry"); document.body.append(element);
+    mixer.addHtmlStream.mockImplementationOnce(() => { throw new Error("temporary"); });
+    observer.start(); expect(observer.getSnapshot().streams[0]).toMatchObject({ references: 1, effectiveSource: null });
+    observer.scan(); expect(mixer.htmlSources.size).toBe(1); observer.stop();
+  });
+});

@@ -1,5 +1,6 @@
 // Uses an isolated headless Chrome profile; no account, extension installation,
 // browser dependency, or real meeting is needed for the WebRTC loopback test.
+import { runExtensionIntegration } from "./extension-audio-integration.mjs";
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
@@ -37,7 +38,7 @@ let socket;
 try {
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   chrome = spawn(executable, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
-    "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+    "--enable-unsafe-extension-debugging", "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   const debuggerUrl = await new Promise((resolve, reject) => {
     let output = "";
     const timeout = setTimeout(() => reject(new Error("Chrome startup timed out")), 15000);
@@ -74,6 +75,9 @@ try {
     pending.set(id, { resolve, reject, timer });
     socket.send(JSON.stringify({ id, method, params }));
   });
+  if (process.argv.includes("--integration-only")) {
+    await runExtensionIntegration({ root, debuggerUrl, origin: `http://127.0.0.1:${server.address().port}` });
+  } else {
   await command("Runtime.enable");
   await command("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/tests/browser/remote-audio.html${process.argv.includes("--hybrid") ? "?hybrid" : process.argv.includes("--playback-route") ? "?playback-route" : process.argv.includes("--disabled-receiver") ? "?disabled-receiver" : ""}` });
   let loaded = false;
@@ -92,6 +96,8 @@ try {
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? JSON.stringify(result.exceptionDetails));
   if (!result.result.value?.ok) throw new Error("Browser test did not return success");
   console.log(JSON.stringify(result.result.value, null, 2));
+  await runExtensionIntegration({ root, debuggerUrl, origin: `http://127.0.0.1:${server.address().port}` });
+  }
 } finally {
   socket?.close();
   if (chrome && chrome.exitCode === null) {

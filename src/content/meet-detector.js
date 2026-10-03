@@ -3,7 +3,7 @@ import { findByIconText } from "./meet-selectors.js";
 import { observeMuteState } from "./meet-mute-observer.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
-import { arrayBufferToBase64 } from "../lib/base64.js";
+import { ChunkDelivery } from "./chunk-delivery.js";
 import { debugLog, isDebugEnabled, setDebugEnabled } from "../shared/debug-log.js";
 
 // Nunca debe rechazar: startRecording()/waitForMeeting() esperan esta promesa
@@ -14,10 +14,10 @@ const debugLoggingReady = chrome.storage.local
   .get({ debugLogging: false })
   .then(({ debugLogging }) => {
     setDebugEnabled(debugLogging);
-    debugLog("[Ariadne:debug] content script (ISOLATED) cargado", { url: location.href });
+    debugLog("[Ariadne:debug] Content script (ISOLATED) loaded", { url: location.href });
   })
   .catch((error) => {
-    console.error("[Ariadne] No se pudo leer la configuración de debug logging (se deja apagado):", error);
+    console.error("[Ariadne] Could not read debug logging configuration; leaving it disabled:", error);
   });
 
 function isInActiveMeeting() {
@@ -32,8 +32,8 @@ function postToMainWorld(message) {
   window.postMessage({ source: "asterion-isolated-world", ...message }, "*");
 }
 
-let chunkQueue = Promise.resolve();
-const persistenceFailures = new Map();
+const deliveries = new Map();
+let storageError = null;
 let sessionId = null;
 let currentState = "idle";
 let meetingTitle = null;
@@ -77,11 +77,38 @@ async function startRecording() {
   setState("starting");
 
   meetingTitle = getCurrentMeetingTitle();
-  debugLog("[Ariadne:debug] startRecording iniciado", { sessionId, meetingTitle });
+  debugLog("[Ariadne:debug] startRecording started", { sessionId, meetingTitle });
   startedAt = Date.now();
   hasTranscript = false;
   videoEnabled = false;
-  chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
+  try {
+    const opened = await chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
+    if (!opened?.folderName || opened.error) throw new Error(opened?.error ?? "Storage initialization failed");
+  } catch (error) {
+    sessionId = null; setState("error"); cleanupObservers(); return;
+  }
+  storageError = null;
+  const delivery = new ChunkDelivery({ sessionId,
+    send: (message) => chrome.runtime.sendMessage(message),
+    recover: async () => {
+      const result = await chrome.runtime.sendMessage({ type: "asterion:recover-storage", sessionId: delivery.sessionId });
+      if (result?.error) throw new Error(result.error);
+    },
+    onAck: (message) => postToMainWorld({ ...message, type: "asterion:chunk-committed" }),
+    onStatus: (status) => postToMainWorld({ type: "asterion:storage-progress", ...status }),
+    onFatal: (error) => {
+      storageError = error.message; setState("error");
+      postToMainWorld({ type: "asterion:stop-session", sessionId: delivery.sessionId, interruptionReason: error.message });
+    },
+  });
+  deliveries.set(sessionId, delivery);
+  delivery.statusTimer = setInterval(async () => {
+    try {
+      const result = await chrome.runtime.sendMessage({ type: "asterion:storage-status", sessionId: delivery.sessionId });
+      if (!result?.error) postToMainWorld({ type: "asterion:storage-progress", ...result, pending: delivery.pending.size,
+        pendingBytes: delivery.bytes, storageRecoveries: delivery.recoveries });
+    } catch {}
+  }, 5000);
 
   let isFirstMuteReport = true;
 
@@ -109,10 +136,12 @@ async function startRecording() {
   });
 
   const cleanup = await enableCaptionsAndObserve((snapshot) => {
+    if (sessionId !== delivery.sessionId) return;
     hasTranscript = true;
     updateBannerState(currentState, bannerMeta());
     chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
   });
+  if (sessionId !== delivery.sessionId) { cleanup?.(); return; }
   stopCaptionObserver = cleanup ?? (() => {});
   stopMeetingEndObserver = observeMeetingEnd();
 }
@@ -127,44 +156,33 @@ window.addEventListener("message", (event) => {
   const message = event.data;
   if (!message || message.source !== "asterion-main-world") return;
 
-  debugLog("[Ariadne:debug] mensaje recibido desde MAIN world", { type: message.type });
+  debugLog("[Ariadne:debug] Message received from MAIN world", { type: message.type });
 
   if (message.type === "asterion:session-started") {
     setState("recording");
   } else if (message.type === "asterion:start-failed") {
+    const delivery = deliveries.get(sessionId);
+    clearInterval(delivery?.statusTimer);
+    clearInterval(delivery?.watchdog);
+    deliveries.delete(sessionId);
+    if (sessionId) chrome.runtime.sendMessage({ type: "asterion:session-ended", sessionId, endedAt: Date.now(), interruptionReason: message.reason }).catch(() => {});
     sessionId = null;
     setState("error");
     cleanupObservers();
-    console.error("[Ariadne] No se pudo iniciar la sesión:", message.reason);
+    console.error("[Ariadne] Could not start the session:", message.reason);
   } else if (message.type === "asterion:chunk") {
-    const chunk = { type: "asterion:chunk", sessionId: message.sessionId,
-      stream: message.stream, seq: message.seq, generation: message.generation,
-      captureTs: message.captureTs, bufferBase64: arrayBufferToBase64(message.buffer) };
-    const deliver = async () => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const result = await chrome.runtime.sendMessage(chunk);
-          if (!result?.committed) {
-            const error = new Error(result?.error ?? "Chunk not committed");
-            error.permanent = result?.retryable === false;
-            throw error;
-          }
-          postToMainWorld({ type: "asterion:chunk-committed", sessionId: message.sessionId,
-            stream: message.stream, seq: message.seq, generation: message.generation });
-          return;
-        } catch (error) {
-          if (error.permanent || attempt === 2) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
-        }
-      }
-    };
-    chunkQueue = chunkQueue.then(deliver).catch((error) => {
-      console.error("[Ariadne] Chunk delivery failed:", error);
-      const failures = persistenceFailures.get(message.sessionId) ?? [];
-      failures.push({ chunk: `${message.stream}:${message.seq}`, message: error.message });
-      persistenceFailures.set(message.sessionId, failures);
-      postToMainWorld({ type: "asterion:chunk-failed", sessionId: message.sessionId, stream: message.stream, generation: message.generation, seq: message.seq, message: error.message });
-    });
+    deliveries.get(message.sessionId)?.add(message);
+  } else if (message.type === "asterion:inspect-storage") {
+    chrome.runtime.sendMessage({ type: "asterion:storage-status", sessionId: message.sessionId, folderName: message.folderName })
+      .then((result) => {
+        const delivery = deliveries.get(message.sessionId);
+        postToMainWorld({ ...result, type: "asterion:storage-progress", sessionId: message.sessionId, requestId: message.requestId,
+          pending: delivery?.pending.size ?? 0, pendingBytes: delivery?.bytes ?? 0,
+          storageRecoveries: delivery?.recoveries ?? 0, available: Boolean(result && !result.error) });
+      })
+      .catch((error) => postToMainWorld({ type: "asterion:storage-progress", sessionId: message.sessionId, requestId: message.requestId, available: false, error: error.message }));
+  } else if (message.type === "asterion:session-checkpoint") {
+    Promise.resolve(deliveries.get(message.sessionId)?.drain()).then(() => chrome.runtime.sendMessage({ ...message, source: undefined })).catch(() => {});
   } else if (message.type === "asterion:speaker-label") {
     chrome.runtime.sendMessage({
       type: "asterion:speaker-label",
@@ -177,19 +195,28 @@ window.addEventListener("message", (event) => {
   } else if (message.type === "asterion:video-enable-failed") {
     updateBannerState(currentState, bannerMeta({ videoError: message.message }));
   } else if (message.type === "asterion:session-ended") {
-    chunkQueue.then(() => chrome.runtime.sendMessage({
-      type: "asterion:session-ended",
-      sessionId: message.sessionId,
-      persistenceErrors: persistenceFailures.get(message.sessionId) ?? [],
-      muteManifest: message.muteManifest,
-      endedAt: message.endedAt,
-    })).finally(() => persistenceFailures.delete(message.sessionId));
+    const delivery = deliveries.get(message.sessionId);
+    (async () => {
+      clearInterval(delivery?.statusTimer);
+      const persistenceErrors = await delivery?.flush() ?? [];
+      const result = await chrome.runtime.sendMessage({
+        type: "asterion:session-ended", sessionId: message.sessionId, persistenceErrors,
+        muteManifest: message.muteManifest, endedAt: message.endedAt, expectedSequences: message.expectedSequences,
+        interruptionReason: message.interruptionReason ?? delivery?.fatal?.message ?? null,
+      });
+      if (!result?.error) {
+        const status = await chrome.runtime.sendMessage({ type: "asterion:storage-status", sessionId: message.sessionId, folderName: result.folderName });
+        if (!status?.error) postToMainWorld({ type: "asterion:storage-progress", ...status, pending: delivery?.pending.size ?? 0, storageRecoveries: delivery?.recoveries ?? 0 });
+      }
+      if (result?.error) { storageError = result.error; setState("error"); }
+    })().catch((error) => { storageError = error.message; setState("error"); })
+      .finally(() => deliveries.delete(message.sessionId));
     sessionId = null;
     meetingTitle = null;
     startedAt = null;
     hasTranscript = false;
     videoEnabled = false;
-    setState("idle");
+    setState(storageError ? "error" : "idle");
     cleanupObservers();
   }
 });
@@ -197,6 +224,7 @@ window.addEventListener("message", (event) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "asterion:get-status") {
     sendResponse({
+      sessionId,
       inMeeting: isInActiveMeeting(),
       state: currentState,
       meetingTitle: meetingTitle ?? getCurrentMeetingTitle(),
@@ -221,7 +249,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "asterion:session-finalized") {
-    showFinishedBanner();
+    if (message.recordingStatus === "incomplete" || storageError) setState("error");
+    else showFinishedBanner();
   }
 });
 
@@ -234,7 +263,7 @@ function observeMeetingEnd() {
   // ido de la reunión mientras `startRecording()` todavía estaba esperando
   // `enableCaptionsAndObserve(...)`, antes de que este polling arrancara.
   if (!isInActiveMeeting()) {
-    debugLog("[Ariadne:debug] se detectó que la reunión terminó (chequeo inicial), deteniendo grabación automáticamente");
+    debugLog("[Ariadne:debug] Meeting ended (initial check); stopping recording automatically");
     stopRecording();
     return () => {};
   }
@@ -242,7 +271,7 @@ function observeMeetingEnd() {
   const intervalId = setInterval(() => {
     if (!isInActiveMeeting()) {
       clearInterval(intervalId);
-      debugLog("[Ariadne:debug] se detectó que la reunión terminó, deteniendo grabación automáticamente");
+      debugLog("[Ariadne:debug] Meeting ended; stopping recording automatically");
       stopRecording();
     }
   }, MEETING_END_POLL_INTERVAL_MS);
@@ -253,9 +282,9 @@ function waitForMeeting() {
   debugLog("[Ariadne:debug] waitForMeeting isInActiveMeeting", { isInActiveMeeting: isInActiveMeeting() });
 
   const onMeetingDetected = () => {
-    debugLog("[Ariadne:debug] reunión detectada");
+    debugLog("[Ariadne:debug] Meeting detected");
     chrome.storage.local.get({ autoStart: true }, ({ autoStart }) => {
-      debugLog("[Ariadne:debug] autoStart obtenido", { autoStart });
+      debugLog("[Ariadne:debug] autoStart retrieved", { autoStart });
       showBanner({ onStart: startRecording, onStop: stopRecording });
       if (autoStart) startRecording();
     });

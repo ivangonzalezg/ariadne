@@ -42,11 +42,15 @@ export class HtmlAudioObserver {
       for (const owner of [...shared.owners]) this.remove(owner);
     }
     if (old && (!usable || old.stream !== stream || old.signature !== signature)) this.remove(element);
-    if (!usable || this.elements.has(element)) return;
+    if (!usable) return;
+    // An owner can outlive the receiver that represented its stream.
+    try {
+      if (!this.mixer.htmlSources.has(stream.id) && !this.mixer.remoteSources?.get(`stream:${stream.id}`)?.connectedToMixer) this.mixer.addHtmlStream(stream);
+    } catch (error) { this.error(error); }
+    if (this.elements.has(element)) return;
     try {
       let entry = this.streams.get(stream.id);
       if (!entry) {
-        this.mixer.addHtmlStream(stream);
         const refresh = () => this.scan();
         const listeners = [[stream, "addtrack"], [stream, "removetrack"], ...tracks.map((track) => [track, "ended"])];
         for (const [target, type] of listeners) target.addEventListener?.(type, refresh);
@@ -94,7 +98,8 @@ export class HtmlAudioObserver {
 
   getSnapshot() {
     return { active: this.active, errorCount: this.errors, streams: [...this.streams.values()].map(({ stream, owners }) => ({
-      streamId: stream.id, references: owners.size, trackIds: stream.getAudioTracks().map((track) => track.id),
+      streamId: stream.id, references: owners.size, htmlOwners: owners.size,
+      effectiveSource: this.mixer.htmlSources.has(stream.id) ? "html" : this.mixer.remoteSources?.get(`stream:${stream.id}`)?.connectedToMixer ? "receiver" : null, trackIds: stream.getAudioTracks().map((track) => track.id),
       connectedToMixer: this.mixer.htmlSources.has(stream.id) || Boolean(this.mixer.remoteSources?.get(`stream:${stream.id}`)?.connectedToMixer),
     })) };
   }

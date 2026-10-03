@@ -126,7 +126,7 @@ function render() {
   }
 
   wireEvents();
-  if (currentMeta.videoError) console.warn(t("banner.videoErrorLog"), currentMeta.videoError);
+  if (currentMeta.videoError) console.warn("[Ariadne] Could not enable video:", currentMeta.videoError);
 }
 
 function clamp(value, min, max) {

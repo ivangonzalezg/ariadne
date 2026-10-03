@@ -220,6 +220,7 @@ function createMeetingCard(meeting) {
   moreWrap.appendChild(more);
   header.append(title, moreWrap);
   const date = document.createElement("p"); date.className = "meeting-date"; date.textContent = formatMeetingDate(meeting);
+  if (meeting.recordingStatus === "incomplete") date.appendChild(document.createTextNode(` · ${t("history.incompleteRecording")}`));
   const chips = document.createElement("div"); chips.className = "file-chips";
   [[meeting.hasTranscript, "file-text", t("common.transcript"), "transcript"], [true, "volume-2", t("common.audio"), "audio"], [meeting.hasVideo, "video", t("common.video"), "video"], [true, "braces", t("common.manifest"), "manifest"]].forEach(([available, iconName, label, tab]) => {
     const chip = document.createElement("span"); chip.className = `file-chip${available ? " is-available" : " is-unavailable"}`;

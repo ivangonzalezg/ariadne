@@ -48,7 +48,7 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, onLoca
     pc.addTrack = function(track, ...streams) {
       const result = addTrack.call(this, track, ...streams);
       if (track.kind === "audio") {
-        try { onLocalAudioTrack(track); } catch (error) { log("local-source-error", { message: error.message }); }
+        try { onLocalAudioTrack(track, { sender: result, connectionId }); } catch (error) { log("local-source-error", { message: error.message }); }
       }
       return result;
     };
@@ -77,7 +77,7 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, onLoca
     });
 
     pc.addEventListener("connectionstatechange", () => {
-      try { onConnectionStateChange(pc.connectionState); } catch (error) { log("connection-observer-error", { message: error.message }); }
+      try { onConnectionStateChange(pc.connectionState, connectionId); } catch (error) { log("connection-observer-error", { message: error.message }); }
       log("connection-state-changed", { connectionId, connectionState: pc.connectionState });
       // ICE failure can recover on this same connection. Only a real close
       // permanently removes its tracks and its entry in activeConnections.
@@ -296,7 +296,7 @@ export function installReplaceTrackPatch({ onAudioTrackReplaced, log = () => {} 
     return originalReplaceTrack.call(this, newTrack).then((result) => {
       if (kind === "audio") {
         diagnostics.audioSenderReplacements += 1;
-        try { onAudioTrackReplaced(newTrack, previousTrack); }
+        try { onAudioTrackReplaced(newTrack, previousTrack, this); }
         catch (error) { log("local-source-error", { message: error.message }); }
       }
       return result;
@@ -305,18 +305,19 @@ export function installReplaceTrackPatch({ onAudioTrackReplaced, log = () => {} 
 }
 
 
-export function sweepLocalAudioTracks({ onLocalAudioTrack, log = () => {} }) {
+export function sweepLocalAudioTracks({ onLocalAudioTrack, onSenderSweep = () => {}, log = () => {} }) {
   const tracks = new Map();
   for (const pc of activeConnections) {
     if (["closed", "failed"].includes(pc.connectionState)) continue;
     try {
-      for (const sender of pc.getSenders()) {
-        if (sender.track?.kind === "audio" && sender.track.readyState === "live") tracks.set(sender.track.id, sender.track);
+      const senders = pc.getSenders();
+      onSenderSweep(getConnectionId(pc), senders);
+      for (const sender of senders) {
+        const track = sender.track;
+        if (track?.kind === "audio" && track.readyState === "live") tracks.set(track.id, track);
+        onLocalAudioTrack(track, { sender, connectionId: getConnectionId(pc) });
       }
     } catch (error) { log("sender-sweep-error", { message: error.message }); }
-  }
-  for (const track of tracks.values()) {
-    try { onLocalAudioTrack(track); } catch (error) { log("local-source-error", { trackId: track.id, message: error.message }); }
   }
   return tracks;
 }

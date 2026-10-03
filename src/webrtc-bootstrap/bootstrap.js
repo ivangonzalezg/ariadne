@@ -36,9 +36,9 @@ if (!window.__ariadneCaptureInstalled) {
   const health = new CaptureHealth({ getSession: () => session, getMixer: () => mixer,
     getRemoteMicState: (entry) => mediaState.get(entry.receiver),
     scan: () => {
-      const locals = sweepLocalAudioTracks({ onLocalAudioTrack: (track) => mixer.addLocalTrack(track), log: rtcPatchLog });
+      const locals = sweepLocalAudioTracks({ onSenderSweep: (id, senders) => mixer.reconcileLocalOwners(id, senders), onLocalAudioTrack: (track, owner) => mixer.setLocalSender(owner.sender, track, owner.connectionId), log: rtcPatchLog });
       for (const [id, entry] of mixer.localSources) if (!locals.has(id) && entry.track.readyState !== "live") mixer.removeLocalTrack(id);
-      htmlObserver.scan(); mixer.reconcile(); remoteAudioMonitor._scan(); playbackObserver.sample();
+      mixer.reconcile(); htmlObserver.scan(); remoteAudioMonitor._scan(); playbackObserver.sample();
       for (const entry of playbackObserver.outputs.values()) {
         const context = entry.node.deref()?.context;
         if (context?.state === "suspended") context.resume().catch((error) => rtcPatchLog("page-context-resume-error", { message: error.message }));
@@ -53,12 +53,16 @@ if (!window.__ariadneCaptureInstalled) {
         playbackObserver.mixer = mixer; playbackObserver.ignoredContext = mixer.audioContext;
         htmlObserver.mixer = mixer; remoteAudioMonitor.mixer = mixer;
         mixer.setMicMuted(currentlyMuted);
-        await mixer.resume(); htmlObserver.start();
+        await mixer.resume();
+        if (session?.stopping) return mixer;
+        htmlObserver.start();
         remoteAudioMonitor.start(session.sessionId, { managed: true, preserveSession: true });
         health.scan();
         return mixer;
       });
     }, log: rtcPatchLog });
+  let lastStorageSnapshot = null;
+  const storageQueries = new Map();
   let session = null;
   let starting = false;
   let startRequest = 0;
@@ -68,9 +72,9 @@ if (!window.__ariadneCaptureInstalled) {
   installRtcPatch({
     onRemoteAudioTrack: (payload) => { remoteAudioMonitor.addRemoteTrack(payload); health.schedule(); },
     onDataChannel: (channel) => mediaState.observe(channel),
-    onLocalAudioTrack: (track) => { mixer.addLocalTrack(track); health.schedule(); },
-    onConnectionClosed: (connectionId) => mixer.removeConnection(connectionId),
-    onConnectionStateChange: () => health.schedule(),
+    onLocalAudioTrack: (track, owner) => { mixer.setLocalSender(owner.sender, track, owner.connectionId); health.schedule(); },
+    onConnectionClosed: (connectionId) => { mixer.removeConnection(connectionId); htmlObserver.scan(); },
+    onConnectionStateChange: (state, id) => { mixer.connectionStates.set(id, state); health.schedule(); },
     log: rtcPatchLog,
   });
 
@@ -81,38 +85,15 @@ if (!window.__ariadneCaptureInstalled) {
   });
 
   installReplaceTrackPatch({
-    onAudioTrackReplaced: (newTrack) => {
-      if (!newTrack) {
-        // replaceTrack(null) es un uso legítimo de la API (Meet deja de enviar
-        // audio saliente por esa conexión) - no significa que el micrófono real
-        // dejó de andar, así que seguimos usando el último track bueno que
-        // tenemos en vez de cortar la grabación. Se deja logueado explícitamente
-        // para poder ver si esto pasa en la práctica.
-        rtcPatchLog("mic-track-replaced-with-null", {});
-        return;
-      }
-      mixer.addLocalTrack(newTrack);
+    onAudioTrackReplaced: (newTrack, previousTrack, sender) => {
+      mixer.setLocalSender(sender, newTrack);
       health.schedule();
     },
     log: rtcPatchLog,
   });
 
-  const pendingCommits = new Map();
   function postToIsolated(message, transfer = []) {
-    if (message.type !== "asterion:chunk") {
-      window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
-      return;
-    }
-    return new Promise((resolve) => {
-      const key = `${message.sessionId}:${message.stream}:${message.generation}:${message.seq}`;
-      const timer = setTimeout(() => {
-        pendingCommits.delete(key);
-        rtcPatchLog("chunk-confirmation-timeout", { generation: message.generation, seq: message.seq });
-        resolve({ committed: false });
-      }, 10000);
-      pendingCommits.set(key, (result) => { clearTimeout(timer); pendingCommits.delete(key); resolve(result); });
-      window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
-    });
+    window.postMessage({ source: "asterion-main-world", ...message }, "*", transfer);
   }
 
   window.addEventListener("message", async (event) => {
@@ -120,7 +101,7 @@ if (!window.__ariadneCaptureInstalled) {
     const message = event.data;
     if (!message || message.source !== "asterion-isolated-world") return;
 
-    debugLog("[Ariadne:debug] mensaje recibido desde ISOLATED world", { type: message.type });
+    debugLog("[Ariadne:debug] Message received from ISOLATED world", { type: message.type });
 
     if (message.type === "asterion:start-session") {
       if (session || starting) return;
@@ -128,7 +109,7 @@ if (!window.__ariadneCaptureInstalled) {
       const request = ++startRequest;
       try {
         setDebugEnabled(message.debugLogging);
-        debugLog("[Ariadne:debug] asterion:start-session recibido; se intentará crear MainWorldSession e iniciar mixer", {
+        debugLog("[Ariadne:debug] asterion:start-session received; creating MainWorldSession and starting mixer", {
           sessionId: message.sessionId,
           mixer,
           session,
@@ -142,12 +123,12 @@ if (!window.__ariadneCaptureInstalled) {
           trackId: trackToUse?.id ?? null,
         });
         mixer.setMicMuted(currentlyMuted);
-        if (trackToUse) mixer.addLocalTrack(trackToUse);
-        sweepLocalAudioTracks({ onLocalAudioTrack: (track) => mixer.addLocalTrack(track), log: rtcPatchLog });
-        debugLog("[Ariadne] AudioContext state antes de resume():", mixer.audioContext.state);
+
+        sweepLocalAudioTracks({ onSenderSweep: (id, senders) => mixer.reconcileLocalOwners(id, senders), onLocalAudioTrack: (track, owner) => mixer.setLocalSender(owner.sender, track, owner.connectionId), log: rtcPatchLog });
+        debugLog("[Ariadne] AudioContext state before resume():", mixer.audioContext.state);
         await mixer.resume();
         if (request !== startRequest) return;
-        debugLog("[Ariadne] AudioContext state después de resume():", mixer.audioContext.state);
+        debugLog("[Ariadne] AudioContext state after resume():", mixer.audioContext.state);
         session = new MainWorldSession({
           sessionId: message.sessionId,
           mixer,
@@ -157,6 +138,7 @@ if (!window.__ariadneCaptureInstalled) {
           onRecorderError: () => health.recover("recorder-error"),
         });
         session.start();
+        session.checkpoint();
         htmlObserver.start();
         remoteAudioMonitor.start(message.sessionId, { managed: true });
         health.start();
@@ -172,11 +154,15 @@ if (!window.__ariadneCaptureInstalled) {
         postToIsolated({ type: "asterion:start-failed", reason: error.message });
       } finally { if (request === startRequest) starting = false; }
     } else if (message.type === "asterion:chunk-committed") {
-      pendingCommits.get(`${message.sessionId}:${message.stream}:${message.generation}:${message.seq}`)?.({ committed: true });
       if (session?.sessionId === message.sessionId) session.confirmChunk(message);
     } else if (message.type === "asterion:chunk-failed") {
-      pendingCommits.get(`${message.sessionId}:${message.stream}:${message.generation}:${message.seq}`)?.({ committed: false });
       if (session?.sessionId === message.sessionId) rtcPatchLog("chunk-persistence-error", { generation: message.generation, seq: message.seq, message: message.message });
+    } else if (message.type === "asterion:storage-progress") {
+      storageQueries.get(message.requestId)?.(message);
+      if (session?.sessionId === message.sessionId || !session) {
+        lastStorageSnapshot = message;
+        if (session) session.storage = message;
+      }
     } else if (message.type === "asterion:mic-muted") {
       currentlyMuted = true;
       session?.onMicMuted(message.timestampMs);
@@ -187,7 +173,7 @@ if (!window.__ariadneCaptureInstalled) {
       startRequest++; starting = false;
       if (session) diagnostics.getAudioFlowSnapshot().catch((error) => rtcPatchLog("audio-flow-inspection-error", { message: error.message }));
       health.stop();
-      await session?.stop();
+      await session?.stop({ interruptionReason: message.interruptionReason });
       session = null;
       remoteAudioMonitor.stop();
       htmlObserver.stop();
@@ -202,7 +188,7 @@ if (!window.__ariadneCaptureInstalled) {
       const target = event.composedPath().find((el) => el instanceof Element && el.matches("[data-asterion-enable-video]"));
       if (!target || !session) return;
 
-      debugLog("[Ariadne] userActivation.isActive antes de getDisplayMedia:", navigator.userActivation?.isActive);
+      debugLog("[Ariadne] userActivation.isActive before getDisplayMedia:", navigator.userActivation?.isActive);
 
       try {
         const displayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -222,6 +208,16 @@ if (!window.__ariadneCaptureInstalled) {
     true
   );
 
+  diagnostics.getStorageSnapshot = async () => {
+    const id = session?.sessionId ?? lastStorageSnapshot?.sessionId;
+    if (!id) return null;
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { storageQueries.delete(requestId); resolve({ sessionId: id, available: false }); }, 5000);
+      storageQueries.set(requestId, (snapshot) => { clearTimeout(timer); storageQueries.delete(requestId); resolve(snapshot); });
+      postToIsolated({ type: "asterion:inspect-storage", sessionId: id, folderName: lastStorageSnapshot?.sessionId === id ? lastStorageSnapshot.folderName : undefined, requestId });
+    });
+  };
   diagnostics.getAudioFlowSnapshot = async () => {
     // Freeze levels before awaiting stats: stopping a session detaches analysers.
     const remoteAudio = remoteAudioMonitor.getRemoteAudioSnapshot();
@@ -233,13 +229,14 @@ if (!window.__ariadneCaptureInstalled) {
         trackId: track.id, readyState: track.readyState, enabled: track.enabled, muted: track.muted,
       })),
     }));
-    const snapshot = { htmlAudio: htmlObserver.getSnapshot(), localAudio: mixer.getLocalSnapshot(), recordingType: mixer.recordingType, recorder: session ? { restarts: session.generation, generation: session.generation, state: session.meetingRecorder?.state, receivedChunks: session.receivedChunks, committedChunks: session.committedChunks } : null, timestampMs: Date.now(), remoteAudio, mediaElements, receivers: await inspectRemoteReceivers() };
+    const snapshot = { storage: await diagnostics.getStorageSnapshot(), htmlAudio: htmlObserver.getSnapshot(), localAudio: mixer.getLocalSnapshot(), recordingType: mixer.recordingType, recorder: session ? { restarts: session.generation, generation: session.generation, state: session.meetingRecorder?.state, receivedChunks: session.receivedChunks, committedChunks: session.committedChunks } : null, timestampMs: Date.now(), remoteAudio, mediaElements, receivers: await inspectRemoteReceivers() };
     debugEvent("audio-flow-inspection", snapshot);
     return snapshot;
   };
   diagnostics.getRemoteAudioSnapshot = () => ({ ...remoteAudioMonitor.getRemoteAudioSnapshot(),
     htmlAudio: htmlObserver.getSnapshot(), localAudio: mixer.getLocalSnapshot(),
     recorder: session ? { generation: session.generation, state: session.meetingRecorder?.state, receivedChunks: session.receivedChunks, committedChunks: session.committedChunks } : null,
+    storage: session ? session.storage ?? null : lastStorageSnapshot,
     recovery: health.getSnapshot(),
   });
   window.__asterionDiagnostics = diagnostics;

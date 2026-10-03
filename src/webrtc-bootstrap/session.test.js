@@ -49,3 +49,14 @@ describe("recorder generations", () => {
     expect(session.committedChunks).toBe(1);
   });
 });
+
+it("waits for asynchronous final data when a recorder error already made it inactive", async () => {
+  const messages = [], session = create((message) => messages.push(message)); session.start();
+  session.meetingRecorder.state = "inactive";
+  const restarted = session.restart(async () => mixer());
+  await Promise.resolve(); expect(messages).toEqual([]);
+  session.meetingRecorder.ondataavailable({ data: { size: 1, arrayBuffer: async () => new Uint8Array([9]).buffer } });
+  session.meetingRecorder.onstop(); await restarted;
+  expect(messages[0]).toMatchObject({ type: "asterion:chunk", generation: 0, seq: 1 });
+  await session.stop();
+});

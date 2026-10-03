@@ -19,7 +19,7 @@ export class CaptureHealth {
     this.timeout(() => {
       const mixer = this.getMixer();
       if (!mixer.htmlSources.size && !mixer.playbackSources.size) this.log("hybrid-remote-sources-absent", {});
-      this.checkStorage();
+
     }, 10000);
   }
   stop() {
@@ -44,11 +44,8 @@ export class CaptureHealth {
     }
   }
   async checkStorage() {
-    if (!this.active) return;
-    if (this.getSession()?.committedChunks || this.storageAttempts >= 2) return;
-    this.storageAttempts++;
-    await this.recover("no-persisted-chunks");
-    if (this.active) this.timeout(() => this.checkStorage(), 10000);
+    // Storage owns its progress watchdog; rebuilding audio cannot repair OPFS.
+    return this.getSession()?.storage ?? null;
   }
   getSnapshot() {
     return { active: this.active, healthyChecks: this.checks ?? 0, restarts: this.restartCount ?? 0, lastRestartReason: this.lastRestartReason ?? null, smallChunkAttempts: this.smallAttempts ?? 0, storageAttempts: this.storageAttempts ?? 0 };

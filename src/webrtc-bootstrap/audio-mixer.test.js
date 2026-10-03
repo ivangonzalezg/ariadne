@@ -676,3 +676,55 @@ it("recreates a suspect HTML source while preserving owners and remote tracks", 
   expect(mixer.htmlSources.get("shared")).toBe(sourceNodes[2]);
   expect(track.stop).not.toHaveBeenCalled(); expect(mixer.htmlSources.size).toBe(1);
 });
+
+describe("sender ownership", () => {
+  it("retires a replaced live track only when the last sender releases it", async () => {
+    const { mixer } = makeMixer(); const old = { ...fakeTrack("old"), kind: "audio" }, next = { ...fakeTrack("next"), kind: "audio" };
+    const a = {}, b = {}; mixer.setLocalSender(a, old, 1); mixer.setLocalSender(b, old, 2);
+    expect(mixer.localSources.size).toBe(1);
+    mixer.setLocalSender(a, next); expect(mixer.localSources.size).toBe(2);
+    mixer.setLocalSender(b, null); expect([...mixer.localSources.keys()]).toEqual(["next"]);
+    expect(old.stop).not.toHaveBeenCalled(); mixer.removeConnection(1); expect(mixer.localSources.size).toBe(0); await mixer.close();
+  });
+  it("reconciles removed senders while retaining ownership in other connections", async () => {
+    const { mixer } = makeMixer(); const track = { ...fakeTrack("shared"), kind: "audio" }; const a = {}, b = {};
+    mixer.setLocalSender(a, track, 1); mixer.setLocalSender(b, track, 2);
+    mixer.reconcileLocalOwners(1, []); expect(mixer.localSources.size).toBe(1);
+    mixer.reconcileLocalOwners(2, []); expect(mixer.localSources.size).toBe(0); await mixer.close();
+  });
+});
+
+describe("common receiver reconciliation phase", () => {
+  it("connects a pending event source without another track event and isolates incorporation errors", () => {
+    const { mixer } = makeMixer({ recordingType: "hybrid" });
+    const one = fakeTrack("one"), two = fakeTrack("two");
+    mixer.addRemoteTrack({ connectionId: 1, track: one }); mixer.addRemoteTrack({ connectionId: 2, track: two });
+    const first = mixer.remoteSources.get("conn:1:track:one"); first.sourceNode.connect.mockImplementationOnce(() => { throw new Error("temporary"); });
+    expect(mixer.reconcileRemoteSources()).toMatchObject({ recovered: 1, errors: [{ message: "temporary" }] });
+    expect(mixer.reconcileRemoteSources()).toMatchObject({ recovered: 1, errors: [] });
+    expect(mixer.reconcileRemoteSources().recovered).toBe(0);
+  });
+  it("defers unavailable sources and failed connections, then reconnects their pending sources", () => {
+    const { mixer } = makeMixer({ recordingType: "hybrid" }); const track = fakeTrack("remote"); track.muted = true;
+    mixer.addRemoteTrack({ connectionId: 1, track, discovery: "sweep", deferConnection: true });
+    expect(mixer.reconcileRemoteSources().recovered).toBe(0);
+    track.muted = false; track.enabled = false; expect(mixer.reconcileRemoteSources().recovered).toBe(0);
+    track.enabled = true; mixer.connectionStates.set(1, "failed"); expect(mixer.reconcileRemoteSources().recovered).toBe(0);
+    mixer.connectionStates.set(1, "connected"); expect(mixer.reconcileRemoteSources().recovered).toBe(1);
+  });
+});
+
+it("keeps the HTML mode isolated from receiver and Web Audio inputs", () => {
+  const { mixer } = makeMixer({ recordingType: "html" }); const track = fakeTrack("receiver"), stream = fakeStream("html");
+  mixer.addRemoteTrack({ connectionId: 1, track, stream, discovery: "sweep" });
+  expect(mixer.getRemoteAudioSnapshot()[0].connectedToMixer).toBe(false);
+  mixer.reconcileRemoteSources(); expect(mixer.getRemoteAudioSnapshot()[0].connectedToMixer).toBe(false);
+  mixer.addHtmlStream(stream); expect(mixer.htmlSources.size).toBe(1);
+});
+
+it("applies the initial mute immediately before any recorded frames", () => {
+  const { mixer, gainNodes } = makeMixer(); mixer.addLocalTrack(fakeTrack("mic"));
+  mixer.setMicMuted(true, { immediate: true });
+  expect(gainNodes[0].gain.value).toBe(0);
+  expect(gainNodes[0].gain.linearRampToValueAtTime).not.toHaveBeenCalled();
+});

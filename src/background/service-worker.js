@@ -19,9 +19,9 @@ function withRegistryLock(mutator) {
   return result;
 }
 
-export function registerActiveSession(sessionId, tabId, meetingTitle) {
+export function registerActiveSession(sessionId, tabId, meetingTitle, folderName) {
   return withRegistryLock((activeSessions) => {
-    activeSessions[sessionId] = { tabId, meetingTitle };
+    activeSessions[sessionId] = { ...activeSessions[sessionId], tabId, meetingTitle, ...(folderName ? { folderName } : {}) };
   });
 }
 
@@ -72,36 +72,75 @@ async function ensureOffscreenDocument() {
   await offscreenCreationPromise;
 }
 
-// El offscreen document se deja vivo entre reuniones a propósito: el permiso de
-// File System Access sobre la carpeta raíz parece estar atado a la instancia del
-// documento, no al origen de la extensión. Así, persiste hasta reiniciar el
-// navegador o recargar la extensión.
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (message.type === "asterion:session-starting") {
-    registerActiveSession(message.sessionId, sender.tab?.id ?? null, message.meetingTitle)
-    .then(() => ensureOffscreenDocument())
-    .then(() => {
-      chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId: message.sessionId, meetingTitle: message.meetingTitle });
-    });
-  } else if (message.type === "asterion:session-finalized") {
-    unregisterActiveSession(message.sessionId);
-    appendToHistory(message);
+const STORAGE_TYPES = new Set(["asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended", "asterion:recover-storage"]);
+const RECOVERY_ALARM = "asterion-storage-recovery";
+let conversionPending = false;
+let storageRecovery = null;
+let historyQueue = Promise.resolve();
+
+async function updateRecoveryAlarm() {
+  const { [ACTIVE_SESSIONS_KEY]: active } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
+  if (Object.keys(active).length || conversionPending) {
+    if (!await chrome.alarms?.get(RECOVERY_ALARM)) await chrome.alarms?.create(RECOVERY_ALARM, { periodInMinutes: 1 });
+  } else await chrome.alarms?.clear(RECOVERY_ALARM);
+}
+
+async function forwardStorage(message, tabId) {
+  if (message.type === "asterion:recover-storage" && message.sessionId) {
+    storageRecovery ??= (async () => {
+      const existing = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
+      if (existing.length) await chrome.offscreen.closeDocument();
+      await ensureOffscreenDocument();
+    })().finally(() => { storageRecovery = null; });
+    await storageRecovery;
+  } else {
+    if (storageRecovery) await storageRecovery;
+    await ensureOffscreenDocument();
+  }
+  const { [ACTIVE_SESSIONS_KEY]: active } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
+  const registration = active[message.sessionId];
+  const result = await chrome.runtime.sendMessage({ ...message, target: "asterion-offscreen", tabId: tabId ?? registration?.tabId,
+    folderName: message.folderName ?? registration?.folderName });
+  if (!result) throw new Error("Storage transport unavailable");
+  return result;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.target === "asterion-offscreen") return;
+  if (STORAGE_TYPES.has(message.type)) {
+    (async () => {
+      if (message.type === "asterion:session-starting") await registerActiveSession(message.sessionId, sender.tab?.id ?? null, message.meetingTitle);
+      if (message.type === "asterion:session-ended") await withRegistryLock((active) => {
+        if (active[message.sessionId]) active[message.sessionId].finalization = message;
+      });
+      const result = await forwardStorage(message, sender.tab?.id);
+      if (message.type === "asterion:session-ended" && result.error && result.retryable === false && result.folderName) {
+        await withRegistryLock((active) => {
+          if (active[message.sessionId]) active[message.sessionId].finalization = { ...message, interruptionReason: result.interruptionReason };
+        });
+        await appendToHistory(result);
+      }
+      if (message.type === "asterion:session-starting" && !result.error) await registerActiveSession(message.sessionId, sender.tab?.id ?? null, message.meetingTitle, result.folderName);
+      if (message.type === "asterion:recover-storage") conversionPending = result.pending;
+      await updateRecoveryAlarm();
+      return result;
+    })().then(sendResponse).catch((error) => sendResponse({ error: error.message, retryable: true }));
+    return true;
+  }
+  if (message.type === "asterion:session-finalized") {
+    appendToHistory(message).then(() => unregisterActiveSession(message.sessionId)).then(updateRecoveryAlarm)
+      .then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ error: error.message, retryable: true }));
+    return true;
+  } else if (message.type === "asterion:recovery-pending") {
+    conversionPending = message.pending; updateRecoveryAlarm().catch(console.error);
   } else if (message.type === "asterion:conversion-started") {
-    conversionStates.set(message.sessionId, {
-      meetingTitle: message.meetingTitle,
-      stream: message.stream,
-      pct: 0,
-    });
-    updateBadge();
+    conversionStates.set(message.sessionId, { meetingTitle: message.meetingTitle, stream: message.stream, pct: 0 }); updateBadge();
   } else if (message.type === "asterion:conversion-progress") {
     const state = conversionStates.get(message.sessionId);
-    if (state) {
-      conversionStates.set(message.sessionId, { ...state, stream: message.stream, pct: message.pct });
-      updateBadge();
-    }
-  } else if (message.type === "asterion:conversion-finished") {
-    conversionStates.delete(message.sessionId);
+    if (state) conversionStates.set(message.sessionId, { ...state, stream: message.stream, pct: message.pct });
     updateBadge();
+  } else if (message.type === "asterion:conversion-finished") {
+    conversionStates.delete(message.sessionId); updateBadge();
   }
 });
 
@@ -117,7 +156,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .get({ videoPreset: "medium" })
     .then(({ videoPreset }) => sendResponse({ videoPreset }))
     .catch((error) => {
-      console.error("[Ariadne] No se pudo leer el preset de video guardado, se usa 'medium' por defecto:", error);
+      console.error("[Ariadne] Could not read the saved video preset; using 'medium':", error);
       sendResponse({ videoPreset: "medium" });
     });
 
@@ -125,35 +164,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function appendToHistory(meta) {
-  chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => {
-    meetingHistory.unshift({
-      sessionId: meta.sessionId,
-      folderName: meta.folderName,
-      meetingTitle: meta.meetingTitle,
-      startedAt: meta.startedAt,
-      endedAt: meta.endedAt,
-      durationMs: meta.durationMs,
-      hasTranscript: meta.hasTranscript,
-      hasVideo: meta.hasVideo,
-    });
-    chrome.storage.local.set({ meetingHistory: meetingHistory.slice(0, 200) });
+  const operation = historyQueue.then(async () => {
+    const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
+    const entries = meetingHistory.filter((entry) => entry.sessionId !== meta.sessionId);
+    const { sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, hasVideo, recordingStatus, interruptionReason } = meta;
+    entries.push({ sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, hasVideo, recordingStatus, interruptionReason });
+    entries.sort((a, b) => b.startedAt - a.startedAt);
+    await chrome.storage.local.set({ meetingHistory: entries.slice(0, 200) });
   });
+  historyQueue = operation.catch(() => {});
+  return operation;
 }
 
-function finalizeAbandonedSession(sessionId) {
-  // No se desregistra acá: si el envío del mensaje o la finalización fallan,
-  // se pierde la única referencia durable para poder reintentar más adelante.
-  // El registro se limpia como siempre, desde el handler de
-  // "asterion:session-finalized" que ya corre cuando el offscreen document
-  // termina de verdad (ver Tarea 1).
-  return ensureOffscreenDocument().then(() => {
-    chrome.runtime.sendMessage({
-      type: "asterion:session-ended",
-      sessionId,
-      muteManifest: null,
-      endedAt: Date.now(),
-    });
-  });
+async function finalizeAbandonedSession(sessionId) {
+  const { [ACTIVE_SESSIONS_KEY]: active } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
+  const requested = active[sessionId]?.finalization;
+  return forwardStorage(requested ?? { type: "asterion:session-ended", sessionId, muteManifest: null,
+    endedAt: Date.now(), interruptionReason: "capture-tab-disappeared" });
 }
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -170,3 +197,24 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
     await finalizeAbandonedSession(sessionId);
   }
 });
+
+async function recoverPendingSessions() {
+  const result = await forwardStorage({ type: "asterion:recover-storage" });
+  conversionPending = result.pending;
+  for (const recording of result.recordings ?? []) {
+    await registerActiveSession(recording.sessionId, recording.tabId, recording.meetingTitle, recording.folderName);
+  }
+  const { [ACTIVE_SESSIONS_KEY]: active } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
+  for (const [sessionId, entry] of Object.entries(active)) {
+    let status;
+    try { status = await chrome.tabs.sendMessage(entry.tabId, { type: "asterion:get-status" }); } catch {}
+    if (status?.sessionId !== sessionId) await finalizeAbandonedSession(sessionId);
+  }
+  await updateRecoveryAlarm();
+}
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === RECOVERY_ALARM) recoverPendingSessions().catch(console.error);
+});
+chrome.runtime.onStartup?.addListener(() => recoverPendingSessions().catch(console.error));
+// Recreate recovery after service-worker eviction as well as browser startup.
+if (chrome.alarms) recoverPendingSessions().catch(console.error);

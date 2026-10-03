@@ -93,5 +93,5 @@
   "banner.finishedCopy": "The meeting was saved successfully.",
   "banner.viewRecording": "View recording",
   "banner.dismissAria": "Close",
-  "banner.videoErrorLog": "[Ariadne] Could not enable video:"
+  "history.incompleteRecording": "Incomplete recording"
 }

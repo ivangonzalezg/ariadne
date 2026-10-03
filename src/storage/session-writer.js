@@ -1,7 +1,9 @@
 // src/storage/session-writer.js
 import { CaptionParser } from "../lib/caption-parser.js";
 import { reconcileCaptionSnapshots } from "../lib/speaker-label-reconciler.js";
-import { runFfmpegJob } from "../offscreen/ffmpeg-client.js";
+import { runFfmpegAttempt } from "../offscreen/ffmpeg-client.js";
+import { CaptureJournal, CAPTURE_FORMAT_VERSION, readJson, CAPTURE_STATE_FILE, writeFile } from "./capture-journal.js";
+import { conversionQueue } from "../offscreen/conversion-queue.js";
 
 const STREAM_FILE_NAMES = {
   meeting: "audio-reunion.webm",
@@ -26,11 +28,13 @@ function sendConversionMessage(message) {
 }
 
 export class SessionWriter {
-  constructor({ sessionId, tabId, meetingTitle }) {
+  constructor({ sessionId, tabId, meetingTitle, folderName = null, restore = false }) {
     this.sessionId = sessionId;
     this.tabId = tabId;
     this.meetingTitle = meetingTitle || "Reunión sin título";
     this.startedAt = Date.now();
+    this.folderName = folderName;
+    this.restoring = restore;
     this.writeFailures = new Map();
     this.writeQueueByStream = new Map();
     this.segments = new Map();
@@ -47,81 +51,85 @@ export class SessionWriter {
 
   async _init() {
     const root = await navigator.storage.getDirectory();
-    this.meetingHandle = await root.getDirectoryHandle(meetingFolderName(this.startedAt, this.meetingTitle, this.sessionId), {
-      create: true,
+    this.folderName ??= meetingFolderName(this.startedAt, this.meetingTitle, this.sessionId);
+    this.meetingHandle = await root.getDirectoryHandle(this.folderName, { create: !this.restoring });
+    this.journal = await CaptureJournal.open(this.meetingHandle, this.restoring ? null : {
+      version: CAPTURE_FORMAT_VERSION, sessionId: this.sessionId, tabId: this.tabId, folderName: this.folderName,
+      meetingTitle: this.meetingTitle, startedAt: this.startedAt, recordingStatus: "recording",
+      generations: [], expectedSequences: {}, conversions: [], captionSnapshots: [], speakerLabels: [], muteManifest: null,
     });
+    if (this.journal.state.sessionId !== this.sessionId) throw new Error("Session state mismatch");
+    const state = this.journal.state;
+    this.startedAt = state.startedAt; this.endedAt = state.endedAt; this.meetingTitle = state.meetingTitle;
+    this.captionSnapshots = state.captionSnapshots ?? []; this.speakerLabels = state.speakerLabels ?? [];
+    this.hasCaption = this.captionSnapshots.length > 0;
+    this.committedChunks = this.journal.records.size;
+    for (const header of this.journal.records.values()) {
+      this.streamsUsed.add(header.stream);
+      this.lastSequence.set(header.stream, Math.max(this.lastSequence.get(header.stream) ?? 0, header.seq));
+    }
+    this.hasVideo = this.streamsUsed.has("video");
+  }
+
+  static async restore(folderName) {
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle(folderName);
+    const state = await readJson(directory, CAPTURE_STATE_FILE);
+    const writer = new SessionWriter({ ...state, folderName, restore: true });
+    await writer.ready;
+    return writer;
   }
 
   writeChunk(streamLabel, buffer, { sessionId = this.sessionId, seq, generation = 0, captureTs = Date.now() } = {}) {
-    if (sessionId !== this.sessionId || !Object.hasOwn(STREAM_FILE_NAMES, streamLabel) ||
-        !Number.isInteger(generation) || generation < 0 || !Number.isFinite(captureTs)) return Promise.reject(new Error("Invalid chunk identity"));
-    if (this._finalizePromise) return Promise.reject(new Error("Session already finalized"));
+    if (this._finalizePromise) return Promise.reject(Object.assign(new Error("Session already finalized"), { retryable: false }));
     const previous = this.writeQueueByStream.get(streamLabel) ?? Promise.resolve();
     const next = previous.then(async () => {
       await this.ready;
-      const last = this.lastSequence.get(streamLabel) ?? 0;
-      const sequence = seq ?? last + 1;
-      if (!Number.isInteger(sequence) || sequence < 1) throw new Error("Invalid chunk sequence");
-      if (sequence <= last) {
-        const committed = this.segments.get(`${streamLabel}:${generation}`);
-        if (!committed || sequence < committed.firstSequence || sequence > committed.lastSequence) throw new Error("Conflicting chunk generation");
-        return { duplicate: true, seq: sequence, generation };
-      }
-      const latestGeneration = Math.max(-1, ...[...this.segments.values()].filter((entry) => entry.stream === streamLabel).map((entry) => entry.generation));
-      if (generation < latestGeneration) throw new Error("Stale recorder generation");
-      if (sequence !== last + 1) throw new Error("Missing chunk sequence");
-      const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-      if (!bytes.byteLength) throw new Error("Empty chunk");
-      const key = `${streamLabel}:${generation}`;
-      let segment = this.segments.get(key);
-      if (!segment) {
-        const name = generation === 0 ? STREAM_FILE_NAMES[streamLabel] : `${streamLabel}-segment-${generation}.webm`;
-        segment = { stream: streamLabel, generation, name, byteLength: 0, firstSequence: sequence, lastSequence: sequence, firstCaptureTs: captureTs, lastCaptureTs: captureTs };
-        this.segments.set(key, segment);
-      }
-      const file = await this.meetingHandle.getFileHandle(segment.name, { create: true });
-      for (let attempt = 0; ; attempt++) {
-        let writable;
-        try {
-          writable = await file.createWritable({ keepExistingData: true });
-          await writable.write({ type: "write", position: segment.byteLength, data: bytes });
-          await writable.close();
-          break;
-        } catch (error) {
-          await writable?.abort?.().catch(() => {});
-          if (attempt === 2) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
-        }
-      }
-      segment.byteLength += bytes.byteLength; segment.lastCaptureTs = captureTs; segment.lastSequence = sequence;
-      this.lastSequence.set(streamLabel, sequence);
-      this.streamsUsed.add(streamLabel); this.committedChunks++;
+      if (this.journal.state.recordingStatus !== "recording") throw Object.assign(new Error("Session already finalized"), { retryable: false });
+      const sequence = seq ?? (this.lastSequence.get(streamLabel) ?? 0) + 1;
+      const result = await this.journal.append(streamLabel, buffer, { sessionId, seq: sequence, generation, captureTs, committedAt: Date.now() });
+      this.lastSequence.set(streamLabel, Math.max(this.lastSequence.get(streamLabel) ?? 0, sequence));
+      this.streamsUsed.add(streamLabel); this.committedChunks = this.journal.records.size;
       this.writeFailures.delete(`${streamLabel}:${sequence}`);
       this.writeFailures.delete(`${streamLabel}:next`);
-      return { seq: sequence, generation, captureTs };
+      return result;
     });
-    // Keep the queue usable for a retransmission after a failed write.
     this.writeQueueByStream.set(streamLabel, next.catch((error) => {
       this.writeFailures.set(`${streamLabel}:${seq ?? "next"}`, String(error.message ?? error));
     }));
     return next;
   }
 
-  onCaptionSnapshot(snapshot) {
-    this.hasCaption = true;
-    this.captionSnapshots.push(snapshot);
+  async checkpoint(update) {
+    await this.ready;
+    await this.journal.checkpoint(update);
   }
 
-  onSpeakerLabel(label) {
+  getStorageSnapshot() {
+    return { sessionId: this.sessionId, folderName: this.folderName, recordingStatus: this.journal.state.recordingStatus,
+      streams: Object.fromEntries(["meeting", "video"].map((stream) => [stream, this.journal.snapshot(stream)])),
+      conversions: structuredClone(this.journal.state.conversions) };
+  }
+
+  async onCaptionSnapshot(snapshot) {
+    this.hasCaption = true;
+    this.captionSnapshots.push(snapshot);
+    await this.checkpoint({ captionSnapshots: this.captionSnapshots });
+  }
+
+  async onSpeakerLabel(label) {
     this.speakerLabels.push(label);
+    await this.checkpoint({ speakerLabels: this.speakerLabels });
   }
 
   finalize(args) {
-    if (!this._finalizePromise) this._finalizePromise = this._finalizeOnce(args);
+    if (!this._finalizePromise) {
+      this._finalizePromise = this._finalizeOnce(args).catch((error) => { this._finalizePromise = null; throw error; });
+    }
     return this._finalizePromise;
   }
 
-  async _finalizeOnce({ muteManifest, endedAt, persistenceErrors = [] }) {
+  async _finalizeOnce({ muteManifest, endedAt, persistenceErrors = [], interruptionReason = null, expectedSequences = {} }) {
     for (const error of persistenceErrors) {
       this.writeFailures.set(error.chunk, error.message);
       const stream = error.chunk?.split(":")[0];
@@ -133,7 +141,7 @@ export class SessionWriter {
     // degraded:true dice explícitamente "no se pudo reconstruir este dato",
     // nunca "el mic nunca se desmuteó" (que sería lo que {intervals: []}
     // solo, sin la marca, parecería implicar).
-    const resolvedMuteManifest = muteManifest ?? { intervals: [], degraded: true };
+    const resolvedMuteManifest = muteManifest ?? { ...(this.journal?.state.muteManifest ?? { intervals: [] }), degraded: true };
     // Se usa el momento real en que el usuario detuvo la grabación (capturado en
     // MainWorldSession.stop()), no cuándo finalize() llegó a ejecutarse acá -
     // entre medio hay envíos de mensajes y cierres de archivo que pueden demorar.
@@ -141,9 +149,20 @@ export class SessionWriter {
     await this.ready;
 
     await Promise.all(this.writeQueueByStream.values());
+    await this.journal.checkpoint({ endedAt: this.endedAt, expectedSequences, muteManifest: resolvedMuteManifest,
+      recordingStatus: "finalizing", interruptionReason });
+    const gaps = [...this.streamsUsed].some((stream) => this.journal.snapshot(stream).gaps.length);
+    this.recordingStatus = interruptionReason || gaps || this.writeFailures.size ? "incomplete" : "complete";
+    this.interruptionReason = interruptionReason ?? (gaps ? "missing-fragments" : this.writeFailures.size ? "storage-error" : null);
+    await this.journal.checkpoint({ completionStatus: this.recordingStatus, interruptionReason: this.interruptionReason });
+    for (const stream of this.streamsUsed) {
+      const segments = await this.journal.materialize(stream, { prefix: this.recordingStatus === "incomplete" });
+      for (const segment of segments) this.segments.set(`${stream}:${segment.generation}`, segment);
+    }
 
 
     if (this.hasCaption) {
+      this.captionParser = new CaptionParser();
       const reconciled = reconcileCaptionSnapshots({
         captions: this.captionSnapshots,
         speakerLabels: this.speakerLabels,
@@ -172,16 +191,16 @@ export class SessionWriter {
     this.hasVideo = this.streamsUsed.has("video");
     await this._writeManifest({
       muteManifest: resolvedMuteManifest,
-      audioConversionStatus: this.streamsUsed.has("meeting") ? "pending" : "skipped",
-      videoConversionStatus: this.hasVideo ? "pending" : "skipped",
+      audioConversionStatus: this.streamsUsed.has("meeting") ? this.recordingStatus === "incomplete" ? "failed" : "pending" : "skipped",
+      videoConversionStatus: this.hasVideo ? this.recordingStatus === "incomplete" ? "failed" : "pending" : "skipped",
     });
 
-    // No se espera esta promesa - la sesión ya se considera "finalizada" con los
-    // webm originales a salvo; la conversión sigue en segundo plano y actualiza
-    // el manifest cuando termina (éxito o fallo).
-    this.scheduleConversions(resolvedMuteManifest, this.endedAt);
+    await this.journal.checkpoint({ recordingStatus: this.recordingStatus });
+    // Persist the job descriptors before returning; execution stays asynchronous.
+    await this.scheduleConversions(resolvedMuteManifest, this.endedAt);
 
     return {
+      recordingStatus: this.recordingStatus, interruptionReason: this.interruptionReason,
       sessionId: this.sessionId,
       tabId: this.tabId,
       folderName: this.meetingHandle.name,
@@ -200,6 +219,9 @@ export class SessionWriter {
     await manifestWritable.write(
       JSON.stringify(
         {
+          persistentFormatVersion: CAPTURE_FORMAT_VERSION,
+          metadataDegraded: Boolean(this.interruptionReason || muteManifest?.degraded),
+          recordingStatus: this.recordingStatus, interruptionReason: this.interruptionReason,
           startedAt: this.startedAt,
           endedAt: this.endedAt,
           durationMs: this.endedAt - this.startedAt,
@@ -224,142 +246,63 @@ export class SessionWriter {
   }
 
   async scheduleConversions(muteManifest, endedAt) {
-    let audioConversionStatus = this.streamsUsed.has("meeting") ? "pending" : "skipped";
-    let videoConversionStatus = this.hasVideo ? "pending" : "skipped";
-    let hasAudioMp3 = false;
-    let hasVideoMp4 = false;
-    const knownDurationMs = Math.max(1, endedAt - this.startedAt);
-
-    const createProgressReporter = (stream) => {
-      let lastSentPct = 0;
-      let lastSentAt = Date.now();
-      let lastTimeMs = -Infinity;
-
-      return (timeMs) => {
-        if (!Number.isFinite(timeMs) || timeMs < 0 || timeMs < lastTimeMs) return;
-        lastTimeMs = timeMs;
-
-        const pct = Math.min(100, Math.max(0, Math.round((timeMs / knownDurationMs) * 100)));
-        const now = Date.now();
-        if (pct === lastSentPct || now - lastSentAt < 500) return;
-
-        lastSentPct = pct;
-        lastSentAt = now;
-        sendConversionMessage({ type: "asterion:conversion-progress", sessionId: this.sessionId, stream, pct });
-      };
-    };
-
-    try {
-      if (this.streamsUsed.has("meeting")) {
-        sendConversionMessage({
-          type: "asterion:conversion-started",
-          sessionId: this.sessionId,
-          meetingTitle: this.meetingTitle,
-          stream: "meeting",
-        });
-        try {
-          await this._convertStream({
-            sourceFileName: STREAM_FILE_NAMES.meeting,
-            targetFileName: "audio-reunion.mp3",
-            inputExt: "webm",
-            outputExt: "mp3",
-            args: [],
-            onProgress: createProgressReporter("meeting"),
-          });
-          audioConversionStatus = "succeeded";
-          hasAudioMp3 = true;
-        } catch (error) {
-          console.error("[Ariadne] Falló la conversión de audio a MP3 (el webm original queda intacto):", error);
-          audioConversionStatus = "failed";
-        }
-        await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
-      }
-
-      if (this.hasVideo) {
-        let videoPreset = "medium";
-        try {
-          const response = await chrome.runtime.sendMessage({ type: "asterion:get-video-preset" });
-          if (response?.videoPreset) videoPreset = response.videoPreset;
-        } catch (error) {
-          console.error("[Ariadne] No se pudo obtener el preset de video guardado, se usa 'medium' por defecto:", error);
-        }
-        sendConversionMessage({
-          type: "asterion:conversion-started",
-          sessionId: this.sessionId,
-          meetingTitle: this.meetingTitle,
-          stream: "video",
-        });
-        try {
-          await this._convertStream({
-            sourceFileName: STREAM_FILE_NAMES.video,
-            targetFileName: "video-reunion.mp4",
-            inputExt: "webm",
-            outputExt: "mp4",
-            args: ["-fps_mode", "vfr", "-preset", videoPreset],
-            onProgress: createProgressReporter("video"),
-          });
-          videoConversionStatus = "succeeded";
-          hasVideoMp4 = true;
-        } catch (error) {
-          console.error("[Ariadne] Falló la conversión de video a MP4 (el webm original queda intacto):", error);
-          videoConversionStatus = "failed";
-        }
-        await this._writeManifest({ muteManifest, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4 });
-      }
-    } catch (error) {
-      console.error("[Ariadne] Falló inesperadamente la programación de conversiones:", error);
-    } finally {
+    await this.ready;
+    if (this.journal.state.recordingStatus === "incomplete") {
       sendConversionMessage({ type: "asterion:conversion-finished", sessionId: this.sessionId });
-      try {
-        await this.onConversionsFinished?.();
-      } catch (error) {
-        console.error("[Ariadne] Falló el callback de finalización de conversiones:", error);
-      }
+      await this.onConversionsFinished?.(); return;
     }
+    const jobs = this.journal.state.conversions;
+    for (const stream of this.streamsUsed) {
+      if (!jobs.some((job) => job.stream === stream)) jobs.push({ sessionId: this.sessionId, stream,
+        inputs: [...this.segments.values()].filter((segment) => segment.stream === stream).map((segment) => segment.name),
+        attempts: 0, state: "waiting", createdAt: Date.now(), nextAttemptAt: Date.now() });
+    }
+    await this.journal.checkpoint({ conversions: jobs });
+    const finish = async () => {
+      const audio = jobs.find((job) => job.stream === "meeting");
+      const video = jobs.find((job) => job.stream === "video");
+      await this._writeManifest({ muteManifest, audioConversionStatus: audio?.state === "waiting" || audio?.state === "running" ? "pending" : audio?.state ?? "skipped",
+        videoConversionStatus: video?.state === "waiting" || video?.state === "running" ? "pending" : video?.state ?? "skipped",
+        hasAudioMp3: audio?.state === "succeeded", hasVideoMp4: video?.state === "succeeded" });
+      if (jobs.every((job) => ["succeeded", "failed"].includes(job.state))) {
+        sendConversionMessage({ type: "asterion:conversion-finished", sessionId: this.sessionId });
+        await this.onConversionsFinished?.();
+      }
+    };
+    for (const job of jobs) {
+      await conversionQueue.add(job, {
+        save: () => this.journal.checkpoint({ conversions: jobs }),
+        input: async () => {
+          const segments = await this.journal.materialize(job.stream);
+          for (const segment of segments) this.segments.set(`${job.stream}:${segment.generation}`, segment);
+          const inputs = [];
+          for (const segment of segments) inputs.push(new Uint8Array(await (await this.meetingHandle.getFileHandle(segment.name)).getFile().then((file) => file.arrayBuffer())));
+          let args = [];
+          if (job.stream === "video") {
+            let response;
+            try { response = await chrome.runtime.sendMessage({ type: "asterion:get-video-preset" }); } catch {}
+            args = ["-fps_mode", "vfr", "-preset", response?.videoPreset ?? "medium"];
+          }
+          sendConversionMessage({ type: "asterion:conversion-started", sessionId: this.sessionId, meetingTitle: this.meetingTitle, stream: job.stream });
+          return { inputs, inputExt: "webm", outputExt: job.stream === "meeting" ? "mp3" : "mp4", args, normalizeAvStreams: job.stream === "video",
+            onProgress: (timeMs) => sendConversionMessage({ type: "asterion:conversion-progress", sessionId: this.sessionId, stream: job.stream,
+              pct: Math.min(100, Math.round(timeMs / Math.max(1, endedAt - this.startedAt) * 100)) }) };
+        },
+        publish: async (bytes, token, signal) => {
+          if (job.attemptId !== token) throw new Error("Obsolete conversion attempt");
+          await writeFile(this.meetingHandle, job.stream === "meeting" ? "audio-reunion.mp3" : "video-reunion.mp4", bytes, signal);
+          const segments = [...this.segments.values()].filter((segment) => segment.stream === job.stream);
+          if (segments.length > 1) {
+            const inputs = [];
+            for (const segment of segments) inputs.push(new Uint8Array(await (await this.meetingHandle.getFileHandle(segment.name)).getFile().then((file) => file.arrayBuffer())));
+            const combined = await runFfmpegAttempt({ signal, inputs, inputExt: "webm", outputExt: "webm", args: ["-c", "copy"], normalizeAvStreams: job.stream === "video" });
+            if (job.attemptId !== token) throw new Error("Obsolete conversion attempt");
+            await writeFile(this.meetingHandle, STREAM_FILE_NAMES[job.stream], combined, signal);
+          }
+        }, finish,
+      });
+    }
+    if (!jobs.length) await finish();
   }
 
-  async _convertStream({ sourceFileName, targetFileName, inputExt, outputExt, args, onProgress }) {
-    const streamLabel = outputExt === "mp3" ? "meeting" : "video";
-    if ([...this.writeFailures.keys()].some((key) => key.startsWith(`${streamLabel}:`))) throw new Error("Recording has uncommitted chunks");
-    const segments = [...this.segments.values()].filter((entry) => entry.stream === streamLabel && entry.byteLength > 0).sort((a, b) => a.generation - b.generation);
-    if (segments.length > 1) {
-      const inputs = [];
-      for (const segment of segments) {
-        const file = await (await this.meetingHandle.getFileHandle(segment.name)).getFile();
-        if (file.size !== undefined && file.size !== segment.byteLength) throw new Error("Segment size mismatch");
-        inputs.push(new Uint8Array(await file.arrayBuffer()));
-      }
-      const outputBytes = await runFfmpegJob({ inputs, inputExt, outputExt, args, onProgress });
-      const target = await this.meetingHandle.getFileHandle(targetFileName, { create: true });
-      const writable = await target.createWritable();
-      await writable.write(outputBytes); await writable.close();
-      // Produce the public WebM from the same complete segment list.
-      const combined = await runFfmpegJob({ inputs, inputExt, outputExt: "webm", args: ["-c", "copy"] });
-      const first = segments.find((segment) => segment.name === sourceFileName);
-      if (first) {
-        const backupName = `${streamLabel}-segment-${first.generation}.webm`;
-        const backup = await this.meetingHandle.getFileHandle(backupName, { create: true });
-        const backupWritable = await backup.createWritable();
-        await backupWritable.write(inputs[segments.indexOf(first)]); await backupWritable.close();
-        first.name = backupName;
-      }
-      const source = await this.meetingHandle.getFileHandle(sourceFileName, { create: true });
-      const combinedWritable = await source.createWritable();
-      await combinedWritable.write(combined); await combinedWritable.close();
-      return;
-    }
-    const sourceHandle = await this.meetingHandle.getFileHandle(segments[0]?.name ?? sourceFileName);
-    const sourceFile = await sourceHandle.getFile();
-    const inputBytes = new Uint8Array(await sourceFile.arrayBuffer());
-    const outputBytes = await runFfmpegJob({ inputBytes, inputExt, outputExt, args, onProgress });
-    const targetHandle = await this.meetingHandle.getFileHandle(targetFileName, { create: true });
-    const targetWritable = await targetHandle.createWritable();
-    await targetWritable.write(outputBytes);
-    await targetWritable.close();
-    if (segments[0] && segments[0].name !== sourceFileName) {
-      const publicSource = await this.meetingHandle.getFileHandle(sourceFileName, { create: true });
-      const writable = await publicSource.createWritable();
-      await writable.write(inputBytes); await writable.close();
-    }
-  }
 }

@@ -6,6 +6,8 @@ const ffmpegState = vi.hoisted(() => ({
   maximumConcurrentExecutions: 0,
   execResolvers: [],
   loadConfig: null,
+  commands: [],
+  files: new Map(),
 }));
 
 vi.mock("@ffmpeg/ffmpeg", () => ({
@@ -16,9 +18,10 @@ vi.mock("@ffmpeg/ffmpeg", () => ({
       ffmpegState.loadConfig = config;
     }
 
-    async writeFile() {}
+    async writeFile(name, bytes) { ffmpegState.files.set(name, bytes); }
 
-    async exec() {
+    async exec(args) {
+      ffmpegState.commands.push(args);
       ffmpegState.events.push("enter");
       ffmpegState.activeExecutions += 1;
       ffmpegState.maximumConcurrentExecutions = Math.max(
@@ -51,6 +54,8 @@ describe("runFfmpegJob", () => {
     ffmpegState.maximumConcurrentExecutions = 0;
     ffmpegState.execResolvers = [];
     ffmpegState.loadConfig = null;
+    ffmpegState.commands = [];
+    ffmpegState.files = new Map();
     globalThis.chrome = { runtime: { getURL: (path) => path } };
   });
 
@@ -88,5 +93,21 @@ describe("runFfmpegJob", () => {
       coreURL: "dist/ffmpeg/ffmpeg-core.js",
       wasmURL: "dist/ffmpeg/ffmpeg-core.wasm",
     });
+  });
+
+  it("remuxes audiovisual generations into consistent stream positions before concat", async () => {
+    const { runFfmpegAttempt } = await import("./ffmpeg-client.js");
+    const result = runFfmpegAttempt({ inputs: [new Uint8Array([1]), new Uint8Array([2])], inputExt: "webm", outputExt: "mp4", normalizeAvStreams: true });
+    for (let index = 0; index < 3; index++) {
+      await waitFor(() => ffmpegState.commands.length === index + 1);
+      if (index < 2) expect(ffmpegState.commands[index].slice(2, -1)).toEqual(["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]);
+      else {
+        expect(ffmpegState.commands[index].slice(0, 4)).toEqual(["-f", "concat", "-safe", "0"]);
+        const list = new TextDecoder().decode(ffmpegState.files.get(ffmpegState.commands[index][5]));
+        expect(list.split("\n")).toEqual(ffmpegState.commands.slice(0, 2).map((command) => `file '${command.at(-1)}'`));
+      }
+      ffmpegState.execResolvers.shift()();
+    }
+    await result;
   });
 });

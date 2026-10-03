@@ -429,7 +429,7 @@ describe("installReplaceTrackPatch", () => {
     const resolvedValue = await sender.replaceTrack(newTrack);
 
     expect(resolvedValue).toBe("replace-track-resolved-value");
-    expect(onAudioTrackReplaced).toHaveBeenCalledWith(newTrack, oldTrack);
+    expect(onAudioTrackReplaced).toHaveBeenCalledWith(newTrack, oldTrack, sender);
     expect(logs).toContainEqual({
       event: "sender-replace-track",
       details: { kind: "audio", previousTrackId: "old", newTrackId: "new" },

@@ -93,5 +93,5 @@
   "banner.finishedCopy": "La réunion a été enregistrée avec succès.",
   "banner.viewRecording": "Voir l'enregistrement",
   "banner.dismissAria": "Fermer",
-  "banner.videoErrorLog": "[Ariadne] Impossible d'activer la vidéo :"
+  "history.incompleteRecording": "Enregistrement incomplet"
 }

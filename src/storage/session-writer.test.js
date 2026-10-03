@@ -1,65 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const ffmpeg = vi.hoisted(() => ({ runFfmpegJob: vi.fn() }));
+const ffmpeg = vi.hoisted(() => ({ runFfmpegAttempt: vi.fn() }));
 
 vi.mock("../offscreen/ffmpeg-client.js", () => ffmpeg);
 
 import { SessionWriter } from "./session-writer.js";
 
-class MemoryFileHandle {
-  constructor(name) {
-    this.name = name;
-    this.bytes = new Uint8Array();
-  }
-
-  async createWritable() {
-    return {
-      write: async (value) => {
-        if (value?.type === "write") {
-          const next = new Uint8Array(Math.max(this.bytes.length, value.position + value.data.byteLength));
-          next.set(this.bytes); next.set(value.data, value.position); this.bytes = next; return;
-        }
-        if (typeof value === "string") {
-          this.bytes = new TextEncoder().encode(value);
-        } else if (value instanceof ArrayBuffer) {
-          this.bytes = new Uint8Array(value);
-        } else {
-          this.bytes = new Uint8Array(value);
-        }
-      },
-      close: async () => {},
-    };
-  }
-
-  async getFile() {
-    const bytes = this.bytes;
-    return { arrayBuffer: async () => bytes.slice().buffer };
-  }
-}
-
-class MemoryDirectoryHandle {
-  constructor(name) {
-    this.name = name;
-    this.files = new Map();
-    this.directories = new Map();
-  }
-
-  async getDirectoryHandle(name, { create } = {}) {
-    if (!this.directories.has(name) && !create) throw new Error(`Missing directory: ${name}`);
-    if (!this.directories.has(name)) this.directories.set(name, new MemoryDirectoryHandle(name));
-    return this.directories.get(name);
-  }
-
-  async getFileHandle(name, { create } = {}) {
-    if (!this.files.has(name) && !create) throw new Error(`Missing file: ${name}`);
-    if (!this.files.has(name)) this.files.set(name, new MemoryFileHandle(name));
-    return this.files.get(name);
-  }
-}
+import { MemoryDirectoryHandle } from "../../tests/helpers/memory-opfs.js";
+import { webcrypto } from "node:crypto";
+import { Blob } from "node:buffer";
+import { conversionQueue } from "../offscreen/conversion-queue.js";
 
 const waitFor = async (predicate) => {
   while (!predicate()) {
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
 };
 
@@ -94,23 +48,25 @@ function manifestOf(writer) {
 
 describe("SessionWriter conversion flow", () => {
   beforeEach(() => {
+    vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("Blob", Blob);
+    clearTimeout(conversionQueue.timer); conversionQueue.jobs.clear(); conversionQueue.running = false;
     const root = new MemoryDirectoryHandle("root");
     Object.defineProperty(navigator, "storage", {
       configurable: true,
       value: { getDirectory: vi.fn().mockResolvedValue(root) },
     });
-    ffmpeg.runFfmpegJob.mockReset();
+    ffmpeg.runFfmpegAttempt.mockReset();
   });
 
   it("finalizes and returns metadata without waiting for conversion", async () => {
     const conversion = deferred();
-    ffmpeg.runFfmpegJob.mockReturnValue(conversion.promise);
+    ffmpeg.runFfmpegAttempt.mockReturnValue(conversion.promise);
     const writer = await createWriter({ audio: true, video: false });
 
     const metadata = await writer.finalize({ muteManifest: { intervals: [] } });
 
     expect(metadata).toMatchObject({ sessionId: "session-1", tabId: 7, hasVideo: false });
-    await waitFor(() => ffmpeg.runFfmpegJob.mock.calls.length === 1);
+    await waitFor(() => ffmpeg.runFfmpegAttempt.mock.calls.length === 1);
     expect(manifestOf(writer).audioConversionStatus).toBe("pending");
 
     conversion.resolve(new Uint8Array([9]));
@@ -118,14 +74,14 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("converts audio to mp3 before video to mp4 and records both successes", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter();
     const finished = finishConversions(writer);
 
     await writer.finalize({ muteManifest: { intervals: [] } });
     await finished;
 
-    expect(ffmpeg.runFfmpegJob.mock.calls.map(([job]) => job.outputExt)).toEqual(["mp3", "mp4"]);
+    expect(ffmpeg.runFfmpegAttempt.mock.calls.map(([job]) => job.outputExt)).toEqual(["mp3", "mp4"]);
     expect(manifestOf(writer)).toMatchObject({
       audioConversionStatus: "succeeded",
       videoConversionStatus: "succeeded",
@@ -135,14 +91,14 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("continues with video conversion after an audio conversion failure", async () => {
-    ffmpeg.runFfmpegJob.mockRejectedValueOnce(new Error("audio failed")).mockResolvedValueOnce(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockRejectedValueOnce(new Error("INPUT_INVALID: audio failed")).mockResolvedValueOnce(new Uint8Array([9]));
     const writer = await createWriter();
     const finished = finishConversions(writer);
 
     await writer.finalize({ muteManifest: { intervals: [] } });
     await finished;
 
-    expect(ffmpeg.runFfmpegJob.mock.calls.map(([job]) => job.outputExt)).toEqual(["mp3", "mp4"]);
+    expect(ffmpeg.runFfmpegAttempt.mock.calls.map(([job]) => job.outputExt)).toEqual(["mp3", "mp4"]);
     expect(manifestOf(writer)).toMatchObject({
       audioConversionStatus: "failed",
       videoConversionStatus: "succeeded",
@@ -152,14 +108,14 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("marks video conversion as skipped when no video stream was recorded", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
     await writer.finalize({ muteManifest: { intervals: [] } });
     await finished;
 
-    expect(ffmpeg.runFfmpegJob).toHaveBeenCalledTimes(1);
+    expect(ffmpeg.runFfmpegAttempt).toHaveBeenCalledTimes(1);
     expect(manifestOf(writer)).toMatchObject({
       audioConversionStatus: "succeeded",
       videoConversionStatus: "skipped",
@@ -169,7 +125,7 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("writes transcripcion.json with camelCase segments relative to startedAt", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -190,7 +146,7 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("collapses consecutive snapshots from the same speaker into one segment", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -212,7 +168,7 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("does not write any transcript file when there were no captions", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -223,7 +179,7 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("finalize() called twice returns the same result and does not run conversions twice", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -234,11 +190,11 @@ describe("SessionWriter conversion flow", () => {
     await finished;
 
     expect(first).toEqual(second);
-    expect(ffmpeg.runFfmpegJob).toHaveBeenCalledTimes(1);
+    expect(ffmpeg.runFfmpegAttempt).toHaveBeenCalledTimes(1);
   });
 
   it("writes a degraded muteManifest marker when none is provided (emergency finalize path)", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -249,7 +205,7 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("uses the reconciled speaker label instead of the raw caption speaker when one is available", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -275,7 +231,7 @@ describe("SessionWriter conversion flow", () => {
   });
 
   it("keeps the original caption speaker when no speaker label was ever received", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false });
     const finished = finishConversions(writer);
 
@@ -290,50 +246,50 @@ describe("SessionWriter conversion flow", () => {
 
     expect(segments).toEqual([{ index: 0, startTime: 1000, endTime: 2000, text: "Hola", speaker: "You" }]);
   });
-  it("retries failed writes at the same offset and deduplicates committed sequences", async () => {
-    vi.useFakeTimers();
-    try {
-      const writer = await createWriter({ audio: false, video: false });
-      const file = await writer.meetingHandle.getFileHandle("audio-reunion.webm", { create: true });
-      const original = file.createWritable.bind(file);
-      let attempts = 0;
-      file.createWritable = async () => {
-        const writable = await original();
-        return { ...writable, close: async () => { if (++attempts < 3) throw new Error("temporary"); } };
-      };
-      const saved = writer.writeChunk("meeting", new Uint8Array([1, 2]), { seq: 1, generation: 0 });
-      await vi.runAllTimersAsync(); await saved;
-      expect(attempts).toBe(3); expect([...file.bytes]).toEqual([1, 2]);
-      expect(await writer.writeChunk("meeting", new Uint8Array([1, 2]), { seq: 1, generation: 0 })).toMatchObject({ duplicate: true });
-      expect(writer.committedChunks).toBe(1);
-      await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 })).rejects.toThrow("Missing chunk sequence");
-      await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 2, sessionId: "other" })).rejects.toThrow("Invalid chunk identity");
-    } finally { vi.useRealTimers(); }
+  it("retries durable writes, accepts gaps and rejects conflicting identities", async () => {
+    const writer = await createWriter({ audio: false, video: false });
+    const directory = writer.journal.recordsDirectory;
+    const file = await directory.getFileHandle("meeting-0-1.chunk", { create: true });
+    const original = file.createWritable.bind(file);
+    let attempts = 0;
+    file.createWritable = async () => {
+      if (++attempts < 3) throw new Error("temporary");
+      return original();
+    };
+    await writer.writeChunk("meeting", new Uint8Array([1, 2]), { seq: 1, captureTs: 100 });
+    expect(attempts).toBe(3);
+    expect(await writer.writeChunk("meeting", new Uint8Array([1, 2]), { seq: 1, captureTs: 100 })).toMatchObject({ duplicate: true, durable: true });
+    expect(writer.committedChunks).toBe(1);
+    expect(await writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 })).toMatchObject({ gaps: [2] });
+    await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 2, sessionId: "other" })).rejects.toThrow("Session mismatch");
+    await expect(writer.writeChunk("meeting", new Uint8Array([9]), { seq: 1, captureTs: 100 })).rejects.toThrow("Conflicting duplicate");
   });
 
   it("concatenates independent generations with defaults and keeps original segments for repeated conversion", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ video: false });
     await writer.writeChunk("meeting", new Uint8Array([3, 4]), { seq: 2, generation: 1 });
     const finished = finishConversions(writer); await writer.finalize({}); await finished;
-    expect(ffmpeg.runFfmpegJob.mock.calls[0][0]).toMatchObject({ inputs: [new Uint8Array([1, 2]), new Uint8Array([3, 4])], args: [], outputExt: "mp3" });
-    expect(ffmpeg.runFfmpegJob.mock.calls[1][0]).toMatchObject({ outputExt: "webm", args: ["-c", "copy"] });
+    expect(ffmpeg.runFfmpegAttempt.mock.calls[0][0]).toMatchObject({ inputs: [new Uint8Array([1, 2]), new Uint8Array([3, 4])], args: [], outputExt: "mp3" });
+    expect(ffmpeg.runFfmpegAttempt.mock.calls[1][0]).toMatchObject({ outputExt: "webm", args: ["-c", "copy"] });
     expect([...writer.meetingHandle.files.get("meeting-segment-0.webm").bytes]).toEqual([1, 2]);
-    await writer._convertStream({ sourceFileName: "audio-reunion.webm", targetFileName: "audio-reunion.mp3", inputExt: "webm", outputExt: "mp3", args: [] });
-    expect(ffmpeg.runFfmpegJob.mock.calls[2][0].inputs).toEqual([new Uint8Array([1, 2]), new Uint8Array([3, 4])]);
+    const restored = await SessionWriter.restore(writer.folderName);
+    const segments = await restored.journal.materialize("meeting");
+    expect(segments).toHaveLength(2);
+    expect(restored.committedChunks).toBe(2);
   });
 
   it("reports incomplete persistence instead of declaring a successful conversion", async () => {
     const writer = await createWriter({ video: false });
-    await expect(writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 })).rejects.toThrow();
+    await writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 });
     const finished = finishConversions(writer); await writer.finalize({}); await finished;
     expect(manifestOf(writer)).toMatchObject({ audioConversionStatus: "failed", hasAudioMp3: false });
-    expect(manifestOf(writer).persistenceErrors).toHaveLength(1);
-    expect(ffmpeg.runFfmpegJob).not.toHaveBeenCalled();
+    expect(manifestOf(writer).recordingStatus).toBe("incomplete");
+    expect(ffmpeg.runFfmpegAttempt).not.toHaveBeenCalled();
   });
 
   it("preserves public WebM when the only populated generation follows a restart", async () => {
-    ffmpeg.runFfmpegJob.mockResolvedValue(new Uint8Array([9]));
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: false, video: false });
     await writer.writeChunk("meeting", new Uint8Array([5, 6]), { seq: 1, generation: 1 });
     const finished = finishConversions(writer); await writer.finalize({}); await finished;
@@ -349,10 +305,27 @@ describe("SessionWriter conversion flow", () => {
       expect(first.startedAt).toBe(second.startedAt); expect(first.meetingHandle.name).not.toBe(second.meetingHandle.name);
       await first.writeChunk("meeting", new Uint8Array([1]), { seq: 1 });
       await second.writeChunk("meeting", new Uint8Array([2]), { seq: 1 });
+      await first.journal.materialize("meeting"); await second.journal.materialize("meeting");
       expect([...first.meetingHandle.files.get("audio-reunion.webm").bytes]).toEqual([1]);
       expect([...second.meetingHandle.files.get("audio-reunion.webm").bytes]).toEqual([2]);
       await expect(first.writeChunk("meeting", new Uint8Array([3]), { seq: 1, generation: 1 })).rejects.toThrow("Conflicting chunk generation");
     } finally { vi.useRealTimers(); }
   });
 
+});
+
+it("restores captions, speaker labels and a partial mute checkpoint and marks interrupted metadata degraded", async () => {
+  vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("Blob", Blob);
+  const root = new MemoryDirectoryHandle("root"); Object.defineProperty(navigator, "storage", { configurable: true, value: { getDirectory: async () => root } });
+  const writer = new SessionWriter({ sessionId: "restore-metadata", tabId: 7, meetingTitle: "Metadata" }); await writer.ready;
+  await writer.writeChunk("meeting", new Uint8Array([1]), { seq: 1 });
+  await writer.onCaptionSnapshot({ speaker: "You", text: "Saved", timestampMs: writer.startedAt + 100 });
+  await writer.onSpeakerLabel({ speakerName: "Local", timestampMs: writer.startedAt + 50 });
+  await writer.checkpoint({ muteManifest: { intervals: [{ startMs: 10, endMs: 40 }], openIntervalStartMs: 100 } });
+  const restored = await SessionWriter.restore(writer.folderName);
+  const meta = await restored.finalize({ interruptionReason: "capture-tab-disappeared", endedAt: writer.startedAt + 1000 });
+  expect(meta.recordingStatus).toBe("incomplete");
+  expect(manifestOf(restored)).toMatchObject({ metadataDegraded: true, audioConversionStatus: "failed", hasAudioMp3: false,
+    muteManifest: { degraded: true, intervals: [{ startMs: 10, endMs: 40 }], openIntervalStartMs: 100 } });
+  expect(JSON.parse(new TextDecoder().decode(restored.meetingHandle.files.get("transcripcion.json").bytes))[0]).toMatchObject({ text: "Saved", speaker: "Local (You)" });
 });

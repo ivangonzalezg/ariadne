@@ -40,8 +40,20 @@ export class RemoteAudioMonitor {
   }
 
   _scan() {
-    const result = this.sweep({ onRemoteAudioTrack: (payload) => this.mixer.addRemoteTrack(payload) });
-    this.lastSweep = { timestamp: this.now(), ...result };
+    const recoveredKeys = new Set();
+    const result = this.sweep({ onRemoteAudioTrack: (payload) => {
+      const status = this.mixer.addRemoteTrack({ ...payload, deferConnection: true });
+      if (["added", "reconnected"].includes(status)) recoveredKeys.add(this.mixer.trackKeys?.get(payload.track) ?? `${payload.connectionId}:${payload.track.id}`);
+      return status;
+    } });
+    const reconciliation = this.mixer.reconcileRemoteSources?.() ?? { recovered: 0, errors: [] };
+    result.discovered = result.recovered;
+    if (this.mixer.reconcileRemoteSources) {
+      for (const key of reconciliation.keys) recoveredKeys.add(key);
+      result.recovered = recoveredKeys.size;
+    }
+    result.errors.push(...reconciliation.errors);
+    this.lastSweep = { phases: ["discovery", "reconciliation"], timestamp: this.now(), ...result };
     this.recoveries += result.recovered;
     for (const error of result.errors) this._recordError(error);
     if (result.recovered) this.log("remote-audio-recovered", { recovered: result.recovered });

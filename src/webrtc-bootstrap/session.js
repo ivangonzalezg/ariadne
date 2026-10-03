@@ -14,7 +14,9 @@ export class MainWorldSession {
     this.receivedChunks = 0;
     this.stopping = false;
     this.restartPromise = null;
+    this.recorderStops = new WeakMap();
     this.mixer = mixer;
+    this.mixer.setMicMuted(Boolean(initialMicMuted), { immediate: true });
     this.postToIsolated = postToIsolated;
     this.muteManifest = new MuteManifest({ startedAt: Date.now() });
     this.seq = { meeting: 0, video: 0 };
@@ -37,6 +39,8 @@ export class MainWorldSession {
   _startRecorder(stream, streamLabel, mimeType) {
     const recorder = new MediaRecorder(stream, { mimeType });
     const generation = this.generation;
+    const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+    this.recorderStops.set(recorder, stopped);
     recorder.onerror = (event) => { if (!this.stopping) this.onRecorderError(event.error); };
     // Cadena secuencial: cada chunk espera a que el anterior termine de procesarse
     // y mandarse antes de seguir - evita que lleguen desordenados, y stop() puede
@@ -63,20 +67,27 @@ export class MainWorldSession {
 
   confirmChunk({ sessionId, stream, seq, generation }) {
     if (sessionId !== this.sessionId || !Object.hasOwn(this.seq, stream) || generation > this.generation || !Number.isInteger(seq) || seq < 1 || seq > this.seq[stream]) return;
-    const last = this.confirmedSequences.get(stream) ?? 0;
-    if (seq <= last) return;
-    this.confirmedSequences.set(stream, seq);
+    const key = `${stream}:${generation}:${seq}`;
+    if (this.confirmedSequences.has(key)) return;
+    this.confirmedSequences.set(key, true);
     this.committedChunks++;
+  }
+
+  checkpoint(generationClosed = false) {
+    return this.postToIsolated({ type: "asterion:session-checkpoint", sessionId: this.sessionId,
+      muteManifest: { ...this.muteManifest.toJSON(), openIntervalStartMs: this.muteManifest.openIntervalStartMs, checkpointAt: Date.now() }, expectedSequences: { ...this.seq }, generation: this.generation, generationClosed });
   }
 
   onMicMuted(timestampMs) {
     this.muteManifest.onMuted(timestampMs);
     this.mixer.setMicMuted(true);
+    this.checkpoint();
   }
 
   onMicUnmuted(timestampMs) {
     this.muteManifest.onUnmuted(timestampMs);
     this.mixer.setMicMuted(false);
+    this.checkpoint();
   }
 
   enableVideo(displayStream) {
@@ -97,8 +108,8 @@ export class MainWorldSession {
   async _flushRecorders() {
     const recorders = [this.meetingRecorder, this.videoRecorder].filter(Boolean);
     await Promise.all(recorders.map((recorder) => {
-      if (recorder.state === "inactive") return Promise.resolve();
-      return new Promise((resolve) => { recorder.onstop = resolve; recorder.stop(); });
+      if (recorder.state !== "inactive") recorder.stop();
+      return this.recorderStops.get(recorder);
     }));
     await Promise.all([this._meetingWrites?.(), this._videoWrites?.()].filter(Boolean));
   }
@@ -108,9 +119,10 @@ export class MainWorldSession {
     if (this.restartPromise) return this.restartPromise;
     this.restartPromise = (async () => {
       await this._flushRecorders();
+      await this.checkpoint(true);
       if (this.stopping) return false;
       const mixer = await createMixer();
-      if (this.stopping) return false;
+      if (this.stopping) { await mixer.close?.(); return false; }
       this.mixer = mixer;
       this.generation++;
       this.videoRecorder = null;
@@ -121,7 +133,7 @@ export class MainWorldSession {
     return this.restartPromise;
   }
 
-  async stop() {
+  async stop({ interruptionReason = null } = {}) {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
     const endedAt = Date.now();
@@ -131,7 +143,7 @@ export class MainWorldSession {
       await this._flushRecorders();
       this.videoStream?.getTracks().forEach((track) => track.stop());
       await this.postToIsolated({ type: "asterion:session-ended", sessionId: this.sessionId,
-        muteManifest: this.muteManifest.toJSON(), endedAt });
+        muteManifest: this.muteManifest.toJSON(), endedAt, expectedSequences: { ...this.seq }, interruptionReason });
     })();
     return this.stopPromise;
   }

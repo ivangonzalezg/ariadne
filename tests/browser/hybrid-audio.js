@@ -44,10 +44,14 @@ export async function runHybrid() {
   first.srcObject = remote.stream; duplicate.srcObject = remote.stream;
   document.body.append(first, duplicate);
   const points = [];
+  const canvas = document.createElement("canvas"); canvas.width = 32; canvas.height = 32;
+  const paint = canvas.getContext("2d"); let frame = 0;
+  const drawing = setInterval(() => { paint.fillStyle = session.generation ? (frame++ % 2 ? "green" : "yellow") : (frame++ % 2 ? "red" : "blue"); paint.fillRect(0, 0, 32, 32); }, 50);
+  const screen = canvas.captureStream(20);
   try {
     mixer.setMicMuted(true);
     assert(mixer.localSources.size === 0, "recording starts before an outgoing microphone is available");
-    html.start(); playback.start(); session.start();
+    html.start(); playback.start(); session.start(); session.enableVideo(screen);
     assert(mixer.htmlSources.size === 1, "two HTML owners share one source");
     await wait(1800); points.push({ generation: 0, centre: 0.9, mic: false, html: true, webAudio: false });
     rendered.node.connect(sourceContext.destination);
@@ -67,18 +71,22 @@ export async function runHybrid() {
       return mixer;
     });
     assert(session.restart(async () => { throw new Error("duplicate restart"); }) === restarting, "concurrent restarts coalesced");
-    await restarting; await wait(2500);
+    await restarting; assert(screen.getVideoTracks()[0].readyState === "live", "pipeline restart preserves the screen track"); await wait(2500);
     points.push({ generation: 1, centre: 1.4, mic: true, html: true, webAudio: true });
     await session.stop(); html.stop(); playback.stop(); await converted;
     const manifest = JSON.parse(await (await writer.meetingHandle.getFileHandle("manifest.json")).getFile().then((file) => file.text()));
+    assert(manifest.videoConversionStatus === "succeeded" && manifest.hasVideoMp4, "video conversion retains both recorder generations");
     assert(manifest.audioConversionStatus === "succeeded", `real OPFS WebM to MP3 conversion succeeds: ${JSON.stringify(manifest)}`);
     const decoder = new AudioContext();
     const mp3 = await (await writer.meetingHandle.getFileHandle("audio-reunion.mp3")).getFile();
     const decodedMp3 = await decoder.decodeAudioData(await mp3.arrayBuffer());
     const webm = await (await writer.meetingHandle.getFileHandle("audio-reunion.webm")).getFile();
     const decodedWebm = await decoder.decodeAudioData(await webm.arrayBuffer());
+    const mp4 = await (await writer.meetingHandle.getFileHandle("video-reunion.mp4")).getFile();
+    const decodedVideoAudio = await decoder.decodeAudioData(await mp4.arrayBuffer());
+    assert(Math.abs(decodedVideoAudio.duration - decodedMp3.duration) < .5, `video audio retains both generations: videoAudio=${decodedVideoAudio.duration}, audio=${decodedMp3.duration}, segments=${JSON.stringify(manifest.captureSegments)}`);
     // The combined public files must retain the pre-restart and post-restart voices.
-    for (const decoded of [decodedMp3, decodedWebm]) {
+    for (const decoded of [decodedMp3, decodedWebm, decodedVideoAudio]) {
       const checks = [...points.filter((point) => point.generation === 0), { centre: decoded.duration - 1, mic: true, html: true, webAudio: true }];
       for (const { centre, mic, html: hasHtml, webAudio } of checks) {
         const measured = [440, 660, 880].map((frequency) => amplitude(decoded, frequency, centre));
@@ -88,10 +96,38 @@ export async function runHybrid() {
       }
     }
     assert(decodedMp3.duration > 8 && Math.abs(decodedMp3.duration - decodedWebm.duration) < 0.3, "both generations survive conversion with consistent duration");
+    const videoFile = await (await writer.meetingHandle.getFileHandle("video-reunion.mp4")).getFile();
+    const video = document.createElement("video"), videoUrl = URL.createObjectURL(videoFile);
+    await new Promise((resolve, reject) => { video.onloadedmetadata = resolve; video.onerror = () => reject(new Error("Video decode failed")); video.src = videoUrl; });
+    const videoDuration = video.duration;
+    assert(Math.abs(videoDuration - decodedMp3.duration) < .5, `video retains duration across generations: video=${videoDuration}, audio=${decodedMp3.duration}, segments=${JSON.stringify(manifest.captureSegments)}`);
+    await new Promise((resolve, reject) => { video.onseeked = resolve; video.onerror = () => reject(new Error("Video seek failed")); video.currentTime = videoDuration - .5; });
+    const decodedFrame = document.createElement("canvas"); decodedFrame.width = 32; decodedFrame.height = 32;
+    const pixels = decodedFrame.getContext("2d"); pixels.drawImage(video, 0, 0);
+    assert(pixels.getImageData(16, 16, 1, 1).data[1] > 100, "post-restart video frames survive conversion");
+    video.removeAttribute("src"); video.load(); URL.revokeObjectURL(videoUrl);
     await decoder.close();
-    return { ok: true, committedChunks: writer.committedChunks, mp3Duration: decodedMp3.duration, webmDuration: decodedWebm.duration, points };
+    const sharedSignal = [];
+    mixer.setMicMuted(true); rendered.node.disconnect(sourceContext.destination);
+    remote.node.connect(sourceContext.destination);
+    for (const route of ["html", "web-audio", "both"]) {
+      if (route === "web-audio") html.stop(); else html.start();
+      if (route === "html") playback.stop(); else playback.start();
+      const blobs = [], recorder = new MediaRecorder(mixer.stream, { mimeType: "audio/webm" });
+      recorder.ondataavailable = ({ data }) => { if (data.size) blobs.push(data); }; recorder.start(2000);
+      await wait(2100); await new Promise((resolve) => { recorder.onstop = resolve; recorder.stop(); });
+      const context = new AudioContext(), decoded = await context.decodeAudioData(await new Blob(blobs).arrayBuffer());
+      const measured = amplitude(decoded, 440, 1);
+      assert(decoded.duration > 1.8 && Number.isFinite(measured) && measured < .3, "shared-signal recording has valid duration and bounded amplitude");
+      if (route !== "both") assert(measured > .06, `isolated ${route} retains the shared signal`);
+      assert(mixer.htmlSources.size === (route === "web-audio" ? 0 : 1), "HTML identity does not produce extra sources");
+      assert(mixer.playbackSources.size === (route === "html" ? 0 : 1), "Web Audio identity does not produce extra sources");
+      sharedSignal.push({ route, amplitude: measured, duration: decoded.duration }); await context.close();
+    }
+    return { ok: true, sharedSignal, videoDuration, videoAudioDuration: decodedVideoAudio.duration, committedChunks: writer.committedChunks, mp3Duration: decodedMp3.duration, webmDuration: decodedWebm.duration, points };
   } finally {
     if (!session.stopping) await session.stop();
+    clearInterval(drawing); screen.getTracks().forEach((track) => track.stop());
     html.stop(); playback.stop(); first.remove(); duplicate.remove();
     oscillators.forEach((oscillator) => oscillator.stop()); await mixer.close(); await sourceContext.close();
     const root = await navigator.storage.getDirectory(); await root.removeEntry(writer.meetingHandle.name, { recursive: true });

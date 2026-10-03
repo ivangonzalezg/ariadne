@@ -91,7 +91,10 @@ export class RemoteMediaState {
         while (collection.size > 4096) collection.delete(collection.keys().next().value);
       }
       this.onChange();
-    } catch (error) { this.log("remote-media-state-unavailable", { message: error.message }); }
+    } catch (error) {
+      this.bySsrc.clear(); this.devices.clear(); this.parentDevices.clear();
+      this.log("remote-media-state-unavailable", { message: error.message });
+    }
   }
   get(receiver) {
     try {

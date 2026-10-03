@@ -7,10 +7,12 @@ vi.mock("../storage/session-writer.js", () => ({
     constructor({ sessionId }) {
       this.sessionId = sessionId;
       this.ready = Promise.resolve();
+      this.folderName = "x";
       this.finalizeCalls = 0;
       this.onConversionsFinished = null;
       writerState.instances.push(this);
     }
+    getStorageSnapshot() { return {}; }
     onCaptionSnapshot() {}
     onSpeakerLabel() {}
     writeChunk() {
@@ -34,16 +36,16 @@ describe("offscreen session-ended deduplication", () => {
       storage: { local: { get: async () => ({ debugLogging: false }) } },
       runtime: {
         onMessage: { addListener: (fn) => { messageListener = fn; } },
-        sendMessage: vi.fn(),
+        sendMessage: vi.fn().mockResolvedValue({}),
       },
     };
   });
 
   it("only finalizes once and sends session-finalized once when session-ended arrives twice", async () => {
     await import("./offscreen.js");
-    await messageListener({ type: "asterion:session-starting", sessionId: "session-1", meetingTitle: "Daily" }, {});
-    await messageListener({ type: "asterion:session-ended", sessionId: "session-1", muteManifest: null, endedAt: 1000 }, {});
-    await messageListener({ type: "asterion:session-ended", sessionId: "session-1", muteManifest: null, endedAt: 1000 }, {});
+    await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-starting", sessionId: "session-1", meetingTitle: "Daily" }, {}, resolve));
+    await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-ended", sessionId: "session-1", muteManifest: null, endedAt: 1000 }, {}, resolve));
+    await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-ended", sessionId: "session-1", muteManifest: null, endedAt: 1000 }, {}, resolve));
     await Promise.resolve();
     await Promise.resolve();
 
@@ -53,11 +55,11 @@ describe("offscreen session-ended deduplication", () => {
   });
   it("responds to chunks only after persistence and keeps unrelated messages available to their owners", async () => {
     await import("./offscreen.js");
-    expect(messageListener({ type: "asterion:get-video-preset" }, {}, vi.fn())).toBeUndefined();
-    await new Promise((resolve) => messageListener({ type: "asterion:session-starting", sessionId: "session-1" }, {}, resolve));
+    expect(messageListener({ target: "asterion-offscreen", type: "asterion:get-video-preset" }, {}, vi.fn())).toBeUndefined();
+    await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-starting", sessionId: "session-1" }, {}, resolve));
     let release; writerState.write.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
     const response = vi.fn();
-    expect(messageListener({ type: "asterion:chunk", sessionId: "session-1", stream: "meeting", bufferBase64: "AQ==", seq: 1, generation: 0 }, {}, response)).toBe(true);
+    expect(messageListener({ target: "asterion-offscreen", type: "asterion:chunk", sessionId: "session-1", stream: "meeting", bufferBase64: "AQ==", seq: 1, generation: 0 }, {}, response)).toBe(true);
     await vi.waitFor(() => expect(writerState.write).toHaveBeenCalled());
     expect(response).not.toHaveBeenCalled();
     release({ seq: 1, generation: 0 });
@@ -66,13 +68,13 @@ describe("offscreen session-ended deduplication", () => {
 
   it("distinguishes transport initialization from an exhausted storage write", async () => {
     await import("./offscreen.js");
-    const chunk = { type: "asterion:chunk", sessionId: "session-1", stream: "meeting", bufferBase64: "AQ==" };
+    const chunk = { target: "asterion-offscreen", type: "asterion:chunk", sessionId: "session-1", stream: "meeting", bufferBase64: "AQ==" };
     const missing = await new Promise((resolve) => messageListener(chunk, {}, resolve));
     expect(missing).toMatchObject({ retryable: true });
-    await new Promise((resolve) => messageListener({ type: "asterion:session-starting", sessionId: "session-1" }, {}, resolve));
-    writerState.write.mockRejectedValueOnce(new Error("disk write failed"));
+    await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-starting", sessionId: "session-1" }, {}, resolve));
+    writerState.write.mockRejectedValueOnce(Object.assign(new Error("disk write failed"), { retryable: false }));
     const failed = await new Promise((resolve) => messageListener(chunk, {}, resolve));
-    expect(failed).toEqual({ error: "disk write failed", retryable: false });
+    expect(failed).toMatchObject({ error: "disk write failed", retryable: false });
   });
 
 });

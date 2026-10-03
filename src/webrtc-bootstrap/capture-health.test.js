@@ -39,7 +39,7 @@ describe("capture recovery", () => {
     health.chunk(1000); for (let i = 0; i < 5; i++) health.chunk(100);
     expect(scan).toHaveBeenCalledTimes(4);
     session.committedChunks = 0; await health.checkStorage(); await health.checkStorage(); await health.checkStorage();
-    expect(restart).toHaveBeenCalledTimes(2); health.stop();
+    expect(restart).not.toHaveBeenCalled(); health.stop();
   });
   it("reconnects muted sources only with announced mic-on metadata and rate limits each stream", () => {
     const { health, mixer } = setup();

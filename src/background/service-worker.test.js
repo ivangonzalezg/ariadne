@@ -79,7 +79,7 @@ describe("emergency finalize on tab close", () => {
 
   it("sends asterion:session-ended for a session whose tab was closed", async () => {
     let onRemovedHandler;
-    const sendMessage = vi.fn();
+    const sendMessage = vi.fn().mockResolvedValue({});
     globalThis.chrome = {
       ...baseChromeMock(),
       runtime: { ...baseChromeMock().runtime, sendMessage },
@@ -98,7 +98,7 @@ describe("emergency finalize on tab close", () => {
 
   it("does nothing when the closed tab has no active session", async () => {
     let onRemovedHandler;
-    const sendMessage = vi.fn();
+    const sendMessage = vi.fn().mockResolvedValue({});
     globalThis.chrome = {
       ...baseChromeMock(),
       runtime: { ...baseChromeMock().runtime, sendMessage },
@@ -113,7 +113,7 @@ describe("emergency finalize on tab close", () => {
 
   it("sends asterion:session-ended when the top frame of a recording tab navigates away", async () => {
     let onCommittedHandler;
-    const sendMessage = vi.fn();
+    const sendMessage = vi.fn().mockResolvedValue({});
     globalThis.chrome = {
       ...baseChromeMock(),
       runtime: { ...baseChromeMock().runtime, sendMessage },
@@ -132,7 +132,7 @@ describe("emergency finalize on tab close", () => {
 
   it("ignores onCommitted events for subframes (frameId !== 0)", async () => {
     let onCommittedHandler;
-    const sendMessage = vi.fn();
+    const sendMessage = vi.fn().mockResolvedValue({});
     globalThis.chrome = {
       ...baseChromeMock(),
       runtime: { ...baseChromeMock().runtime, sendMessage },
@@ -145,5 +145,50 @@ describe("emergency finalize on tab close", () => {
     await onCommittedHandler({ tabId: 42, frameId: 7 });
 
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("storage RPC and restored history", () => {
+  let listeners;
+  beforeEach(() => {
+    vi.resetModules(); listeners = [];
+    globalThis.chrome = baseChromeMock();
+    chrome.runtime.onMessage.addListener = (listener) => listeners.push(listener);
+    chrome.runtime.sendMessage = vi.fn().mockResolvedValue({ committed: true, durable: true });
+  });
+  async function dispatch(message, sender = {}) {
+    let owners = 0;
+    const response = await new Promise((resolve) => {
+      for (const listener of listeners) if (listener(message, sender, resolve) === true) owners++;
+    });
+    expect(owners).toBe(1); return response;
+  }
+  it("forwards to a distinct target and preserves the durable ACK with one responder", async () => {
+    const { registerActiveSession } = await import("./service-worker.js");
+    await registerActiveSession("s", 7, "Meeting", "folder");
+    const response = await dispatch({ type: "asterion:chunk", sessionId: "s", seq: 3, generation: 1, stream: "meeting" });
+    expect(response).toMatchObject({ committed: true, durable: true });
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ target: "asterion-offscreen", folderName: "folder", tabId: 7 }));
+    const ignore = vi.fn(); for (const listener of listeners) expect(listener({ target: "asterion-offscreen", type: "asterion:chunk" }, {}, ignore)).toBeUndefined();
+    expect(ignore).not.toHaveBeenCalled();
+  });
+  it("persists the folder returned by initialization and does not duplicate restored history", async () => {
+    await import("./service-worker.js");
+    chrome.runtime.sendMessage.mockResolvedValueOnce({ folderName: "durable-folder" });
+    await dispatch({ type: "asterion:session-starting", sessionId: "s", meetingTitle: "Meeting" }, { tab: { id: 7 } });
+    expect(chrome.storage.__store.activeRecordingSessions.s.folderName).toBe("durable-folder");
+    const meta = { type: "asterion:session-finalized", sessionId: "s", folderName: "durable-folder", startedAt: 100, endedAt: 200, recordingStatus: "incomplete" };
+    await dispatch(meta); await dispatch(meta);
+    expect(chrome.storage.__store.meetingHistory).toHaveLength(1);
+    expect(chrome.storage.__store.meetingHistory[0].recordingStatus).toBe("incomplete");
+  });
+  it("recreates offscreen once for concurrent transport recovery", async () => {
+    await import("./service-worker.js");
+    let finish; const gate = new Promise((resolve) => { finish = resolve; });
+    chrome.offscreen = { closeDocument: vi.fn(() => gate), createDocument: vi.fn().mockResolvedValue() };
+    const a = dispatch({ type: "asterion:recover-storage", sessionId: "s" });
+    const b = dispatch({ type: "asterion:recover-storage", sessionId: "s" });
+    await vi.waitFor(() => expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce());
+    finish(); await Promise.all([a, b]); expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
   });
 });
