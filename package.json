@@ -9,7 +9,8 @@
     "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
     "copy:ffmpeg": "node scripts/copy-ffmpeg-core.js",
     "build:offscreen": "esbuild src/offscreen/offscreen.js --bundle --format=esm --outfile=dist/offscreen.bundle.js",
-    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen"
+    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen",
+    "test:transcript:browser": "node scripts/test-transcript-browser.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

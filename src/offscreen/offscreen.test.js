@@ -14,6 +14,7 @@ vi.mock("../storage/session-writer.js", () => ({
     }
     getStorageSnapshot() { return {}; }
     onCaptionSnapshot() {}
+    onCaptionEvent() { return writerState.write(); }
     onSpeakerLabel() {}
     writeChunk() {
       return writerState.write();
@@ -64,6 +65,17 @@ describe("offscreen session-ended deduplication", () => {
     expect(response).not.toHaveBeenCalled();
     release({ seq: 1, generation: 0 });
     await vi.waitFor(() => expect(response).toHaveBeenCalledWith({ committed: true, seq: 1, generation: 0 }));
+  });
+
+  it("responds to captions only after their durable write", async () => {
+    await import("./offscreen.js");
+    await new Promise(resolve => messageListener({ target: "asterion-offscreen", type: "asterion:session-starting", sessionId: "s" }, {}, resolve));
+    let release; writerState.write.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+    const response = vi.fn();
+    messageListener({ target: "asterion-offscreen", type: "asterion:caption-event", sessionId: "s", event: { eventSeq: 1 } }, {}, response);
+    await vi.waitFor(() => expect(writerState.write).toHaveBeenCalled()); expect(response).not.toHaveBeenCalled();
+    release({ durable: true, eventSeq: 1 });
+    await vi.waitFor(() => expect(response).toHaveBeenCalledWith({ committed: true, durable: true, eventSeq: 1 }));
   });
 
   it("distinguishes transport initialization from an exhausted storage write", async () => {

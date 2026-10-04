@@ -93,5 +93,12 @@
   "banner.finishedCopy": "La reunión se guardó correctamente.",
   "banner.viewRecording": "Ver grabación",
   "banner.dismissAria": "Cerrar",
-  "history.incompleteRecording": "Grabación incompleta"
+  "history.incompleteRecording": "Grabación incompleta",
+  "transcript.preparing": "Preparando",
+  "transcript.paused": "Pausada por ti",
+  "transcript.recovering": "Recuperando",
+  "transcript.error": "Error de captura",
+  "transcript.saving": "Guardando",
+  "transcript.storageError": "Error al guardar",
+  "transcript.incomplete": "Transcripción incompleta"
 }

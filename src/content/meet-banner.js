@@ -1,3 +1,4 @@
+import { captionStatusLabel } from "../shared/caption-status.js";
 // src/content/meet-banner.js
 import { icon } from "../shared/icons.js";
 import { initI18n } from "../shared/i18n/i18n.js";
@@ -58,7 +59,7 @@ function renderRecording() {
   const sources = isExpanded
     ? `<div class="divider"></div>
       <div class="sources">
-        ${sourceRow("file-text", t("common.transcript"), Boolean(currentMeta.hasTranscript), t("popup.activeFem"), t("common.notAvailable"))}
+        ${sourceRow("file-text", t("common.transcript"), Boolean(currentMeta.transcriptActive) && !currentMeta.captionStorage?.error, captionStatusLabel(currentMeta, t), captionStatusLabel(currentMeta, t))}
         ${sourceRow("volume-2", t("common.audio"), true, t("popup.activeMasc"), "")}
         ${sourceRow("video", t("common.video"), Boolean(currentMeta.videoEnabled), t("popup.activeMasc"), t("popup.notActive"))}
       </div>

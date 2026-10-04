@@ -44,12 +44,12 @@ async function restorePending() {
         let meta;
         if (state.recordingStatus === "finalizing" || !state.conversions?.length) {
           meta = await writer.finalize({ muteManifest: state.muteManifest, endedAt: state.endedAt,
-            expectedSequences: state.expectedSequences, interruptionReason: state.interruptionReason });
+            expectedSequences: state.expectedSequences, expectedCaptionEvents: state.expectedCaptionEvents, captionPersistenceErrors: state.captionPersistenceErrors, interruptionReason: state.interruptionReason });
         } else {
           if (state.recordingStatus === "complete") await writer.scheduleConversions(state.muteManifest, state.endedAt);
           meta = { sessionId: writer.sessionId, tabId: state.tabId, folderName: directory.name,
             startedAt: state.startedAt, endedAt: state.endedAt, durationMs: state.endedAt - state.startedAt,
-            meetingTitle: state.meetingTitle, hasTranscript: writer.hasCaption, hasVideo: writer.hasVideo,
+            meetingTitle: state.meetingTitle, hasTranscript: writer.transcriptExported ?? writer.hasCaption, transcriptStatus: writer.transcriptStatus, hasVideo: writer.hasVideo,
             recordingStatus: state.recordingStatus, interruptionReason: state.interruptionReason };
         }
         const published = await chrome.runtime.sendMessage({ type: "asterion:session-finalized", ...meta });
@@ -62,7 +62,7 @@ async function restorePending() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.target !== "asterion-offscreen" || !["asterion:recover-storage", "asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended"].includes(message.type)) return;
+  if (message.target !== "asterion-offscreen" || !["asterion:recover-storage", "asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:caption-event", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended"].includes(message.type)) return;
   const handle = async () => {
     await debugLoggingReady;
     if (message.type === "asterion:recover-storage") {
@@ -78,10 +78,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const ack = await writer.writeChunk(message.stream, base64ToArrayBuffer(message.bufferBase64), message);
       return { committed: true, ...ack };
     }
+    if (message.type === "asterion:caption-event") return { committed: true, ...await writer.onCaptionEvent(message.event) };
     if (message.type === "asterion:caption-snapshot") await writer.onCaptionSnapshot(message.snapshot);
     else if (message.type === "asterion:speaker-label") await writer.onSpeakerLabel(message.label);
     else if (message.type === "asterion:session-checkpoint") {
       const update = { muteManifest: message.muteManifest };
+      if (message.expectedCaptionEvents != null) update.expectedCaptionEvents = Math.max(writer.journal.state.expectedCaptionEvents ?? 0, message.expectedCaptionEvents);
       if (message.expectedSequences) update.expectedSequences = Object.fromEntries(["meeting", "video"].map((stream) => [stream,
         Math.max(writer.journal.state.expectedSequences?.[stream] ?? 0, message.expectedSequences[stream] ?? 0)]));
       for (const key of Object.keys(update)) if (update[key] === undefined) delete update[key];
@@ -121,7 +123,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ...(message.type === "asterion:session-ended" && writer ? { sessionId: writer.sessionId,
         folderName: writer.folderName, startedAt: writer.startedAt, endedAt: message.endedAt ?? Date.now(),
         durationMs: (message.endedAt ?? Date.now()) - writer.startedAt, meetingTitle: writer.meetingTitle,
-        hasTranscript: writer.hasCaption, hasVideo: writer.streamsUsed.has("video"), recordingStatus: "incomplete", interruptionReason: message.interruptionReason ?? error.message } : {}) });
+        hasTranscript: writer.transcriptExported ?? writer.hasCaption, transcriptStatus: writer.transcriptStatus, hasVideo: writer.streamsUsed.has("video"), recordingStatus: "incomplete", interruptionReason: message.interruptionReason ?? error.message } : {}) });
   });
   return true;
 });

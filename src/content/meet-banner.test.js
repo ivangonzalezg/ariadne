@@ -21,6 +21,7 @@ function deferred() {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete globalThis.chrome;
   delete globalThis.fetch;
@@ -92,4 +93,34 @@ describe("showBanner", () => {
 
     expect(document.querySelectorAll("#asterion-banner-host").length).toBe(1);
   });
+});
+
+
+it("shows transcription readiness independently of stored text", async () => {
+  vi.resetModules();
+  vi.useFakeTimers();
+  mockChrome();
+  globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({
+    "common.transcript": "Transcripción",
+    "popup.activeFem": "Activa",
+    "common.notAvailable": "No disponible",
+    "transcript.preparing": "Preparando",
+    "transcript.paused": "Pausada por ti",
+    "transcript.storageError": "Error al guardar",
+  }) }));
+  const { showBanner, updateBannerState } = await import("./meet-banner.js");
+  await showBanner({ onStart: () => {}, onStop: () => {} });
+  updateBannerState("recording", { startedAt: Date.now(), transcriptActive: true, hasTranscript: false });
+  const root = document.getElementById("asterion-banner-host").shadowRoot;
+  root.querySelector("#toggle-expanded").click();
+  const transcriptRow = () => Array.from(root.querySelectorAll(".source-row"))
+    .find(row => row.textContent.includes("Transcripción"));
+  expect(transcriptRow().textContent).toContain("Activa");
+  updateBannerState("recording", { transcriptActive: false, hasTranscript: true });
+  expect(transcriptRow().textContent).toContain("Preparando");
+  updateBannerState("recording", { captionState: "paused", transcriptActive: false });
+  expect(transcriptRow().textContent).toContain("Pausada por ti");
+  updateBannerState("recording", { captionStorage: { error: "disk" } });
+  expect(transcriptRow().textContent).toContain("Error al guardar");
+  updateBannerState("idle");
 });

@@ -1,3 +1,4 @@
+import { MeetCaptions } from "./meet-captions.js";
 // src/webrtc-bootstrap/bootstrap.js
 import {
   installRtcPatch,
@@ -32,7 +33,7 @@ if (!window.__ariadneCaptureInstalled) {
   const remoteAudioMonitor = new RemoteAudioMonitor({ mixer, playbackObserver, log: rtcPatchLog });
   const htmlObserver = new HtmlAudioObserver({ mixer, log: rtcPatchLog });
   htmlObserver.install();
-  const mediaState = new RemoteMediaState({ log: rtcPatchLog, onChange: () => health.schedule() });
+  const mediaState = new RemoteMediaState({ log: rtcPatchLog, onParticipant: user => captions.updateParticipant(user), onChange: () => health.schedule() });
   const health = new CaptureHealth({ getSession: () => session, getMixer: () => mixer,
     getRemoteMicState: (entry) => mediaState.get(entry.receiver),
     scan: () => {
@@ -69,9 +70,15 @@ if (!window.__ariadneCaptureInstalled) {
   let currentlyMuted = false;
   let stopSpeakerObserver = () => {};
 
+  const captions = new MeetCaptions({
+    onCaption: (event) => postToIsolated({ type: "asterion:rtc-caption", sessionId: event.sessionId, event }),
+    onStatus: (status) => postToIsolated({ type: "asterion:caption-health", ...status }),
+    log: (event, details) => debugEvent(event, details),
+  });
+
   installRtcPatch({
     onRemoteAudioTrack: (payload) => { remoteAudioMonitor.addRemoteTrack(payload); health.schedule(); },
-    onDataChannel: (channel) => mediaState.observe(channel),
+    onDataChannel: (channel, owner) => { mediaState.observe(channel); captions.observe(channel, owner); },
     onLocalAudioTrack: (track, owner) => { mixer.setLocalSender(owner.sender, track, owner.connectionId); health.schedule(); },
     onConnectionClosed: (connectionId) => { mixer.removeConnection(connectionId); htmlObserver.scan(); },
     onConnectionStateChange: (state, id) => { mixer.connectionStates.set(id, state); health.schedule(); },
@@ -137,6 +144,7 @@ if (!window.__ariadneCaptureInstalled) {
           onChunk: (size) => health.chunk(size),
           onRecorderError: () => health.recover("recorder-error"),
         });
+        captions.start(message.sessionId, message.captionMode ?? "dom");
         session.start();
         session.checkpoint();
         htmlObserver.start();
@@ -149,10 +157,15 @@ if (!window.__ariadneCaptureInstalled) {
         });
       } catch (error) {
         health.stop(); remoteAudioMonitor.stop(); htmlObserver.stop();
+        await captions.stop();
         session = null;
         rtcPatchLog("capture-start-error", { message: error.message });
         postToIsolated({ type: "asterion:start-failed", reason: error.message });
       } finally { if (request === startRequest) starting = false; }
+    } else if (message.type === "asterion:caption-storage") {
+      if (session?.sessionId === message.sessionId) captions.storage = message;
+    } else if (message.type === "asterion:caption-enabled") {
+      if (session?.sessionId === message.sessionId) captions.setEnabled(message.enabled);
     } else if (message.type === "asterion:chunk-committed") {
       if (session?.sessionId === message.sessionId) session.confirmChunk(message);
     } else if (message.type === "asterion:chunk-failed") {
@@ -170,10 +183,16 @@ if (!window.__ariadneCaptureInstalled) {
       currentlyMuted = false;
       session?.onMicUnmuted(message.timestampMs);
     } else if (message.type === "asterion:stop-session") {
+      if (message.sessionId && session && session.sessionId !== message.sessionId) return;
       startRequest++; starting = false;
       if (session) diagnostics.getAudioFlowSnapshot().catch((error) => rtcPatchLog("audio-flow-inspection-error", { message: error.message }));
+      const endedAt = message.endedAt ?? Date.now();
       health.stop();
-      await session?.stop({ interruptionReason: message.interruptionReason });
+      // Isolated world establishes the cutoff and drains decoded captions before
+      // MainWorldSession publishes session-ended.
+      if (session) postToIsolated({ type: "asterion:caption-cutoff", sessionId: session.sessionId, endedAt });
+      await captions.stop();
+      await session?.stop({ interruptionReason: message.interruptionReason, endedAt });
       session = null;
       remoteAudioMonitor.stop();
       htmlObserver.stop();
@@ -233,6 +252,7 @@ if (!window.__ariadneCaptureInstalled) {
     debugEvent("audio-flow-inspection", snapshot);
     return snapshot;
   };
+  diagnostics.getCaptionSnapshot = () => ({ sessionId: captions.sessionId, mode: captions.mode, storage: captions.storage, counters: captions.counters, channels: [...captions.channels.values()].map(entry => ({ label: entry.channel.label, state: entry.channel.readyState })) });
   diagnostics.getRemoteAudioSnapshot = () => ({ ...remoteAudioMonitor.getRemoteAudioSnapshot(),
     htmlAudio: htmlObserver.getSnapshot(), localAudio: mixer.getLocalSnapshot(),
     recorder: session ? { generation: session.generation, state: session.meetingRecorder?.state, receivedChunks: session.receivedChunks, committedChunks: session.committedChunks } : null,

@@ -58,6 +58,50 @@ describe("SessionWriter conversion flow", () => {
     ffmpeg.runFfmpegAttempt.mockReset();
   });
 
+  it("drains caption writes, preserves same-speaker interventions, and exports the final revision after recovery", async () => {
+    const writer = await createWriter({ audio: false, video: false });
+    const event = (eventSeq, utteranceId, revision, text, offset) => ({ sessionId: writer.sessionId, source: "dom",
+      eventSeq, utteranceId, revision, speaker: "Ana", speakerId: null, text,
+      firstReceivedAt: writer.startedAt + offset, updatedAt: writer.startedAt + offset + revision });
+    await writer.onCaptionEvent(event(1, "one", 1, "Hola", 1000));
+    await writer.onCaptionEvent(event(2, "two", 1, "Segunda", 2000));
+    const restored = await SessionWriter.restore(writer.folderName);
+    const lastWrite = restored.onCaptionEvent(event(3, "one", 2, "Hola a todos", 1000));
+    const result = await restored.finalize({ endedAt: writer.startedAt + 10000, expectedCaptionEvents: 3 });
+    await lastWrite;
+    const file = await restored.meetingHandle.getFileHandle("transcripcion.json");
+    const segments = JSON.parse(await (await file.getFile()).text());
+    expect(segments).toEqual([
+      { index: 0, startTime: 1000, endTime: 1002, text: "Hola a todos", speaker: "Ana" },
+      { index: 1, startTime: 2000, endTime: 2001, text: "Segunda", speaker: "Ana" },
+    ]);
+    expect(result).toMatchObject({ hasTranscript: true, transcriptStatus: "complete" });
+    await expect(restored.onCaptionEvent(event(4, "three", 1, "Tardía", 9000))).rejects.toThrow("finalized");
+  });
+
+  it("does not block audio conversion if exporting the transcript fails", async () => {
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false }); const finished = finishConversions(writer);
+    await writer.onCaptionEvent({ sessionId: writer.sessionId, source: "dom", eventSeq: 1, utteranceId: "one", revision: 1,
+      speaker: "Ana", text: "Hola", firstReceivedAt: writer.startedAt, updatedAt: writer.startedAt });
+    const file = await writer.meetingHandle.getFileHandle("transcripcion.json", { create: true });
+    file.createWritable = async () => { throw new Error("Transcript export failed"); };
+    const result = await writer.finalize({ expectedCaptionEvents: 1 }); await finished;
+    expect(result).toMatchObject({ recordingStatus: "complete", transcriptStatus: "incomplete", hasTranscript: false });
+    expect(manifestOf(writer).audioConversionStatus).toBe("succeeded");
+    expect(writer.captions.model.values()).toHaveLength(1);
+  });
+
+  it("marks caption gaps incomplete while retaining successful audio conversion", async () => {
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
+    const writer = await createWriter({ audio: true, video: false }); const finished = finishConversions(writer);
+    const result = await writer.finalize({ endedAt: writer.startedAt + 1000, expectedCaptionEvents: 1,
+      captionPersistenceErrors: [{ eventSeq: 1, message: "Unconfirmed" }] });
+    await finished;
+    expect(result).toMatchObject({ recordingStatus: "complete", transcriptStatus: "incomplete" });
+    expect(manifestOf(writer)).toMatchObject({ transcriptStatus: "incomplete", audioConversionStatus: "succeeded" });
+  });
+
   it("finalizes and returns metadata without waiting for conversion", async () => {
     const conversion = deferred();
     ffmpeg.runFfmpegAttempt.mockReturnValue(conversion.promise);

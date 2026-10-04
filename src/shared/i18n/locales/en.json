@@ -93,5 +93,12 @@
   "banner.finishedCopy": "The meeting was saved successfully.",
   "banner.viewRecording": "View recording",
   "banner.dismissAria": "Close",
-  "history.incompleteRecording": "Incomplete recording"
+  "history.incompleteRecording": "Incomplete recording",
+  "transcript.preparing": "Preparing",
+  "transcript.paused": "Paused by you",
+  "transcript.recovering": "Recovering",
+  "transcript.error": "Capture error",
+  "transcript.saving": "Saving",
+  "transcript.storageError": "Storage error",
+  "transcript.incomplete": "Incomplete transcript"
 }

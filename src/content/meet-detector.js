@@ -1,10 +1,12 @@
+import { CaptionDelivery } from "./caption-delivery.js";
+import { CaptionRouter } from "./caption-router.js";
 // src/content/meet-detector.js
 import { findByIconText } from "./meet-selectors.js";
 import { observeMuteState } from "./meet-mute-observer.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
 import { showBanner, showFinishedBanner, updateBannerState } from "./meet-banner.js";
 import { ChunkDelivery } from "./chunk-delivery.js";
-import { debugLog, isDebugEnabled, setDebugEnabled } from "../shared/debug-log.js";
+import { debugEvent, debugLog, isDebugEnabled, setDebugEnabled } from "../shared/debug-log.js";
 
 // Nunca debe rechazar: startRecording()/waitForMeeting() esperan esta promesa
 // antes de arrancar, así que si chrome.storage.local.get fallara (ej. una
@@ -38,7 +40,12 @@ let sessionId = null;
 let currentState = "idle";
 let meetingTitle = null;
 let startedAt = null;
+// Stored text and capture readiness are separate, including during silence.
 let hasTranscript = false;
+let transcriptActive = false;
+let captionState = "preparing";
+let captionStorage = { pending: 0, error: null };
+let captionMode = "dom";
 let micMuted = true;
 let videoEnabled = false;
 let stopMuteObserver = () => {};
@@ -47,7 +54,7 @@ let stopMeetingEndObserver = () => {};
 const MEETING_END_POLL_INTERVAL_MS = 3000;
 
 function bannerMeta(extra = {}) {
-  return { meetingTitle, startedAt, hasTranscript, micMuted, videoEnabled, ...extra };
+  return { meetingTitle, startedAt, hasTranscript, transcriptActive, captionState, captionStorage, micMuted, videoEnabled, ...extra };
 }
 
 function setState(state, meta = {}) {
@@ -56,6 +63,7 @@ function setState(state, meta = {}) {
 }
 
 function cleanupObservers() {
+  transcriptActive = false;
   stopMuteObserver();
   stopCaptionObserver();
   stopMeetingEndObserver();
@@ -80,6 +88,10 @@ async function startRecording() {
   debugLog("[Ariadne:debug] startRecording started", { sessionId, meetingTitle });
   startedAt = Date.now();
   hasTranscript = false;
+  transcriptActive = false;
+  captionState = "preparing"; captionStorage = { pending: 0, error: null };
+  const preferences = await chrome.storage.local.get({ captionMode: "dom" }).catch(() => ({ captionMode: "dom" }));
+  captionMode = ["dom", "shadow", "hybrid"].includes(preferences.captionMode) ? preferences.captionMode : "dom";
   videoEnabled = false;
   try {
     const opened = await chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
@@ -101,6 +113,22 @@ async function startRecording() {
       postToMainWorld({ type: "asterion:stop-session", sessionId: delivery.sessionId, interruptionReason: error.message });
     },
   });
+  delivery.captions = new CaptionDelivery({ sessionId,
+    send: (message) => chrome.runtime.sendMessage(message),
+    recover: delivery.recover,
+    onAck: () => {
+      if (sessionId !== delivery.sessionId) return;
+      hasTranscript = true; updateBannerState(currentState, bannerMeta());
+    },
+    onStatus: (status) => {
+      debugEvent("caption-storage", { sessionId: delivery.sessionId, ...status });
+      if (sessionId !== delivery.sessionId) return;
+      captionStorage = status; updateBannerState(currentState, bannerMeta());
+      postToMainWorld({ type: "asterion:caption-storage", sessionId: delivery.sessionId, ...status });
+    },
+  });
+  delivery.router = new CaptionRouter({ sessionId, mode: captionMode,
+    emit: (event) => delivery.captions.add(event), log: debugEvent });
   deliveries.set(sessionId, delivery);
   delivery.statusTimer = setInterval(async () => {
     try {
@@ -125,6 +153,7 @@ async function startRecording() {
         type: "asterion:start-session",
         sessionId,
         initialMicMuted: muted,
+        captionMode,
         debugLogging: isDebugEnabled(),
       });
       return;
@@ -135,12 +164,24 @@ async function startRecording() {
     });
   });
 
-  const cleanup = await enableCaptionsAndObserve((snapshot) => {
-    if (sessionId !== delivery.sessionId) return;
-    hasTranscript = true;
-    updateBannerState(currentState, bannerMeta());
-    chrome.runtime.sendMessage({ type: "asterion:caption-snapshot", sessionId, snapshot });
+  const cleanup = enableCaptionsAndObserve((snapshot) => {
+    if (sessionId !== delivery.sessionId || delivery.captionCutoff != null) return;
+    delivery.router.receive(snapshot);
+  }, {
+    onStatus: (status) => {
+      if (sessionId !== delivery.sessionId) return;
+      const previous = delivery.domStatus;
+      delivery.domStatus = status; captionState = status.state;
+      if (captionMode === "hybrid" && status.state === "active" && !delivery.router.rtcUsable && !status.panel && delivery.rtcStatus) captionState = "recovering";
+      transcriptActive = status.state === "active";
+      if (previous?.state !== status.state) {
+        debugEvent("caption-capture-state", { sessionId, ...status });
+        postToMainWorld({ type: "asterion:caption-enabled", sessionId, enabled: status.state === "active" });
+      }
+      updateBannerState(currentState, bannerMeta());
+    },
   });
+  delivery.stopDom = cleanup;
   if (sessionId !== delivery.sessionId) { cleanup?.(); return; }
   stopCaptionObserver = cleanup ?? (() => {});
   stopMeetingEndObserver = observeMeetingEnd();
@@ -148,7 +189,17 @@ async function startRecording() {
 
 function stopRecording() {
   if (!sessionId) return;
-  postToMainWorld({ type: "asterion:stop-session", sessionId });
+  const delivery = deliveries.get(sessionId);
+  const endedAt = Date.now();
+  cutoffCaptions(delivery, endedAt);
+  postToMainWorld({ type: "asterion:stop-session", sessionId, endedAt });
+}
+
+function cutoffCaptions(delivery, endedAt) {
+  if (!delivery || delivery.captionCutoff != null) return;
+  delivery.stopDom?.flush?.();
+  delivery.stopDom?.();
+  delivery.captionCutoff = endedAt;
 }
 
 window.addEventListener("message", (event) => {
@@ -158,12 +209,32 @@ window.addEventListener("message", (event) => {
 
   debugLog("[Ariadne:debug] Message received from MAIN world", { type: message.type });
 
-  if (message.type === "asterion:session-started") {
+  if (message.type === "asterion:rtc-caption") {
+    const delivery = deliveries.get(message.sessionId);
+    if (!delivery || message.sessionId !== sessionId ||
+        (delivery.captionCutoff != null && message.event.updatedAt > delivery.captionCutoff)) return;
+    delivery.router.receive(message.event);
+  } else if (message.type === "asterion:caption-health") {
+    const delivery = deliveries.get(message.sessionId);
+    if (!delivery || message.sessionId !== sessionId) return;
+    delivery.router.setRtcStatus(message);
+    delivery.rtcStatus = message;
+    debugEvent("caption-channel-health", message);
+    if (captionMode === "hybrid" && delivery.captionCutoff == null && delivery.domStatus?.state === "active") {
+      captionState = message.usable ? "active" : delivery.domStatus.panel ? "active" : "recovering";
+      updateBannerState(currentState, bannerMeta());
+    }
+  } else if (message.type === "asterion:caption-cutoff") {
+    cutoffCaptions(deliveries.get(message.sessionId), message.endedAt);
+  } else if (message.type === "asterion:session-started") {
+    if (message.sessionId !== sessionId) return;
+    postToMainWorld({ type: "asterion:caption-enabled", sessionId, enabled: deliveries.get(sessionId)?.domStatus?.state === "active" });
     setState("recording");
   } else if (message.type === "asterion:start-failed") {
     const delivery = deliveries.get(sessionId);
     clearInterval(delivery?.statusTimer);
     clearInterval(delivery?.watchdog);
+    delivery?.captions.dispose();
     deliveries.delete(sessionId);
     if (sessionId) chrome.runtime.sendMessage({ type: "asterion:session-ended", sessionId, endedAt: Date.now(), interruptionReason: message.reason }).catch(() => {});
     sessionId = null;
@@ -182,7 +253,7 @@ window.addEventListener("message", (event) => {
       })
       .catch((error) => postToMainWorld({ type: "asterion:storage-progress", sessionId: message.sessionId, requestId: message.requestId, available: false, error: error.message }));
   } else if (message.type === "asterion:session-checkpoint") {
-    Promise.resolve(deliveries.get(message.sessionId)?.drain()).then(() => chrome.runtime.sendMessage({ ...message, source: undefined })).catch(() => {});
+    Promise.resolve(deliveries.get(message.sessionId)?.drain()).then(() => chrome.runtime.sendMessage({ ...message, source: undefined, expectedCaptionEvents: deliveries.get(message.sessionId)?.captions.eventSeq })).catch(() => {});
   } else if (message.type === "asterion:speaker-label") {
     chrome.runtime.sendMessage({
       type: "asterion:speaker-label",
@@ -195,12 +266,15 @@ window.addEventListener("message", (event) => {
   } else if (message.type === "asterion:video-enable-failed") {
     updateBannerState(currentState, bannerMeta({ videoError: message.message }));
   } else if (message.type === "asterion:session-ended") {
+    if (message.sessionId !== sessionId) return;
     const delivery = deliveries.get(message.sessionId);
+    cutoffCaptions(delivery, message.endedAt);
     (async () => {
       clearInterval(delivery?.statusTimer);
-      const persistenceErrors = await delivery?.flush() ?? [];
+      const [persistenceErrors, captionPersistenceErrors] = await Promise.all([delivery?.flush() ?? [], delivery?.captions.flush() ?? []]);
       const result = await chrome.runtime.sendMessage({
         type: "asterion:session-ended", sessionId: message.sessionId, persistenceErrors,
+        captionPersistenceErrors, expectedCaptionEvents: delivery?.captions.eventSeq ?? 0,
         muteManifest: message.muteManifest, endedAt: message.endedAt, expectedSequences: message.expectedSequences,
         interruptionReason: message.interruptionReason ?? delivery?.fatal?.message ?? null,
       });
@@ -208,13 +282,14 @@ window.addEventListener("message", (event) => {
         const status = await chrome.runtime.sendMessage({ type: "asterion:storage-status", sessionId: message.sessionId, folderName: result.folderName });
         if (!status?.error) postToMainWorld({ type: "asterion:storage-progress", ...status, pending: delivery?.pending.size ?? 0, storageRecoveries: delivery?.recoveries ?? 0 });
       }
-      if (result?.error) { storageError = result.error; setState("error"); }
-    })().catch((error) => { storageError = error.message; setState("error"); })
-      .finally(() => deliveries.delete(message.sessionId));
+      if (result?.error && (!sessionId || sessionId === message.sessionId)) { storageError = result.error; setState("error"); }
+    })().catch((error) => { if (!sessionId || sessionId === message.sessionId) { storageError = error.message; setState("error"); } })
+      .finally(() => { if (!delivery?.captions.pending.size) deliveries.delete(message.sessionId); });
     sessionId = null;
     meetingTitle = null;
     startedAt = null;
     hasTranscript = false;
+    transcriptActive = false;
     videoEnabled = false;
     setState(storageError ? "error" : "idle");
     cleanupObservers();
@@ -230,6 +305,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       meetingTitle: meetingTitle ?? getCurrentMeetingTitle(),
       startedAt,
       hasTranscript,
+      transcriptActive,
+      captionState, captionStorage, captionMode,
       micMuted,
       videoEnabled,
     });
@@ -249,13 +326,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "asterion:session-finalized") {
+    if (sessionId) return;
     if (message.recordingStatus === "incomplete" || storageError) setState("error");
     else showFinishedBanner();
   }
 });
 
 window.addEventListener("pagehide", () => {
-  if (sessionId) postToMainWorld({ type: "asterion:stop-session", sessionId });
+  if (sessionId) stopRecording();
 });
 
 function observeMeetingEnd() {

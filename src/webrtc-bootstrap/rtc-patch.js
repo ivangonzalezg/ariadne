@@ -36,12 +36,12 @@ export function installRtcPatch({ onRemoteAudioTrack, onConnectionClosed, onLoca
     const connectionId = getConnectionId(pc);
     activeConnections.add(pc);
     pc.addEventListener("datachannel", ({ channel }) => {
-      try { onDataChannel(channel); } catch (error) { log("data-channel-observer-error", { message: error.message }); }
+      try { onDataChannel(channel, { pc, connectionId }); } catch (error) { log("data-channel-observer-error", { message: error.message }); }
     });
     const createDataChannel = pc.createDataChannel;
     if (createDataChannel) pc.createDataChannel = function(...args) {
       const channel = createDataChannel.apply(this, args);
-      try { onDataChannel(channel); } catch (error) { log("media-state-error", { message: error.message }); }
+      try { onDataChannel(channel, { pc, connectionId }); } catch (error) { log("media-state-error", { message: error.message }); }
       return channel;
     };
     const addTrack = pc.addTrack;

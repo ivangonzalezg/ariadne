@@ -1,3 +1,4 @@
+import { captionStatusLabel } from "../shared/caption-status.js";
 // src/popup/popup.js
 import { icon } from "../shared/icons.js";
 import { initI18n } from "../shared/i18n/i18n.js";
@@ -109,7 +110,7 @@ function render(status, autoStart, conversionStatus) {
     <div class="meeting-name">${status.meetingTitle ?? t("common.untitledMeeting")}</div>
     <div class="timer" id="timer">00:00</div>
     <div class="card-box">
-      ${sourceRow("file-text", t("common.transcript"), status.hasTranscript, t("popup.activeFem"), t("common.notAvailable"))}
+      ${sourceRow("file-text", t("common.transcript"), status.transcriptActive && !status.captionStorage?.error, captionStatusLabel(status, t), captionStatusLabel(status, t))}
       ${sourceRow("volume-2", t("common.audio"), true, t("popup.activeMasc"), "")}
       ${sourceRow("video", t("common.video"), status.videoEnabled, t("popup.activeMasc"), t("popup.notActive"))}
     </div>

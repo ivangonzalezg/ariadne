@@ -1,4 +1,5 @@
 // src/storage/session-writer.js
+import { CaptionJournal } from "./caption-journal.js";
 import { CaptionParser } from "../lib/caption-parser.js";
 import { reconcileCaptionSnapshots } from "../lib/speaker-label-reconciler.js";
 import { runFfmpegAttempt } from "../offscreen/ffmpeg-client.js";
@@ -45,6 +46,7 @@ export class SessionWriter {
     this.speakerLabels = [];
     this.hasCaption = false;
     this.streamsUsed = new Set();
+    this.captionQueue = Promise.resolve();
     this._finalizePromise = null;
     this.ready = this._init();
   }
@@ -62,7 +64,10 @@ export class SessionWriter {
     const state = this.journal.state;
     this.startedAt = state.startedAt; this.endedAt = state.endedAt; this.meetingTitle = state.meetingTitle;
     this.captionSnapshots = state.captionSnapshots ?? []; this.speakerLabels = state.speakerLabels ?? [];
-    this.hasCaption = this.captionSnapshots.length > 0;
+    this.captions = await CaptionJournal.open(this.meetingHandle, this.sessionId);
+    this.hasCaption = this.captionSnapshots.length > 0 || this.captions.model.utterances.size > 0;
+    this.transcriptStatus = state.transcriptStatus ?? "complete";
+    this.transcriptExported = state.transcriptExported;
     this.committedChunks = this.journal.records.size;
     for (const header of this.journal.records.values()) {
       this.streamsUsed.add(header.stream);
@@ -108,13 +113,33 @@ export class SessionWriter {
   getStorageSnapshot() {
     return { sessionId: this.sessionId, folderName: this.folderName, recordingStatus: this.journal.state.recordingStatus,
       streams: Object.fromEntries(["meeting", "video"].map((stream) => [stream, this.journal.snapshot(stream)])),
-      conversions: structuredClone(this.journal.state.conversions) };
+      conversions: structuredClone(this.journal.state.conversions),
+      transcriptStatus: this.transcriptStatus, captions: this.captions.snapshot(this.journal.state.expectedCaptionEvents) };
   }
 
-  async onCaptionSnapshot(snapshot) {
-    this.hasCaption = true;
-    this.captionSnapshots.push(snapshot);
-    await this.checkpoint({ captionSnapshots: this.captionSnapshots });
+  onCaptionEvent(event) {
+    if (this._finalizePromise) return Promise.reject(Object.assign(new Error("Session already finalized"), { retryable: false }));
+    const operation = this.captionQueue.then(async () => {
+      await this.ready;
+      if (this.journal.state.recordingStatus !== "recording") throw Object.assign(new Error("Session already finalized"), { retryable: false });
+      const ack = await this.captions.append(event);
+      this.hasCaption = this.captions.model.utterances.size > 0 || this.captionSnapshots.length > 0;
+      return ack;
+    });
+    this.captionQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  onCaptionSnapshot(snapshot) {
+    if (this._finalizePromise) return Promise.reject(Object.assign(new Error("Session already finalized"), { retryable: false }));
+    const operation = this.captionQueue.then(async () => {
+      await this.ready;
+      this.captionSnapshots.push(snapshot);
+      await this.checkpoint({ captionSnapshots: this.captionSnapshots });
+      this.hasCaption = true;
+    });
+    this.captionQueue = operation.catch(() => {});
+    return operation;
   }
 
   async onSpeakerLabel(label) {
@@ -129,7 +154,7 @@ export class SessionWriter {
     return this._finalizePromise;
   }
 
-  async _finalizeOnce({ muteManifest, endedAt, persistenceErrors = [], interruptionReason = null, expectedSequences = {} }) {
+  async _finalizeOnce({ muteManifest, endedAt, persistenceErrors = [], interruptionReason = null, expectedSequences = {}, expectedCaptionEvents = 0, captionPersistenceErrors = [] }) {
     for (const error of persistenceErrors) {
       this.writeFailures.set(error.chunk, error.message);
       const stream = error.chunk?.split(":")[0];
@@ -149,8 +174,14 @@ export class SessionWriter {
     await this.ready;
 
     await Promise.all(this.writeQueueByStream.values());
+    await this.captionQueue;
+    await this.captions.queue;
+    expectedCaptionEvents = Math.max(expectedCaptionEvents, this.journal.state.expectedCaptionEvents ?? 0);
+    const captionState = this.captions.snapshot(expectedCaptionEvents);
+    this.transcriptStatus = this.transcriptStatus === "incomplete" || interruptionReason || captionPersistenceErrors.length || captionState.gaps.length || captionState.errors.length ? "incomplete" : "complete";
     await this.journal.checkpoint({ endedAt: this.endedAt, expectedSequences, muteManifest: resolvedMuteManifest,
-      recordingStatus: "finalizing", interruptionReason });
+      recordingStatus: "finalizing", interruptionReason, expectedCaptionEvents, captionPersistenceErrors,
+      transcriptStatus: this.transcriptStatus });
     const gaps = [...this.streamsUsed].some((stream) => this.journal.snapshot(stream).gaps.length);
     this.recordingStatus = interruptionReason || gaps || this.writeFailures.size ? "incomplete" : "complete";
     this.interruptionReason = interruptionReason ?? (gaps ? "missing-fragments" : this.writeFailures.size ? "storage-error" : null);
@@ -162,30 +193,27 @@ export class SessionWriter {
 
 
     if (this.hasCaption) {
-      this.captionParser = new CaptionParser();
-      const reconciled = reconcileCaptionSnapshots({
-        captions: this.captionSnapshots,
-        speakerLabels: this.speakerLabels,
-      });
-      for (const snapshot of reconciled) {
-        this.captionParser.onSnapshot(snapshot);
+      let segments;
+      if (this.captions.model.utterances.size) {
+        // Protocol/DOM identity supplies attribution. Never guess a speaker from audio timing.
+        segments = this.captions.model.segments(this.startedAt, this.endedAt);
+      } else {
+        // Existing sessions keep the historical snapshot contract.
+        this.captionParser = new CaptionParser();
+        const reconciled = reconcileCaptionSnapshots({ captions: this.captionSnapshots, speakerLabels: this.speakerLabels });
+        for (const snapshot of reconciled) this.captionParser.onSnapshot(snapshot);
+        this.captionParser.finalizeCurrent(this.endedAt);
+        segments = this.captionParser.finishedSegments.map((segment, index) => ({ index,
+          startTime: segment.startMs - this.startedAt, endTime: segment.endMs - this.startedAt,
+          text: segment.text, speaker: segment.speaker }));
       }
-      this.captionParser.finalizeCurrent(this.endedAt);
-
-      // segment.startMs/endMs son epoch absoluto (Date.now() en meet-caption-observer.js);
-      // se restan contra startedAt para guardar offsets relativos al inicio de la
-      // grabación, iguales a los que usa el resto del manifest.
-      const segments = this.captionParser.finishedSegments.map((segment, index) => ({
-        index,
-        startTime: segment.startMs - this.startedAt,
-        endTime: segment.endMs - this.startedAt,
-        text: segment.text,
-        speaker: segment.speaker,
-      }));
-      const fileHandle = await this.meetingHandle.getFileHandle("transcripcion.json", { create: true });
-      const writable = await fileHandle.createWritable();
-      await writable.write(JSON.stringify(segments, null, 2));
-      await writable.close();
+      try {
+        await writeFile(this.meetingHandle, "transcripcion.json", JSON.stringify(segments, null, 2));
+        this.transcriptExported = true;
+      } catch (error) {
+        this.transcriptStatus = "incomplete"; this.transcriptExported = false;
+        await this.journal.checkpoint({ transcriptExportError: error.message });
+      }
     }
 
     this.hasVideo = this.streamsUsed.has("video");
@@ -195,7 +223,8 @@ export class SessionWriter {
       videoConversionStatus: this.hasVideo ? this.recordingStatus === "incomplete" ? "failed" : "pending" : "skipped",
     });
 
-    await this.journal.checkpoint({ recordingStatus: this.recordingStatus });
+    await this.journal.checkpoint({ recordingStatus: this.recordingStatus, transcriptStatus: this.transcriptStatus,
+      transcriptExported: this.transcriptExported ?? false });
     // Persist the job descriptors before returning; execution stays asynchronous.
     await this.scheduleConversions(resolvedMuteManifest, this.endedAt);
 
@@ -208,7 +237,7 @@ export class SessionWriter {
       endedAt: this.endedAt,
       durationMs: this.endedAt - this.startedAt,
       meetingTitle: this.meetingTitle,
-      hasTranscript: this.hasCaption,
+      hasTranscript: this.transcriptExported ?? this.hasCaption, transcriptStatus: this.transcriptStatus,
       hasVideo: this.hasVideo,
     };
   }
@@ -226,7 +255,7 @@ export class SessionWriter {
           endedAt: this.endedAt,
           durationMs: this.endedAt - this.startedAt,
           meetingTitle: this.meetingTitle,
-          hasTranscript: this.hasCaption,
+          hasTranscript: this.transcriptExported ?? this.hasCaption, transcriptStatus: this.transcriptStatus,
           hasVideo: this.hasVideo,
           muteManifest,
           audioConversionStatus,

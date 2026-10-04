@@ -72,15 +72,27 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
     const isolated = [...page.contexts.values()].find((context) => context.origin === `chrome-extension://${id}` || context.name === id);
     assert(isolated, `ISOLATED context present: ${JSON.stringify([...page.contexts.values()])}`);
     await page.evaluate(`(() => {
-      const original = chrome.runtime.sendMessage.bind(chrome.runtime); window.__deliveryOriginal = original; let lost = false; let recovered = false;
+      const original = chrome.runtime.sendMessage.bind(chrome.runtime); window.__deliveryOriginal = original; let lost = false; let captionLost = false; let recovered = false;
       chrome.runtime.sendMessage = async function(message, ...args) {
         if (message.type === "asterion:chunk" && message.seq === 2 && !recovered) return { error: "Injected transport gap", retryable: true };
         const result = await original(message, ...args);
         if (message.type === "asterion:recover-storage") recovered = true;
+        if (message.type === 'asterion:caption-event' && !captionLost) { captionLost = true; throw new Error('Injected caption ACK loss'); }
         if (message.type === 'asterion:chunk' && !lost) { lost = true; throw new Error('Injected lost ACK'); }
         return result;
       };
     })()`, isolated.id);
+    await page.evaluate(`(() => {
+      const toggle = document.createElement('button'); toggle.setAttribute('jsname','RrG0hf');
+      toggle.setAttribute('aria-pressed','true'); toggle.setAttribute('aria-controls','caption-test-panel');
+      toggle.textContent = 'CC'; document.body.append(toggle);
+      const panel = document.createElement('div'); panel.id = 'caption-test-panel'; panel.setAttribute('role','region'); document.body.append(panel);
+    })()`);
+    await wait(650);
+    // get-status is a tab message; query the ISOLATED listener through tabs from the worker instead.
+    const tabStatus = await worker.evaluate(`(async()=>{const tabs=await chrome.tabs.query({});const tab=tabs.find(tab=>tab.url===${JSON.stringify(`${origin}/tests/browser/extension-meeting.html`)});return chrome.tabs.sendMessage(tab.id,{type:'asterion:get-status'});})()`);
+    assert(tabStatus.transcriptActive && !tabStatus.hasTranscript, 'Captions are ready during silence without claiming saved text');
+    await page.evaluate(`document.getElementById('caption-test-panel').innerHTML='<div class="nMcdL bj4p3b"><span class="NWpY1d">Ana</span><span class="ygicle VbkSUe">Primera</span></div><div class="nMcdL bj4p3b"><span class="NWpY1d">Ana</span><span class="ygicle VbkSUe">Segunda</span></div>'`);
     await wait(4200);
     await worker.evaluate('chrome.offscreen.closeDocument()');
     await wait(2200);
@@ -97,7 +109,12 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
     assert(snapshot.recorder.committedChunks >= 6, "Durable commits continue after offscreen loss");
     const frames = await page.evaluate('({ installed:fixture.frame.contentWindow.__ariadneCaptureInstalled, recorder:fixture.frame.contentWindow.__asterionDiagnostics.getRemoteAudioSnapshot().recorder })');
     assert(frames.installed && frames.recorder === null, "Subframes are instrumented with no independent recorder");
-    await page.evaluate('window.postMessage({source:"asterion-isolated-world", type:"asterion:stop-session"},"*")');
+    await page.evaluate(`(() => {
+      const panel = document.getElementById('caption-test-panel');
+      panel.querySelector('.ygicle').textContent = 'Primera completa';
+      panel.insertAdjacentHTML('beforeend','<div class="nMcdL bj4p3b"><span class="NWpY1d">Beto</span><span class="ygicle VbkSUe">Última</span></div>');
+      window.postMessage({source:'asterion-isolated-world',type:'asterion:stop-session'},'*');
+    })()`);
     let history;
     for (let attempt = 0; attempt < 100; attempt++) {
       history = await worker.evaluate('chrome.storage.local.get({meetingHistory:[]})');
@@ -118,6 +135,10 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
     const durableSnapshot = await page.evaluate('window.__asterionDiagnostics.getStorageSnapshot()');
     assert(durableSnapshot.available && durableSnapshot.conversions.some(job=>job.state==='succeeded'), 'Console diagnostics query current durable conversion state');
     assert(manifestResult.recordingStatus === "complete" && manifestResult.hasAudioMp3, "Real OPFS and packaged FFmpeg produce a complete MP3");
+    const transcript = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(folderName)});return JSON.parse(await(await(await dir.getFileHandle('transcripcion.json')).getFile()).text());})()`);
+    assert(transcript.length === 3 && transcript.map(segment=>segment.text).join('|') === 'Primera completa|Segunda|Última', 'Packaged extension drains the final caption and restores earlier captions without duplicates');
+    assert(manifestResult.transcriptStatus === 'complete', 'Caption persistence stays complete across ACK loss and offscreen/worker restarts');
+    console.log(JSON.stringify({transcriptIntegration:{ok:true,segments:transcript}},null,2));
     const results = [];
     for (const name of ["audio-reunion.webm", "audio-reunion.mp3"]) {
       const base64 = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(folderName)});const bytes=new Uint8Array(await(await(await dir.getFileHandle(${JSON.stringify(name)})).getFile()).arrayBuffer());let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s);})()`);

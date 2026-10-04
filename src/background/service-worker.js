@@ -72,7 +72,7 @@ async function ensureOffscreenDocument() {
   await offscreenCreationPromise;
 }
 
-const STORAGE_TYPES = new Set(["asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended", "asterion:recover-storage"]);
+const STORAGE_TYPES = new Set(["asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:caption-event", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended", "asterion:recover-storage"]);
 const RECOVERY_ALARM = "asterion-storage-recovery";
 let conversionPending = false;
 let storageRecovery = null;
@@ -167,8 +167,8 @@ function appendToHistory(meta) {
   const operation = historyQueue.then(async () => {
     const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
     const entries = meetingHistory.filter((entry) => entry.sessionId !== meta.sessionId);
-    const { sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, hasVideo, recordingStatus, interruptionReason } = meta;
-    entries.push({ sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, hasVideo, recordingStatus, interruptionReason });
+    const { sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason } = meta;
+    entries.push({ sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason });
     entries.sort((a, b) => b.startedAt - a.startedAt);
     await chrome.storage.local.set({ meetingHistory: entries.slice(0, 200) });
   });

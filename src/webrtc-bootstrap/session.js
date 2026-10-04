@@ -133,10 +133,9 @@ export class MainWorldSession {
     return this.restartPromise;
   }
 
-  async stop({ interruptionReason = null } = {}) {
+  async stop({ interruptionReason = null, endedAt = Date.now() } = {}) {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
-    const endedAt = Date.now();
     this.muteManifest.finalize(endedAt);
     this.stopPromise = (async () => {
       await this.restartPromise;
