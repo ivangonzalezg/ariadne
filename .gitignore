@@ -8,3 +8,6 @@ skills-lock.json
 
 # paquetes .zip generados para subir a Chrome Web Store
 dist-release/
+
+# Auditorías y documentos de diagnóstico locales
+docs/audits/
