@@ -93,7 +93,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
     // get-status is a tab message; query the ISOLATED listener through tabs from the worker instead.
     const tabStatus = await worker.evaluate(`(async()=>{const tabs=await chrome.tabs.query({});const tab=tabs.find(tab=>tab.url===${JSON.stringify(`${origin}/tests/browser/extension-meeting.html`)});return chrome.tabs.sendMessage(tab.id,{type:'asterion:get-status'});})()`);
     assert(tabStatus.transcriptActive && !tabStatus.hasTranscript, 'Captions are ready during silence without claiming saved text');
-    await page.evaluate(`document.getElementById('caption-test-panel').innerHTML='<div class="nMcdL bj4p3b"><span class="NWpY1d">You</span><span class="ygicle VbkSUe">Primera</span></div><div class="nMcdL bj4p3b"><span class="NWpY1d">You</span><span class="ygicle VbkSUe">Segunda</span></div>'`);
+    await page.evaluate(`document.getElementById('caption-test-panel').innerHTML='<div class="nMcdL bj4p3b"><span class="NWpY1d">Tú</span><span class="ygicle VbkSUe">Primera</span></div><div class="nMcdL bj4p3b"><span class="NWpY1d">Tú</span><span class="ygicle VbkSUe">Segunda</span></div>'`);
     await wait(4200);
     await page.evaluate(`document.body.insertAdjacentHTML('beforeend','<div data-participant-id="self" data-tile-media-id="self"><button><i>frame_person</i></button><button><i>visual_effects</i></button><div jscontroller="sMwcOc"><div jsslot><span class="notranslate">Ana</span></div></div></div>')`);
     await wait(650);
@@ -141,7 +141,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
     const transcript = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(folderName)});return JSON.parse(await(await(await dir.getFileHandle('transcripcion.json')).getFile()).text());})()`);
     assert(transcript.length === 3 && transcript.map(segment=>segment.text).join('|') === 'Primera completa|Segunda|Última', 'Packaged extension drains the final caption and restores earlier captions without duplicates');
     assert(manifestResult.transcriptStatus === 'complete', 'Caption persistence stays complete across ACK loss and offscreen/worker restarts');
-    assert(transcript[0].speaker === 'Ana (you)' && transcript[1].speaker === 'Ana (you)' && transcript[2].speaker === 'Beto', 'Local identity survives storage restart and marks only own captions');
+    assert(transcript[0].speaker === 'Ana (you)' && transcript[1].speaker === 'Ana (you)' && transcript[2].speaker === 'Beto', 'Spanish self labels on an English document survive storage restart and mark only own captions');
     assert(manifestResult.localIdentity?.name === 'Ana', 'Manifest identifies the local extension user');
     console.log(JSON.stringify({transcriptIntegration:{ok:true,segments:transcript}},null,2));
     const results = [];

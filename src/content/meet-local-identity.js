@@ -36,7 +36,11 @@ export function observeLocalIdentity(onIdentity, { intervalMs = 500 } = {}) {
   return stop;
 }
 
-export function isOwnCaptionLabel(speaker, language = document.documentElement.lang) {
-  const labels = { en: ['You'], es: ['Tú', 'Tu'], fr: ['Vous'] };
-  return (labels[language.toLowerCase().split('-')[0]] ?? []).includes(speaker);
+const OWN_CAPTION_LABELS = new Set(['You', 'Tú', 'Tu', 'Vous']);
+
+export function isOwnCaptionLabel(speaker) {
+  // Meet's rendered caption labels can differ from the document's lang (for
+  // example "Tú" on a page declaring English). Match the label we actually
+  // received; document language must not veto local-speaker attribution.
+  return OWN_CAPTION_LABELS.has(speaker);
 }

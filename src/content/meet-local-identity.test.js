@@ -25,8 +25,16 @@ it('keeps searching during silence, caches hidden tiles and resets in a new obse
   document.body.innerHTML = tile('b', 'Beto'); await vi.advanceTimersByTimeAsync(500); expect(onIdentity).toHaveBeenCalledOnce();
   stop(); const second = observeLocalIdentity(onIdentity); expect(onIdentity).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'Beto' })); second();
 });
-it('recognizes self labels only in the interface language', () => {
-  expect(isOwnCaptionLabel('You', 'en-US')).toBe(true); expect(isOwnCaptionLabel('Tú', 'es')).toBe(true);
-  expect(isOwnCaptionLabel('Vous', 'fr')).toBe(true); expect(isOwnCaptionLabel('You', 'es')).toBe(false);
-  expect(isOwnCaptionLabel('Iván', 'en')).toBe(false);
+it('recognizes rendered self labels regardless of document language', () => {
+  const previous = document.documentElement.getAttribute('lang');
+  try {
+    for (const language of ['en', 'es', 'fr', '', 'es_419', 'de']) {
+      document.documentElement.lang = language;
+      for (const label of ['You', 'Tú', 'Tu', 'Vous']) expect(isOwnCaptionLabel(label)).toBe(true);
+      for (const label of ['Iván', 'Daniel Andraus Berrio', null, '']) expect(isOwnCaptionLabel(label)).toBe(false);
+    }
+  } finally {
+    if (previous === null) document.documentElement.removeAttribute('lang');
+    else document.documentElement.setAttribute('lang', previous);
+  }
 });
