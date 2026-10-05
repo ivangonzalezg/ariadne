@@ -41,7 +41,8 @@ describe("immutable capture records", () => {
     await journal.checkpoint({ expectedSequences: { meeting: 2 } });
     expect(journal.snapshot("meeting").gaps).toEqual([2]);
     const record = journal.recordsDirectory.files.get("meeting-0-1.chunk"); record.bytes[record.bytes.length - 1] ^= 1;
-    await expect(journal.materialize("meeting", { prefix: true })).rejects.toThrow("checksum");
+    expect(await journal.materialize("meeting", { prefix: true })).toEqual([]);
+    expect(journal.state.invalidRecords[0].error).toContain("checksum");
     await expect(journal.append("meeting", new Uint8Array([1]), { sessionId: "other", seq: 2, generation: 0, captureTs: 1 })).rejects.toThrow("Session mismatch");
   });
   it("stops retrying quota exhaustion and retains independent generations", async () => {

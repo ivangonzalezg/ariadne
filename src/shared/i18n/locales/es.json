@@ -100,5 +100,16 @@
   "transcript.error": "Error de captura",
   "transcript.saving": "Guardando",
   "transcript.storageError": "Error al guardar",
-  "transcript.incomplete": "Transcripción incompleta"
+  "transcript.incomplete": "Transcripción incompleta",
+  "history.recoveryTitle": "Recuperación",
+  "history.retryPending": "Reintentar pendientes",
+  "history.recoveryInProgress": "Recuperación en curso",
+  "history.recoveredPartial": "El archivo contiene únicamente el tramo guardado. La grabación sigue incompleta.",
+  "history.recoveryUnavailable": "No hay un registro recuperable para esta reunión. Los archivos existentes siguen disponibles.",
+  "history.recoveryQuotaError": "No hay espacio suficiente. Libera espacio y vuelve a intentar.",
+  "history.recoveryNoData": "No hay un tramo continuo guardado que pueda recuperarse.",
+  "history.recoveryTaskError": "No se pudo completar el proceso. Puedes reintentar los pendientes.",
+  "history.processing.pending": "Pendiente",
+  "history.processing.succeeded": "Disponible",
+  "history.processing.failed": "Falló"
 }

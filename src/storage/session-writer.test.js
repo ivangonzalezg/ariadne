@@ -9,7 +9,7 @@ import { SessionWriter } from "./session-writer.js";
 import { MemoryDirectoryHandle } from "../../tests/helpers/memory-opfs.js";
 import { webcrypto } from "node:crypto";
 import { Blob } from "node:buffer";
-import { conversionQueue } from "../offscreen/conversion-queue.js";
+import { conversionQueue, processingQueue } from "../offscreen/conversion-queue.js";
 
 const waitFor = async (predicate) => {
   while (!predicate()) {
@@ -49,7 +49,10 @@ function manifestOf(writer) {
 describe("SessionWriter conversion flow", () => {
   beforeEach(() => {
     vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("Blob", Blob);
-    clearTimeout(conversionQueue.timer); conversionQueue.jobs.clear(); conversionQueue.running = false;
+    for (const queue of [conversionQueue, processingQueue]) {
+      clearTimeout(queue.timer); queue.jobs.clear(); queue.running = false;
+    }
+    vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn().mockResolvedValue({ ok: true }) } });
     const root = new MemoryDirectoryHandle("root");
     Object.defineProperty(navigator, "storage", {
       configurable: true,
@@ -87,7 +90,7 @@ describe("SessionWriter conversion flow", () => {
     const file = await writer.meetingHandle.getFileHandle("transcripcion.json", { create: true });
     file.createWritable = async () => { throw new Error("Transcript export failed"); };
     const result = await writer.finalize({ expectedCaptionEvents: 1 }); await finished;
-    expect(result).toMatchObject({ recordingStatus: "complete", transcriptStatus: "incomplete", hasTranscript: false });
+    expect(result).toMatchObject({ recordingStatus: "complete", transcriptStatus: "complete", hasTranscript: false });
     expect(manifestOf(writer).audioConversionStatus).toBe("succeeded");
     expect(writer.captions.model.values()).toHaveLength(1);
   });
@@ -323,13 +326,15 @@ describe("SessionWriter conversion flow", () => {
     expect(restored.committedChunks).toBe(2);
   });
 
-  it("reports incomplete persistence instead of declaring a successful conversion", async () => {
+  it("converts the continuous prefix while keeping capture incomplete", async () => {
+    ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ video: false });
     await writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 });
     const finished = finishConversions(writer); await writer.finalize({}); await finished;
-    expect(manifestOf(writer)).toMatchObject({ audioConversionStatus: "failed", hasAudioMp3: false });
+    expect(manifestOf(writer)).toMatchObject({ audioConversionStatus: "succeeded", hasAudioMp3: true,
+      recoveredCoverage: { meeting: { lastSequence: 1, partial: true, gaps: [2] } } });
     expect(manifestOf(writer).recordingStatus).toBe("incomplete");
-    expect(ffmpeg.runFfmpegAttempt).not.toHaveBeenCalled();
+    expect(ffmpeg.runFfmpegAttempt.mock.calls[0][0].inputs).toEqual([new Uint8Array([1, 2])]);
   });
 
   it("preserves public WebM when the only populated generation follows a restart", async () => {
@@ -367,9 +372,12 @@ it("restores captions, speaker labels and a partial mute checkpoint and marks in
   await writer.onSpeakerLabel({ speakerName: "Local", timestampMs: writer.startedAt + 50 });
   await writer.checkpoint({ muteManifest: { intervals: [{ startMs: 10, endMs: 40 }], openIntervalStartMs: 100 } });
   const restored = await SessionWriter.restore(writer.folderName);
+  ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
+  const finished = finishConversions(restored);
   const meta = await restored.finalize({ interruptionReason: "capture-tab-disappeared", endedAt: writer.startedAt + 1000 });
+  await finished;
   expect(meta.recordingStatus).toBe("incomplete");
-  expect(manifestOf(restored)).toMatchObject({ metadataDegraded: true, audioConversionStatus: "failed", hasAudioMp3: false,
+  expect(manifestOf(restored)).toMatchObject({ metadataDegraded: true, audioConversionStatus: "succeeded", hasAudioMp3: true,
     muteManifest: { degraded: true, intervals: [{ startMs: 10, endMs: 40 }], openIntervalStartMs: 100 } });
   expect(JSON.parse(new TextDecoder().decode(restored.meetingHandle.files.get("transcripcion.json").bytes))[0]).toMatchObject({ text: "Saved", speaker: "Local (You)" });
 });

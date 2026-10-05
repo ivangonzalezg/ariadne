@@ -42,7 +42,7 @@ describe("offscreen session-ended deduplication", () => {
     };
   });
 
-  it("only finalizes once and sends session-finalized once when session-ended arrives twice", async () => {
+  it("only finalizes once when session-ended arrives twice (publication belongs to recovery)", async () => {
     await import("./offscreen.js");
     await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-starting", sessionId: "session-1", meetingTitle: "Daily" }, {}, resolve));
     await new Promise((resolve) => messageListener({ target: "asterion-offscreen", type: "asterion:session-ended", sessionId: "session-1", muteManifest: null, endedAt: 1000 }, {}, resolve));
@@ -52,7 +52,7 @@ describe("offscreen session-ended deduplication", () => {
 
     const writer = writerState.instances[0];
     expect(writer.finalizeCalls).toBe(1);
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
   });
   it("responds to chunks only after persistence and keeps unrelated messages available to their owners", async () => {
     await import("./offscreen.js");

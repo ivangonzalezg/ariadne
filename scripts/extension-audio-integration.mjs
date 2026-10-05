@@ -26,10 +26,10 @@ async function connect(url) {
   } };
 }
 
-export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
+export async function runExtensionIntegration({ root, debuggerUrl, origin, restartBrowser }) {
   const extension = await mkdtemp(join(tmpdir(), "ariadne-extension-test-"));
-  const clients = []; const browser = await connect(debuggerUrl); clients.push(browser);
-  const debuggingOrigin = new URL(debuggerUrl).origin.replace("ws:", "http:");
+  const clients = []; let browser = await connect(debuggerUrl); clients.push(browser);
+  let debuggingOrigin = new URL(debuggerUrl).origin.replace("ws:", "http:");
   const list = async () => (await fetch(`${debuggingOrigin}/json/list`)).json();
   const find = async (predicate) => {
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -161,7 +161,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
       results.push({ file: name, ...decoded });
     }
     assert(Math.abs(results[0].duration - results[1].duration) < .3, "WebM and MP3 duration agree");
-    await worker.evaluate(`chrome.runtime.sendMessage({type:"asterion:recover-storage"})`);
+    await offscreen.evaluate(`chrome.runtime.sendMessage({type:"asterion:recover-storage"})`);
     const restoredHistory = await worker.evaluate('chrome.storage.local.get({meetingHistory:[]})');
     assert(restoredHistory.meetingHistory.filter(entry=>entry.sessionId===sessionId).length===1, "Recovery does not duplicate history");
     const alarm = await worker.evaluate('chrome.alarms.get("asterion-storage-recovery")');
@@ -181,11 +181,91 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin }) {
     const incomplete = incompleteHistory.meetingHistory.find(entry=>entry.sessionId!==sessionId);
     assert(incomplete?.recordingStatus==='incomplete', 'Definitive storage failure stops and marks the recording incomplete');
     const incompleteManifest = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});return JSON.parse(await(await(await dir.getFileHandle('manifest.json')).getFile()).text());})()`);
-    assert(!incompleteManifest.hasAudioMp3 && incompleteManifest.audioConversionStatus==='failed', 'Partial audio is not marked as a complete MP3');
+    assert(incompleteManifest.recordingStatus === "incomplete", "Partial capture remains incomplete after conversion");
     const prefix = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});const bytes=new Uint8Array(await(await(await dir.getFileHandle('audio-reunion.webm')).getFile()).arrayBuffer());let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);})()`);
     const prefixDuration = await page.evaluate(`(async()=>{const ctx=new AudioContext();const bytes=Uint8Array.from(atob(${JSON.stringify(prefix)}),c=>c.charCodeAt(0));const decoded=await ctx.decodeAudioData(bytes.buffer);const duration=decoded.duration;await ctx.close();return duration;})()`);
     assert(prefixDuration>1.5, 'The continuous durable prefix remains decodable after definitive failure');
     console.log(JSON.stringify({storageFailure:{ok:true,recordingStatus:incomplete.recordingStatus,committedChunks:incompleteManifest.committedChunks,prefixDuration}},null,2));
+    if (restartBrowser) {
+      const videoCapture=await page.evaluate(`(async()=>{
+        const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
+        const paint=canvas.getContext('2d');let frame=0;const drawing=setInterval(()=>{paint.fillStyle=frame++%2?'green':'blue';paint.fillRect(0,0,64,64);},50);
+        const ctx=new AudioContext();await ctx.resume();const tone=ctx.createOscillator();tone.frequency.value=440;
+        const output=ctx.createMediaStreamDestination();tone.connect(output);tone.start();
+        const stream=new MediaStream([...canvas.captureStream(10).getVideoTracks(),...output.stream.getAudioTracks()]);
+        const recorder=new MediaRecorder(stream);const chunks=[];recorder.ondataavailable=event=>{if(event.data.size)chunks.push(event.data);};
+        recorder.start(500);await new Promise(resolve=>setTimeout(resolve,1800));
+        await new Promise(resolve=>{recorder.onstop=resolve;recorder.stop();});
+        clearInterval(drawing);tone.stop();stream.getTracks().forEach(track=>track.stop());await ctx.close();
+        const bytes=new Uint8Array(await new Blob(chunks).arrayBuffer());let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);
+      })()`);
+      const videoSessionId=`video-recovery-${Date.now()}`;
+      const videoStarted=await offscreen.evaluate(`chrome.runtime.sendMessage({type:'asterion:session-starting',sessionId:${JSON.stringify(videoSessionId)},meetingTitle:'Interrupted video validation'})`);
+      assert(videoStarted?.folderName, 'Video recovery fixture creates durable extension storage');
+      for(const stream of ['meeting','video']) await offscreen.evaluate(`chrome.runtime.sendMessage({type:'asterion:chunk',sessionId:${JSON.stringify(videoSessionId)},stream:${JSON.stringify(stream)},seq:1,generation:0,captureTs:Date.now(),bufferBase64:${JSON.stringify(videoCapture)}})`);
+      await worker.evaluate(`(async()=>{const {activeRecordingSessions}=await chrome.storage.local.get({activeRecordingSessions:{}});delete activeRecordingSessions[${JSON.stringify(videoSessionId)}];await chrome.storage.local.set({activeRecordingSessions});})()`);
+      // Stage the exact v1 state that previously skipped conversion permanently.
+      // Keep actual MediaRecorder bytes and remove only derived output/state.
+      await worker.evaluate('chrome.offscreen.closeDocument()');
+      const { targetId: storageTabId } = await browser.command("Target.createTarget", { url: `chrome-extension://${id}/src/offscreen/offscreen.html` });
+      const storageTarget = await find(target => target.id === storageTabId);
+      const storagePage = await connect(storageTarget.webSocketDebuggerUrl); clients.push(storagePage);
+      await storagePage.evaluate(`(async()=>{
+        const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});
+        const read=async name=>JSON.parse(await(await(await dir.getFileHandle(name)).getFile()).text());
+        const write=async(name,value)=>{const file=await dir.getFileHandle(name,{create:true});const writable=await file.createWritable();await writable.write(JSON.stringify(value));await writable.close();};
+        const state=await read('capture-state.json'); state.conversions=[];delete state.recoveryTasks;delete state.recoveryVersion;delete state.recoveryRevision;delete state.publishedRevision;
+        state.recordingStatus='incomplete';state.interruptionReason='capture-tab-disappeared';state.historyPublished=true;
+        await write('capture-state.json',state);
+        const video=await root.getDirectoryHandle(${JSON.stringify(videoStarted.folderName)});
+        const videoState=JSON.parse(await(await(await video.getFileHandle('capture-state.json')).getFile()).text());
+        videoState.recordingStatus='incomplete';videoState.interruptionReason='capture-tab-disappeared';videoState.endedAt=videoState.startedAt+1800;
+        const videoWritable=await(await video.getFileHandle('capture-state.json')).createWritable();await videoWritable.write(JSON.stringify(videoState));await videoWritable.close();
+        const manifest=await read('manifest.json');manifest.audioConversionStatus='failed';manifest.hasAudioMp3=false;await write('manifest.json',manifest);
+        await dir.removeEntry('audio-reunion.mp3').catch(()=>{});
+        // Also force a successful transcript task to discover its missing file.
+        const complete=await root.getDirectoryHandle(${JSON.stringify(folderName)});
+        await complete.removeEntry('transcripcion.json');
+      })()`);
+      const reopenedUrl = await restartBrowser();
+      clients.forEach(client => client.socket.close());
+      browser = await connect(reopenedUrl); clients.push(browser);
+      debuggingOrigin = new URL(reopenedUrl).origin.replace("ws:", "http:");
+      // Extensions.loadUnpacked is scoped to a debugging session. Reattach the
+      // same path/ID to the same profile without uninstalling or clearing data.
+      const reloaded = await browser.command("Extensions.loadUnpacked", { path: extension });
+      assert(reloaded.id === id, 'Reopened Chrome uses the same extension storage identity');
+      const { targetId: historyTabId } = await browser.command("Target.createTarget", { url: `chrome-extension://${id}/src/history/history.html` });
+      const historyTarget = await find(target => target.id === historyTabId);
+      const historyPage = await connect(historyTarget.webSocketDebuggerUrl); clients.push(historyPage);
+      worker = await connect((await find(target => target.type === 'service_worker' && target.url.startsWith(`chrome-extension://${id}/`))).webSocketDebuggerUrl); clients.push(worker);
+      let recovered;
+      for (let attempt=0;attempt<150;attempt++) {
+        const entries=await worker.evaluate('chrome.storage.local.get({meetingHistory:[]})');
+        recovered=entries.meetingHistory.find(entry=>entry.sessionId===incomplete.sessionId);
+        const filesRecovered=await historyPage.evaluate(`(async()=>{try{const root=await navigator.storage.getDirectory();const partial=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});const complete=await root.getDirectoryHandle(${JSON.stringify(folderName)});const audio=await(await partial.getFileHandle('audio-reunion.mp3')).getFile();const captions=JSON.parse(await(await(await complete.getFileHandle('transcripcion.json')).getFile()).text());const video=await root.getDirectoryHandle(${JSON.stringify(videoStarted.folderName)});const mp4=await(await video.getFileHandle('video-reunion.mp4')).getFile();return audio.size>0 && captions.length===3 && mp4.size>0;}catch{return false;}})()`);
+        if(recovered?.hasAudioMp3 && filesRecovered && !recovered.processing?.pending) break;
+        await wait(200);
+      }
+      assert(recovered?.hasAudioMp3 && recovered.recordingStatus==='incomplete','Same-profile browser restart recovers the old partial recording');
+      const recoveryOffscreen=await connect((await find(target=>target.url.endsWith('src/offscreen/offscreen.html') && target.type!=='page')).webSocketDebuggerUrl);clients.push(recoveryOffscreen);
+      const recoveredBytes=await recoveryOffscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});const bytes=new Uint8Array(await(await(await dir.getFileHandle('audio-reunion.mp3')).getFile()).arrayBuffer());let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);})()`);
+      const recoveredDuration=await historyPage.evaluate(`(async()=>{const ctx=new AudioContext();const audio=await ctx.decodeAudioData(Uint8Array.from(atob(${JSON.stringify(recoveredBytes)}),c=>c.charCodeAt(0)).buffer);await ctx.close();return audio.duration;})()`);
+      assert(Math.abs(recoveredDuration-prefixDuration)<.3,'Recovered MP3 decodes and retains the saved prefix duration');
+      const transcriptAfterRestart=await recoveryOffscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(folderName)});return JSON.parse(await(await(await dir.getFileHandle('transcripcion.json')).getFile()).text());})()`);
+      assert(JSON.stringify(transcriptAfterRestart)===JSON.stringify(transcript),'Missing transcript is rebuilt after reopening with revisions and speakers intact');
+      const recoveredVideoBytes=await recoveryOffscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(videoStarted.folderName)});const bytes=new Uint8Array(await(await(await dir.getFileHandle('video-reunion.mp4')).getFile()).arrayBuffer());let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);})()`);
+      const recoveredVideoDuration=await historyPage.evaluate(`(async()=>{const bytes=Uint8Array.from(atob(${JSON.stringify(recoveredVideoBytes)}),c=>c.charCodeAt(0));const video=document.createElement('video');const url=URL.createObjectURL(new Blob([bytes],{type:'video/mp4'}));video.src=url;await new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error('Recovered MP4 does not decode'));});const result={duration:video.duration,width:video.videoWidth,height:video.videoHeight};URL.revokeObjectURL(url);return result;})()`);
+      assert(recoveredVideoDuration.duration>1.5 && recoveredVideoDuration.width===64 && recoveredVideoDuration.height===64,'Recovered MP4 decodes with its saved duration and video frames');
+      await historyPage.command('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+      await historyPage.evaluate(`document.querySelector('.meeting-card')?.click()`);
+      await wait(300);
+      const recoveryUi=await historyPage.evaluate(`({message:document.querySelector('.recovery-message')?.textContent,status:document.querySelector('.recovery-status')?.textContent})`);
+      assert(recoveryUi.message && recoveryUi.status,'History displays recovered processing state and the partial-recording notice');
+      const screenshot=await historyPage.command('Page.captureScreenshot',{format:'png'});
+      await writeFile(join(tmpdir(),'ariadne-recovery-history.png'),Buffer.from(screenshot.data,'base64'));
+      console.log(JSON.stringify({browserRestartRecovery:{ok:true,recoveredDuration,recoveredVideoDuration,recordingStatus:recovered.recordingStatus,transcriptSegments:transcriptAfterRestart.length}},null,2));
+    }
     await browser.command("Extensions.uninstall", { id });
   } finally {
     clients.forEach((client) => client.socket.close()); await rm(extension, { recursive: true, force: true });

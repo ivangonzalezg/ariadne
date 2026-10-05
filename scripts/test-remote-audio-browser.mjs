@@ -35,11 +35,10 @@ const server = createServer(async (request, response) => {
 });
 let chrome;
 let socket;
-try {
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+async function launchChrome() {
   chrome = spawn(executable, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
     "--enable-unsafe-extension-debugging", "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
-  const debuggerUrl = await new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     let output = "";
     const timeout = setTimeout(() => reject(new Error("Chrome startup timed out")), 15000);
     chrome.on("error", (error) => { clearTimeout(timeout); reject(error); });
@@ -50,6 +49,18 @@ try {
       if (match) { clearTimeout(timeout); resolve(match[1]); }
     });
   });
+}
+async function restartBrowser() {
+  socket?.close();
+  const previous = chrome;
+  const exited = new Promise(resolve => previous.once("exit", resolve));
+  previous.kill("SIGKILL");
+  await exited;
+  return launchChrome();
+}
+try {
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const debuggerUrl = await launchChrome();
   const debuggerOrigin = new URL(debuggerUrl).origin.replace("ws:", "http:");
   const pages = await (await fetch(`${debuggerOrigin}/json/list`)).json();
   socket = new WebSocket(pages.find((page) => page.type === "page").webSocketDebuggerUrl);
@@ -76,7 +87,7 @@ try {
     socket.send(JSON.stringify({ id, method, params }));
   });
   if (process.argv.includes("--integration-only")) {
-    await runExtensionIntegration({ root, debuggerUrl, origin: `http://127.0.0.1:${server.address().port}` });
+    await runExtensionIntegration({ root, debuggerUrl, restartBrowser, origin: `http://127.0.0.1:${server.address().port}` });
   } else {
   await command("Runtime.enable");
   await command("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/tests/browser/remote-audio.html${process.argv.includes("--hybrid") ? "?hybrid" : process.argv.includes("--playback-route") ? "?playback-route" : process.argv.includes("--disabled-receiver") ? "?disabled-receiver" : ""}` });
@@ -96,7 +107,7 @@ try {
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? JSON.stringify(result.exceptionDetails));
   if (!result.result.value?.ok) throw new Error("Browser test did not return success");
   console.log(JSON.stringify(result.result.value, null, 2));
-  await runExtensionIntegration({ root, debuggerUrl, origin: `http://127.0.0.1:${server.address().port}` });
+  await runExtensionIntegration({ root, debuggerUrl, restartBrowser, origin: `http://127.0.0.1:${server.address().port}` });
   }
 } finally {
   socket?.close();

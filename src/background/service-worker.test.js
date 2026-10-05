@@ -192,3 +192,79 @@ describe("storage RPC and restored history", () => {
     finish(); await Promise.all([a, b]); expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
   });
 });
+
+describe("recovery and deletion RPCs", () => {
+  let listeners;
+  beforeEach(() => {
+    vi.resetModules(); listeners = [];
+    globalThis.chrome = baseChromeMock();
+    chrome.runtime.onMessage.addListener = listener => listeners.push(listener);
+    chrome.runtime.sendMessage = vi.fn().mockResolvedValue({ ok: true });
+  });
+  const dispatch = message => new Promise(resolve => {
+    for (const listener of listeners) listener(message, {}, resolve);
+  });
+
+  it("rejects a folder/session mismatch before forwarding retry or deletion", async () => {
+    await import("./service-worker.js");
+    chrome.storage.__store.meetingHistory = [{ sessionId: "s", folderName: "correct" }];
+    for (const type of ["asterion:retry-recovery", "asterion:delete-session", "asterion:get-recovery-status"]) {
+      expect(await dispatch({ type, sessionId: "s", folderName: "wrong" })).toMatchObject({ error: "Session mismatch", retryable: false });
+    }
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("retries without destroying the shared offscreen document", async () => {
+    await import("./service-worker.js");
+    chrome.storage.__store.meetingHistory = [{ sessionId: "s", folderName: "correct" }];
+    chrome.offscreen = { closeDocument: vi.fn() };
+    await dispatch({ type: "asterion:retry-recovery", sessionId: "s", folderName: "correct" });
+    expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "asterion:retry-recovery", target: "asterion-offscreen" }));
+  });
+
+  it("persists deletion intent and prevents late history publication from recreating the meeting", async () => {
+    await import("./service-worker.js");
+    chrome.storage.__store.meetingHistory = [{ sessionId: "s", folderName: "correct" }, { sessionId: "other", folderName: "other" }];
+    await dispatch({ type: "asterion:delete-session", sessionId: "s", folderName: "correct" });
+    await dispatch({ type: "asterion:session-finalized", sessionId: "s", folderName: "correct" });
+    expect(chrome.storage.__store.meetingHistory).toEqual([{ sessionId: "other", folderName: "other" }]);
+    expect(chrome.storage.__store.pendingSessionDeletions).toEqual({});
+  });
+
+  it("preserves active capture after two temporary status transport failures", async () => {
+    vi.useFakeTimers();
+    try {
+      const { registerActiveSession, recoverPendingSessions } = await import("./service-worker.js");
+      await registerActiveSession("s", 7, "Meeting", "folder");
+      chrome.runtime.sendMessage.mockResolvedValue({ pending: false, recordings: [] });
+      chrome.tabs.sendMessage = vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce(undefined).mockResolvedValueOnce({ sessionId: "s" });
+      const recovering = recoverPendingSessions();
+      await vi.advanceTimersByTimeAsync(2100); await recovering;
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(3);
+      expect(chrome.runtime.sendMessage.mock.calls.some(([message]) => message.type === "asterion:session-ended")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+it("discovers a session whose history publication exhausted retries without reclassifying a completed capture", async () => {
+  vi.resetModules(); globalThis.chrome = baseChromeMock();
+  const meta = { sessionId: "unpublished", folderName: "folder", recordingStatus: "complete", startedAt: 100, endedAt: 200,
+    processing: { supported: true, pending: false, canRetry: true, tasks: [{ stream: "publication", state: "failed", attempts: 10 }] } };
+  chrome.runtime.sendMessage = vi.fn().mockResolvedValue({ pending: false, recordings: [], unpublished: [meta] });
+  const { recoverPendingSessions, registerActiveSession } = await import("./service-worker.js");
+  await registerActiveSession(meta.sessionId, 7, "Meeting", "folder");
+  await recoverPendingSessions();
+  expect(chrome.storage.__store.meetingHistory).toMatchObject([{ sessionId: "unpublished", recordingStatus: "complete", processing: { canRetry: true } }]);
+  expect(chrome.storage.__store.activeRecordingSessions).toEqual({});
+});
+
+it("does not let discovery overwrite newer finalized processing metadata", async () => {
+  vi.resetModules(); globalThis.chrome = baseChromeMock();
+  const newer = { sessionId: "s", folderName: "folder", hasTranscript: true, hasAudioMp3: true, processing: { revision: 5, pending: false } };
+  chrome.storage.__store.meetingHistory = [newer];
+  chrome.runtime.sendMessage = vi.fn().mockResolvedValue({ pending: false, recordings: [], unpublished: [{ ...newer, hasTranscript: false, hasAudioMp3: false, processing: { revision: 4, pending: true } }] });
+  const { recoverPendingSessions } = await import("./service-worker.js");
+  await recoverPendingSessions();
+  expect(chrome.storage.__store.meetingHistory).toEqual([newer]);
+});

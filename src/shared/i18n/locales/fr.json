@@ -100,5 +100,16 @@
   "transcript.error": "Erreur de capture",
   "transcript.saving": "Enregistrement",
   "transcript.storageError": "Erreur de stockage",
-  "transcript.incomplete": "Transcription incomplète"
+  "transcript.incomplete": "Transcription incomplète",
+  "history.recoveryTitle": "Récupération",
+  "history.retryPending": "Réessayer les tâches",
+  "history.recoveryInProgress": "Récupération en cours",
+  "history.recoveredPartial": "Le fichier contient uniquement la partie sauvegardée. L’enregistrement reste incomplet.",
+  "history.recoveryUnavailable": "Cette réunion ne dispose pas de journal récupérable. Les fichiers existants restent disponibles.",
+  "history.recoveryQuotaError": "Le stockage est plein. Libérez de l’espace et réessayez.",
+  "history.recoveryNoData": "Aucune partie continue sauvegardée ne peut être récupérée.",
+  "history.recoveryTaskError": "Le traitement n’a pas abouti. Vous pouvez réessayer les tâches restantes.",
+  "history.processing.pending": "En attente",
+  "history.processing.succeeded": "Disponible",
+  "history.processing.failed": "Échec"
 }

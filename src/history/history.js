@@ -251,11 +251,13 @@ async function readActiveFile(meeting, tab) {
   const directory = await openMeetingDirectory(meeting);
   if (tab === "transcript") { const file = await (await directory.getFileHandle("transcripcion.json")).getFile(); return { file, name: "transcripcion.json", value: JSON.parse(await file.text()) }; }
   if (tab === "manifest") { const { file, value } = await readJsonFile(directory); return { file, name: "manifest.json", value }; }
-  const { value: manifest } = await readJsonFile(directory).catch(() => ({ value: {} }));
-  const isVideo = tab === "video"; const converted = isVideo ? (manifest.hasVideoMp4 || manifest.videoConversionStatus === "succeeded") : (manifest.hasAudioMp3 || manifest.audioConversionStatus === "succeeded");
-  const preferred = isVideo ? (converted ? "video-reunion.mp4" : "video-reunion.webm") : (converted ? "audio-reunion.mp3" : "audio-reunion.webm");
-  const fallback = isVideo ? (preferred.endsWith(".mp4") ? "video-reunion.webm" : "video-reunion.mp4") : (preferred.endsWith(".mp3") ? "audio-reunion.webm" : "audio-reunion.mp3");
-  try { return { file: await (await directory.getFileHandle(preferred)).getFile(), name: preferred }; } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
+  const preferred = tab === "video" ? "video-reunion.mp4" : "audio-reunion.mp3";
+  const fallback = tab === "video" ? "video-reunion.webm" : "audio-reunion.webm";
+  try {
+    const file = await (await directory.getFileHandle(preferred)).getFile();
+    if (!file.size) throw new Error("Empty media file");
+    return { file, name: preferred };
+  } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
 }
 function createFileFooter(activeFile, meeting) {
   const footer = document.createElement("footer"); footer.className = "detail-footer";
@@ -328,13 +330,78 @@ function renderTabContent(content, activeFile) {
   } else if (state.selectedTab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
   else content.appendChild(createMediaPlayer(activeFile, state.selectedTab === "video"));
 }
+let recoveryPoll = null;
+const recoveryRequests = new Set();
+
+export function recoveryErrorMessage(error) {
+  if (/QuotaExceeded|quota|Full/i.test(error ?? "")) return t("history.recoveryQuotaError");
+  if (/INPUT_INVALID|continuous saved prefix|No recoverable transcript/i.test(error ?? "")) return t("history.recoveryNoData");
+  return t("history.recoveryTaskError");
+}
+
+function createRecoveryPanel(meeting) {
+  const panel = document.createElement("section"); panel.className = "recovery-panel";
+  panel.setAttribute("aria-label", t("history.recoveryTitle"));
+  const status = document.createElement("div"); status.className = "recovery-status";
+  const message = document.createElement("p"); message.className = "recovery-message";
+  message.setAttribute("role", "status"); message.setAttribute("aria-atomic", "true");
+  const retry = document.createElement("button"); retry.type = "button"; retry.className = "recovery-retry";
+  retry.textContent = t("history.retryPending"); retry.hidden = true;
+  panel.append(status, message, retry);
+  const apply = result => {
+    const recovery = result.recovery ?? result.processing;
+    status.replaceChildren();
+    for (const [label, value] of [["common.audio", result.audioConversionStatus], ["common.video", result.videoConversionStatus], ["common.transcript", result.transcriptExportStatus]]) {
+      if (!value || value === "skipped") continue;
+      const row = document.createElement("p");
+      row.textContent = `${t(label)}: ${t(`history.processing.${value}`)}`; status.appendChild(row);
+    }
+    const error = recovery?.tasks?.find(task => task.error && task.state === "failed")?.error;
+    const partial = result.recordingStatus === "incomplete" || Object.values(recovery?.recoveredCoverage ?? {}).some(coverage => coverage.partial);
+    message.textContent = recovery?.supported === false ? t("history.recoveryUnavailable") : error ? recoveryErrorMessage(error) : partial ? t("history.recoveredPartial") : recovery?.pending ? t("history.recoveryInProgress") : "";
+    retry.hidden = !recovery?.supported || (!recovery.canRetry && !recovery.pending);
+    retry.disabled = recovery?.pending || recoveryRequests.has(meeting.sessionId);
+    retry.textContent = t(retry.disabled ? "history.recoveryInProgress" : "history.retryPending");
+    return recovery?.pending;
+  };
+  const refresh = async () => {
+    if (!panel.isConnected) return;
+    clearTimeout(recoveryPoll);
+    try {
+      const result = await chrome.runtime.sendMessage({ type: "asterion:get-recovery-status", sessionId: meeting.sessionId, folderName: meeting.folderName });
+      if (!panel.isConnected) return;
+      if (!result) throw new Error("Unavailable");
+      const pending = apply(result);
+      if (pending) recoveryPoll = setTimeout(refresh, 2000);
+    } catch {
+      if (panel.isConnected) apply({ recovery: { supported: false } });
+    }
+  };
+  retry.addEventListener("click", async () => {
+    if (recoveryRequests.has(meeting.sessionId)) return;
+    recoveryRequests.add(meeting.sessionId); retry.disabled = true; retry.textContent = t("history.recoveryInProgress");
+    try {
+      const result = await chrome.runtime.sendMessage({ type: "asterion:retry-recovery", sessionId: meeting.sessionId, folderName: meeting.folderName });
+      if (!result || result.error) throw new Error(result?.error);
+      if (panel.isConnected) apply(result);
+    } catch { if (panel.isConnected) message.textContent = t("history.recoveryTaskError"); }
+    finally { recoveryRequests.delete(meeting.sessionId); await refresh(); }
+  });
+  panel.addEventListener("asterion:recovery-update", event => {
+    if (apply(event.detail)) { clearTimeout(recoveryPoll); recoveryPoll = setTimeout(refresh, 2000); }
+  });
+  apply(meeting);
+  queueMicrotask(refresh);
+  return panel;
+}
+
 async function renderDetail() {
-  cleanupActiveMedia(); detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
+  clearTimeout(recoveryPoll); cleanupActiveMedia(); detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
   if (!meeting) { const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = t("history.selectMeetingPlaceholder"); detailPanelEl.appendChild(placeholder); return; }
   const tabs = availableTabs(meeting); if (!tabs.some(([, key]) => key === state.selectedTab)) state.selectedTab = tabs[0][1];
   const renderKey = `${meetingId(meeting)}:${state.selectedTab}`;
   const detail = document.createElement("div"); detail.className = "detail-content";
-  const header = document.createElement("header"); header.className = "detail-header"; const title = document.createElement("h2"); title.className = "detail-title"; title.textContent = titleFor(meeting); const date = document.createElement("p"); date.className = "detail-date"; date.textContent = formatDetailDate(meeting); const metadata = document.createElement("p"); metadata.className = "detail-metadata"; metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`; header.append(title, date, metadata);
+  const header = document.createElement("header"); header.className = "detail-header"; const title = document.createElement("h2"); title.className = "detail-title"; title.textContent = titleFor(meeting); const date = document.createElement("p"); date.className = "detail-date"; date.textContent = formatDetailDate(meeting); const metadata = document.createElement("p"); metadata.className = "detail-metadata"; metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`; header.append(title, date, metadata, createRecoveryPanel(meeting));
   const tablist = document.createElement("div"); tablist.className = "detail-tabs"; tablist.setAttribute("role", "tablist"); const tabIcons = { transcript: "file-text", audio: "volume-2", video: "video", manifest: "braces" }; tabs.forEach(([, key, label]) => { const tab = document.createElement("button"); const active = key === state.selectedTab; tab.type = "button"; tab.className = `detail-tab${active ? " is-active" : ""}`; tab.innerHTML = `${icon(tabIcons[key], { size: 14, color: "currentColor" })}<span>${label}</span>`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(active)); tab.addEventListener("click", () => { state.selectedTab = key; renderDetail(); }); tablist.appendChild(tab); });
   const content = document.createElement("section"); content.className = `detail-tab-content${state.selectedTab === "audio" ? " is-audio" : state.selectedTab === "video" ? " is-video" : ""}`; content.setAttribute("role", "tabpanel"); const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = t("history.loadingFile"); content.appendChild(loading); detail.append(header, tablist, content); detailPanelEl.appendChild(detail);
   try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile, meeting)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = t("history.fileOpenError"); content.appendChild(unavailable); }
@@ -345,7 +412,7 @@ function showDeleteDialog(meeting, opener) {
   const dialog = document.createElement("section"); dialog.className = "delete-modal"; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true"); dialog.setAttribute("aria-labelledby", "delete-modal-title"); const title = document.createElement("h2"); title.id = "delete-modal-title"; title.textContent = t("common.deleteMeeting"); const body = document.createElement("p"); body.textContent = t("history.deleteConfirmBody", { title: titleFor(meeting) }); const actions = document.createElement("div"); actions.className = "delete-modal-actions"; const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "modal-cancel"; cancel.textContent = t("common.cancel"); const confirm = document.createElement("button"); confirm.type = "button"; confirm.className = "modal-confirm"; confirm.textContent = t("common.delete"); actions.append(cancel, confirm); dialog.append(title, body, actions); overlay.appendChild(dialog); document.body.appendChild(overlay);
   const close = () => { document.removeEventListener("keydown", onKeydown); overlay.remove(); opener.focus(); };
   const onKeydown = (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } if (event.key === "Tab") { const controls = [...dialog.querySelectorAll("button:not([disabled])")]; const first = controls[0]; const last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
-  cancel.addEventListener("click", close); confirm.addEventListener("click", async () => { confirm.disabled = true; try { const root = await navigator.storage.getDirectory(); await root.removeEntry(meeting.folderName, { recursive: true }); const meetingHistory = state.meetings.filter((item) => meetingId(item) !== meetingId(meeting)); await chrome.storage.local.set({ meetingHistory }); state.meetings = meetingHistory; state.selectedMeetingId = null; state.selectedTab = null; renderAllExceptDetail(); renderDetail(); close(); } catch { confirm.disabled = false; } });
+  cancel.addEventListener("click", close); confirm.addEventListener("click", async () => { confirm.disabled = true; try { const result = await chrome.runtime.sendMessage({ type: "asterion:delete-session", sessionId: meeting.sessionId, folderName: meeting.folderName }); if (!result?.ok) throw new Error(result?.error ?? "Delete failed"); state.meetings = state.meetings.filter((item) => meetingId(item) !== meetingId(meeting)); state.selectedMeetingId = null; state.selectedTab = null; renderAllExceptDetail(); renderDetail(); close(); } catch { confirm.disabled = false; } });
   document.addEventListener("keydown", onKeydown); cancel.focus();
 }
 function renderAllExceptDetail() { renderSidebar(); renderMeetings(); }
@@ -354,8 +421,17 @@ searchInput.addEventListener("input", () => { state.search = searchInput.value; 
 sortSelect.addEventListener("change", () => { state.sort = sortSelect.value; renderMeetings(); });
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !changes.meetingHistory) return;
+  const previous = state.meetings.find(meeting => meetingId(meeting) === state.selectedMeetingId);
   state.meetings = Array.isArray(changes.meetingHistory.newValue) ? changes.meetingHistory.newValue : [];
-  if (state.selectedMeetingId && !state.meetings.some((meeting) => meetingId(meeting) === state.selectedMeetingId)) state.selectedMeetingId = null;
-  renderAllExceptDetail(); renderDetail();
+  const selected = state.meetings.find(meeting => meetingId(meeting) === state.selectedMeetingId);
+  if (state.selectedMeetingId && !selected) state.selectedMeetingId = null;
+  renderAllExceptDetail();
+  const panel = detailPanelEl.querySelector(".recovery-panel");
+  if (panel && previous && selected && previous.hasTranscript === selected.hasTranscript && previous.hasAudioMp3 === selected.hasAudioMp3 && previous.hasVideoMp4 === selected.hasVideoMp4) {
+    panel.dispatchEvent(new CustomEvent("asterion:recovery-update", { detail: selected }));
+  } else renderDetail();
 });
 chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => { state.meetings = Array.isArray(meetingHistory) ? meetingHistory : []; renderAllExceptDetail(); renderDetail(); });
+
+// Reconciliation also discovers interrupted sessions missing from meetingHistory.
+try { chrome.runtime.sendMessage({ type: "asterion:recover-storage" }).catch(() => {}); } catch {}

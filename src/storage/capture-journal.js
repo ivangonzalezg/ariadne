@@ -41,13 +41,18 @@ export class CaptureJournal {
     journal.recordsDirectory = await directory.getDirectoryHandle("capture-records", { create: true });
     if (initialState) await journal.checkpoint({});
     else {
+      state.invalidRecords = [];
       for await (const handle of journal.recordsDirectory.values()) {
         if (handle.kind !== "file" || !handle.name.endsWith(".chunk")) continue;
         try {
           const { header } = await journal.readRecord(handle.name);
           journal.records.set(handle.name, header);
         } catch (error) {
-          state.invalidRecords ??= [];
+          const identity = /^(meeting|video)-\d+-(\d+)\.chunk$/.exec(handle.name);
+          if (identity) {
+            state.expectedSequences ??= {};
+            state.expectedSequences[identity[1]] = Math.max(state.expectedSequences[identity[1]] ?? 0, Number(identity[2]));
+          }
           state.invalidRecords.push({ name: handle.name, error: error.message });
           state.invalidRecords = state.invalidRecords.slice(-100);
         }
@@ -137,16 +142,29 @@ export class CaptureJournal {
       confirmedSequences: headers.map((header) => header.seq), pendingSequences: gaps, gaps };
   }
 
-  async materialize(stream, { prefix = false } = {}) {
+  async materialize(stream, { prefix = false, signal } = {}) {
     const headers = [...this.records.values()].filter((header) => header.stream === stream).sort((a, b) => a.seq - b.seq);
     const segments = [];
     let expected = 1;
     for (const header of headers) {
       if (header.seq !== expected) { if (prefix) break; throw invalid("Missing chunk sequence"); }
+      if (signal?.aborted) throw new Error("Obsolete processing attempt");
+      try { await this.readRecord(recordName(stream, header.generation, header.seq)); }
+      catch (error) {
+        if (!prefix || (error.code !== "INVALID_DATA" && error.name !== "NotFoundError")) throw error;
+        this.state.invalidRecords ??= [];
+        this.state.invalidRecords.push({ name: recordName(stream, header.generation, header.seq), error: error.message });
+        break;
+      }
       expected++;
       let segment = segments.at(-1);
       if (!segment || segment.generation !== header.generation) {
-        if (segment && header.generation <= segment.generation) throw invalid("Invalid generation order");
+        if (segment && header.generation <= segment.generation) {
+          if (!prefix) throw invalid("Invalid generation order");
+          this.state.invalidRecords ??= [];
+          this.state.invalidRecords.push({ name: recordName(stream, header.generation, header.seq), error: "Invalid generation order" });
+          break;
+        }
         segment = { stream, generation: header.generation, name: `${stream}-segment-${header.generation}.webm`,
           firstSequence: header.seq, firstCaptureTs: header.captureTs, byteLength: 0, records: [] };
         segments.push(segment);
@@ -161,17 +179,19 @@ export class CaptureJournal {
       try {
         let offset = 0;
         for (const name of segment.records) {
+          if (signal?.aborted) throw new Error("Obsolete processing attempt");
           const { payload } = await this.readRecord(name);
           await writable.write({ type: "write", position: offset, data: payload });
           offset += payload.length;
         }
+        if (signal?.aborted) throw new Error("Obsolete processing attempt");
         await writable.close();
       } catch (error) { await writable.abort?.().catch(() => {}); throw error; }
       delete segment.records;
     }
-    if (segments.length === 1 || (prefix && segments.length > 1)) {
+    if (segments.length === 1) {
       const bytes = await (await this.directory.getFileHandle(segments[0].name)).getFile();
-      await writeFile(this.directory, stream === "meeting" ? "audio-reunion.webm" : "video-reunion.webm", bytes);
+      await writeFile(this.directory, stream === "meeting" ? "audio-reunion.webm" : "video-reunion.webm", bytes, signal);
     }
     return segments;
   }

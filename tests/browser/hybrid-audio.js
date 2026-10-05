@@ -18,7 +18,7 @@ function amplitude(buffer, frequency, centre) {
 }
 export async function runHybrid() {
   globalThis.chrome = { runtime: { getURL: (path) => new URL(`/${path}`, location.origin).href,
-    sendMessage: async () => ({ videoPreset: "medium" }) } };
+    sendMessage: async () => ({ ok: true, videoPreset: "medium" }) } };
   const sourceContext = new AudioContext({ sinkId: { type: "none" } });
   await sourceContext.resume();
   const oscillators = [];

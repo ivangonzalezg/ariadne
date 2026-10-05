@@ -53,3 +53,36 @@ it("restores terminal jobs whose result metadata was not published without re-en
   expect(attempt).not.toHaveBeenCalled(); expect(h.finish).toHaveBeenCalledOnce(); expect(restored.published).toBe(true);
   expect(queue.snapshot()).toEqual([]); vi.useRealTimers();
 });
+
+it("cancels only the selected session and waits for its physical publication", async () => {
+  let release, started;
+  const writing = new Promise(resolve => { started = resolve; });
+  const h = handlers();
+  h.publish = vi.fn(async (_bytes, _token, signal) => {
+    started(); await new Promise(resolve => { release = resolve; });
+    expect(signal.aborted).toBe(true);
+  });
+  const queue = new ConversionQueue({ attempt: vi.fn().mockResolvedValue(new Uint8Array([1])) });
+  await queue.add(job("delete"), h); await writing;
+  let cancelled = false;
+  const cancellation = queue.cancelSession("delete").then(() => { cancelled = true; });
+  await Promise.resolve(); expect(cancelled).toBe(false);
+  const other = handlers(); await queue.add(job("keep"), other);
+  release(); await cancellation;
+  await vi.waitFor(() => expect(other.publish).toHaveBeenCalledOnce());
+  expect(h.finish).not.toHaveBeenCalled();
+});
+
+it("bounds checkpoint settlement failures and requires an explicit new retry cycle", async () => {
+  vi.useFakeTimers();
+  const queue = new ConversionQueue({ attempt: vi.fn() });
+  const h = handlers(); h.save.mockRejectedValue(new Error("disk offline"));
+  const restored = job("settlement", { state: "succeeded", published: false });
+  await queue.add(restored, h); await vi.advanceTimersByTimeAsync(0);
+  for (let attempt = 1; attempt < 10; attempt++) await vi.advanceTimersByTimeAsync(retryDelay(attempt));
+  expect(restored.settlementAttempts).toBe(10);
+  expect(queue.snapshot()).toEqual([]);
+  await queue.add(restored, h);
+  expect(queue.snapshot()).toEqual([]);
+  expect(queue.attempt).not.toHaveBeenCalled();
+});

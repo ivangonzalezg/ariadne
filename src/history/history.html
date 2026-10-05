@@ -48,6 +48,13 @@
       .media-speed-control { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
       .media-speed { min-height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; font-variant-numeric: tabular-nums; }
       .detail-file-actions { flex-wrap: wrap; justify-content: flex-end; }
+      .recovery-panel { display: grid; gap: 8px; margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+      .recovery-status { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+      .recovery-status p, .recovery-message { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+      .recovery-message:empty { display: none; }
+      .recovery-retry { justify-self: start; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-button); color: var(--text-primary); font: inherit; font-size: 12px; cursor: pointer; }
+      .recovery-retry:disabled { cursor: wait; opacity: .65; }
+      .recovery-retry:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
     </style>
   </head>
   <body>
