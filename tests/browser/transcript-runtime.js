@@ -44,14 +44,15 @@ window.runTranscriptTest = async () => {
     remoteChannels.get("captions_v2").send(await gzip(v2Caption(2, 1, "Segunda frase")));
     remoteChannels.get("captions").send(oldCaption(1, 2, "Primera frase completa"));
     await wait(() => service.utterances.size === 2 && [...service.utterances.values()][0].text === "Primera frase completa");
+    router.setLocalIdentity({ speakerId: "ana", name: "Ana", evidence: "meet-own-camera-controls" });
     await service.stop(); const errors = await delivery.flush(); assert(errors.length === 0, "Caption flush failed");
     const restored = await SessionWriter.restore(writer.folderName);
     await restored.finalize({ endedAt: Date.now(), expectedCaptionEvents: delivery.eventSeq });
     const output = JSON.parse(await (await (await restored.meetingHandle.getFileHandle("transcripcion.json")).getFile()).text());
     assert(output.length === 2 && output[0].text === "Primera frase completa" && output[1].text === "Segunda frase", "Caption loss or duplication");
-    assert(output.every(segment => segment.speaker === "Ana"), "Roster attribution failed");
+    assert(output.every(segment => segment.speaker === "Ana (you)"), "Roster attribution failed");
     assert(restored.transcriptStatus === "complete", "Unexpected incomplete transcript");
-    results.push("Real WebRTC loopback: gzip, captions, captions_v2, revisions, roster", "Real OPFS: lost ACK retry, recovery, final export");
+    results.push("Real WebRTC loopback: gzip, captions, captions_v2, revisions, roster", "Real OPFS: lost ACK retry, recovery, late local identity and final export");
 
     document.body.innerHTML = '<button jsname="RrG0hf" aria-pressed="true" aria-controls="captions">CC</button><div role="region" id="captions"><div class="nMcdL bj4p3b"><span class="NWpY1d">Ana</span><span class="ygicle VbkSUe">Anterior</span></div></div>';
     const events = []; stopDom = enableCaptionsAndObserve(event => events.push(event));

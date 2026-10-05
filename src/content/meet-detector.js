@@ -1,3 +1,4 @@
+import { observeLocalIdentity } from "./meet-local-identity.js";
 import { CaptionDelivery } from "./caption-delivery.js";
 import { CaptionRouter } from "./caption-router.js";
 // src/content/meet-detector.js
@@ -116,7 +117,8 @@ async function startRecording() {
   delivery.captions = new CaptionDelivery({ sessionId,
     send: (message) => chrome.runtime.sendMessage(message),
     recover: delivery.recover,
-    onAck: () => {
+    onAck: (event) => {
+      if (event.kind === "local-identity") return;
       if (sessionId !== delivery.sessionId) return;
       hasTranscript = true; updateBannerState(currentState, bannerMeta());
     },
@@ -130,6 +132,11 @@ async function startRecording() {
   delivery.router = new CaptionRouter({ sessionId, mode: captionMode,
     emit: (event) => delivery.captions.add(event), log: debugEvent });
   deliveries.set(sessionId, delivery);
+  delivery.stopIdentity = observeLocalIdentity(identity => {
+    if (sessionId !== delivery.sessionId || delivery.captionCutoff != null) return;
+    delivery.router.setLocalIdentity(identity);
+    debugEvent("caption-local-identity", { sessionId, ...identity });
+  });
   delivery.statusTimer = setInterval(async () => {
     try {
       const result = await chrome.runtime.sendMessage({ type: "asterion:storage-status", sessionId: delivery.sessionId });
@@ -182,8 +189,8 @@ async function startRecording() {
     },
   });
   delivery.stopDom = cleanup;
-  if (sessionId !== delivery.sessionId) { cleanup?.(); return; }
-  stopCaptionObserver = cleanup ?? (() => {});
+  if (sessionId !== delivery.sessionId) { cleanup?.(); delivery.stopIdentity?.(); return; }
+  stopCaptionObserver = () => { cleanup?.(); delivery.stopIdentity?.(); };
   stopMeetingEndObserver = observeMeetingEnd();
 }
 
@@ -197,6 +204,8 @@ function stopRecording() {
 
 function cutoffCaptions(delivery, endedAt) {
   if (!delivery || delivery.captionCutoff != null) return;
+  delivery.stopIdentity?.flush?.();
+  delivery.stopIdentity?.();
   delivery.stopDom?.flush?.();
   delivery.stopDom?.();
   delivery.captionCutoff = endedAt;

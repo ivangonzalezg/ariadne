@@ -114,7 +114,7 @@ export class SessionWriter {
     return { sessionId: this.sessionId, folderName: this.folderName, recordingStatus: this.journal.state.recordingStatus,
       streams: Object.fromEntries(["meeting", "video"].map((stream) => [stream, this.journal.snapshot(stream)])),
       conversions: structuredClone(this.journal.state.conversions),
-      transcriptStatus: this.transcriptStatus, captions: this.captions.snapshot(this.journal.state.expectedCaptionEvents) };
+      transcriptStatus: this.transcriptStatus, localIdentity: this.captions.model.localIdentity ?? null, captions: this.captions.snapshot(this.journal.state.expectedCaptionEvents) };
   }
 
   onCaptionEvent(event) {
@@ -181,7 +181,7 @@ export class SessionWriter {
     this.transcriptStatus = this.transcriptStatus === "incomplete" || interruptionReason || captionPersistenceErrors.length || captionState.gaps.length || captionState.errors.length ? "incomplete" : "complete";
     await this.journal.checkpoint({ endedAt: this.endedAt, expectedSequences, muteManifest: resolvedMuteManifest,
       recordingStatus: "finalizing", interruptionReason, expectedCaptionEvents, captionPersistenceErrors,
-      transcriptStatus: this.transcriptStatus });
+      transcriptStatus: this.transcriptStatus, localIdentity: this.captions.model.localIdentity ?? null });
     const gaps = [...this.streamsUsed].some((stream) => this.journal.snapshot(stream).gaps.length);
     this.recordingStatus = interruptionReason || gaps || this.writeFailures.size ? "incomplete" : "complete";
     this.interruptionReason = interruptionReason ?? (gaps ? "missing-fragments" : this.writeFailures.size ? "storage-error" : null);
@@ -238,6 +238,7 @@ export class SessionWriter {
       durationMs: this.endedAt - this.startedAt,
       meetingTitle: this.meetingTitle,
       hasTranscript: this.transcriptExported ?? this.hasCaption, transcriptStatus: this.transcriptStatus,
+      localIdentity: this.captions.model.localIdentity ?? null,
       hasVideo: this.hasVideo,
     };
   }
@@ -256,6 +257,7 @@ export class SessionWriter {
           durationMs: this.endedAt - this.startedAt,
           meetingTitle: this.meetingTitle,
           hasTranscript: this.transcriptExported ?? this.hasCaption, transcriptStatus: this.transcriptStatus,
+          localIdentity: this.captions.model.localIdentity ?? null,
           hasVideo: this.hasVideo,
           muteManifest,
           audioConversionStatus,

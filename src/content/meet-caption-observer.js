@@ -1,3 +1,4 @@
+import { isOwnCaptionLabel } from "./meet-local-identity.js";
 import { SELECTORS } from "./meet-selectors.js";
 import { createCaptionControl } from "./meet-caption-control.js";
 
@@ -27,7 +28,7 @@ export function enableCaptionsAndObserve(onSnapshot, { delayMs = 500, onActiveCh
     const now = Date.now(); entry.firstReceivedAt ??= now; entry.revision++;
     lastReceivedAt = now;
     onSnapshot({ source: "dom", utteranceId: entry.utteranceId, revision: entry.revision, speakerId: null,
-      ...snapshot, firstReceivedAt: entry.firstReceivedAt, updatedAt: now });
+      ...snapshot, originalSpeaker: snapshot.speaker, isSelf: isOwnCaptionLabel(snapshot.speaker), firstReceivedAt: entry.firstReceivedAt, updatedAt: now });
   };
   const readNodes = (nodes) => {
     for (const node of nodes) {

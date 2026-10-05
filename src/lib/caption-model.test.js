@@ -18,3 +18,10 @@ describe("caption identity", () => {
     expect(model.values()).toHaveLength(100); expect(model.values()[0].text).toBe("Corregido");
   });
 });
+
+it("does not duplicate the own-speaker suffix", () => {
+  const model = new CaptionModel();
+  model.apply({ kind: "local-identity", identity: { speakerId: "a", name: "Ana (You)" } });
+  model.apply({ ...event("one", 1, "Hello"), isSelf: true });
+  expect(model.segments(0, 10000)[0].speaker).toBe("Ana (you)");
+});

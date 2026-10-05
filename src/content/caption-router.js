@@ -5,6 +5,22 @@ export class CaptionRouter {
     Object.assign(this, { sessionId, mode, emit, log });
     this.candidates = new Map(); this.canonical = new Map(); this.aliases = new Map(); this.rtcUsable = false;
   }
+  setLocalIdentity(identity) {
+    if (this.localIdentity && this.localIdentity.speakerId !== identity.speakerId) return;
+    if (JSON.stringify(this.localIdentity) === JSON.stringify(identity)) return;
+    this.localIdentity = identity;
+    this.emit({ kind: "local-identity", identity });
+    for (const [key, event] of this.candidates) this.candidates.set(key, this.attribute(event));
+    for (const event of [...this.canonical.values()]) this.publish(this.attribute(event));
+  }
+  attribute(event) {
+    const originalSpeaker = event.originalSpeaker ?? event.speaker;
+    const isSelf = event.source === "webrtc"
+      ? event.isSelf === true || Boolean(this.localIdentity && event.speakerId === this.localIdentity.speakerId)
+      : event.isSelf === true;
+    return { ...event, originalSpeaker, isSelf,
+      speaker: isSelf && this.localIdentity ? this.localIdentity.name : originalSpeaker };
+  }
   setRtcStatus(status) {
     if (status.sessionId !== this.sessionId) return;
     const wasUsable = this.rtcUsable; this.rtcUsable = Boolean(status.usable);
@@ -15,6 +31,7 @@ export class CaptionRouter {
   }
   receive(event) {
     if (event.sessionId && event.sessionId !== this.sessionId) return;
+    event = this.attribute(event);
     const key = captionKey(event), previous = this.candidates.get(key);
     if (previous && event.revision <= previous.revision) return;
     this.candidates.set(key, event);
@@ -27,7 +44,7 @@ export class CaptionRouter {
   }
   matches(event) {
     if (!event.speaker) return [];
-    return [...this.canonical.entries()].filter(([, candidate]) => candidate.source !== event.source && candidate.speaker === event.speaker &&
+    return [...this.canonical.entries()].filter(([, candidate]) => candidate.source !== event.source && candidate.speaker === event.speaker && Boolean(candidate.isSelf) === Boolean(event.isSelf) &&
       normalizeCaptionText(candidate.text) === normalizeCaptionText(event.text) && Math.abs(candidate.firstReceivedAt - event.firstReceivedAt) <= 3000);
   }
   publish(event) {
@@ -55,8 +72,8 @@ export class CaptionRouter {
       for (const [alias, target] of this.aliases) if (target === removeKey) this.aliases.set(alias, keepKey);
       this.aliases.set(removeKey, keepKey); this.aliases.set(key, keepKey); canonicalKey = keepKey;
     }
-    if (!supersedes.length && previous && previous.text === event.text && previous.speaker === event.speaker && previous.isFinal === (event.isFinal ?? previous.isFinal) && previous.language === (event.language ?? previous.language)) return;
-    const metadata = Object.fromEntries(["language", "isFinal", "protocolTimestamp", "translationLanguage"].filter(field => event[field] == null && previous?.[field] != null).map(field => [field, previous[field]]));
+    if (!supersedes.length && previous && previous.text === event.text && previous.speaker === event.speaker && previous.isSelf === event.isSelf && previous.isFinal === (event.isFinal ?? previous.isFinal) && previous.language === (event.language ?? previous.language)) return;
+    const metadata = Object.fromEntries(["language", "isFinal", "protocolTimestamp", "translationLanguage", "isSelf", "originalSpeaker"].filter(field => event[field] == null && previous?.[field] != null).map(field => [field, previous[field]]));
     const canonical = { ...metadata, ...event, source: previous?.source ?? event.source, utteranceId: previous?.utteranceId ?? event.utteranceId,
       firstReceivedAt: previous?.firstReceivedAt ?? event.firstReceivedAt, updatedAt: Math.max(previous?.updatedAt ?? 0, event.updatedAt),
       revision: previous ? previous.revision + 1 : 1, observedSource: event.source,

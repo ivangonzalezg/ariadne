@@ -24,3 +24,23 @@ describe("durable caption journal", () => {
     await journal.append(event); expect(journal.events.size).toBe(1);
   });
 });
+
+it("durably restores late local identity, raw labels and unchanged offsets", async () => {
+  const dir = new MemoryDirectoryHandle("meeting"), journal = await CaptionJournal.open(dir, "s");
+  await journal.append({ ...event, speaker: "You", originalSpeaker: "You", isSelf: true });
+  const identityEvent = { sessionId: "s", eventSeq: 2, kind: "local-identity", identity: {
+    speakerId: "own", name: "Iván", evidence: "meet-own-camera-controls" } };
+  await journal.append(identityEvent);
+  const restored = await CaptionJournal.open(dir, "s");
+  expect(await restored.append(identityEvent)).toMatchObject({ duplicate: true });
+  expect(restored.model.segments(0, 10)[0]).toMatchObject({ speaker: "Iván (you)", startTime: 1, endTime: 1 });
+  expect(restored.model.values()[0].originalSpeaker).toBe("You");
+  expect(restored.snapshot(2).gaps).toEqual([]);
+  await expect(restored.append({ ...identityEvent, eventSeq: 3, identity: { ...identityEvent.identity, evidence: "guess" } })).rejects.toThrow("Invalid");
+});
+it("continues reading version two caption records", async () => {
+  const dir = new MemoryDirectoryHandle("meeting"), records = await dir.getDirectoryHandle("caption-records", { create: true });
+  const file = await records.getFileHandle("1.json", { create: true }), writable = await file.createWritable();
+  await writable.write(JSON.stringify({ version: 2, event })); await writable.close();
+  const journal = await CaptionJournal.open(dir, "s"); expect(journal.model.values()[0].text).toBe("Hola");
+});

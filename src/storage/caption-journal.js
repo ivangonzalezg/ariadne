@@ -14,7 +14,7 @@ export class CaptionJournal {
       try {
         const { version, event } = await readJson(journal.records, file.name);
         validateCaptionEvent(event, sessionId);
-        if (version !== CAPTION_FORMAT_VERSION || file.name !== `${event.eventSeq}.json`) throw new Error("Invalid caption record");
+        if (![2, CAPTION_FORMAT_VERSION].includes(version) || file.name !== `${event.eventSeq}.json`) throw new Error("Invalid caption record");
         journal.events.set(event.eventSeq, event);
       } catch (error) { journal.errors.push({ record: file.name, message: error.message }); }
     }
