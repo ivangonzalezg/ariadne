@@ -11,6 +11,8 @@ let currentMeta = {};
 let isExpanded = false;
 let timerInterval = null;
 let bannerReady = false;
+let bannerPosition = { edge: "bottom", offset: null };
+let isDragging = false;
 let t = (key) => key;
 
 const EDGE_MARGIN = 16;
@@ -26,57 +28,44 @@ function formatElapsed(startedAt) {
   return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
 }
 
-function sourceRow(iconName, label, active, activeLabel, inactiveLabel) {
-  const color = active ? "var(--accent-green)" : "var(--text-muted)";
-  return `<div class="source-row">
+function sourceRow(name, iconName, label) {
+  return `<div class="source-row" data-source="${name}">
     <div class="source-label">${icon(iconName, { size: 16, color: "var(--text-secondary)" })}<span>${label}</span></div>
-    <div class="source-status" style="color:${color}">
-      <span class="dot small" style="background:${color}"></span>${active ? activeLabel : inactiveLabel}
-    </div>
+    <div class="source-status"><span class="dot small"></span><span class="status-label"></span></div>
   </div>`;
 }
 
-function recordingControls() {
-  const videoActive = Boolean(currentMeta.videoEnabled);
-  return `<button class="icon-button video-button ${videoActive ? "is-active" : ""}" type="button" aria-label="${t("banner.enableVideoAria")}" data-asterion-enable-video>
-      ${icon("video", { size: 17 })}
-    </button>
-    <button class="danger-button" id="stop-capture" type="button">${t("banner.stopButton")}</button>
-    <button class="icon-button" id="toggle-expanded" type="button" aria-label="${isExpanded ? t("banner.collapseAria") : t("banner.expandAria")}">
-      ${icon(isExpanded ? "chevron-up" : "chevron-down", { size: 17 })}
-    </button>`;
-}
-
-function renderDetected() {
-  return `<div class="banner pill detected">
-    <img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20">
-    <div class="brand-copy"><strong>Ariadne</strong><span>${t("popup.statusDetected")}</span></div>
-    <button class="primary-button" id="start-capture" type="button">${icon("play", { size: 15 })}${t("popup.startCapture")}</button>
-  </div>`;
-}
-
-function renderRecording() {
-  const sources = isExpanded
-    ? `<div class="divider"></div>
-      <div class="sources">
-        ${sourceRow("file-text", t("common.transcript"), Boolean(currentMeta.transcriptActive) && !currentMeta.captionStorage?.error, captionStatusLabel(currentMeta, t), captionStatusLabel(currentMeta, t))}
-        ${sourceRow("volume-2", t("common.audio"), true, t("popup.activeMasc"), "")}
-        ${sourceRow("video", t("common.video"), Boolean(currentMeta.videoEnabled), t("popup.activeMasc"), t("popup.notActive"))}
-      </div>
-      <div class="info-row">${icon("info", { size: 16, color: "var(--text-secondary)" })}<span>${t("banner.recordingInfo")}</span></div>`
-    : "";
-
-  return `<div class="banner ${isExpanded ? "expanded" : "pill"}">
+function renderMeeting() {
+  return `<div class="banner meeting" tabindex="-1" data-recording="false" data-expanded="false">
     <div class="recording-top">
-      <div class="recording-copy"><img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20"><strong>Ariadne</strong><span class="timer">${formatElapsed(currentMeta.startedAt)}</span></div>
-      <div class="controls">${recordingControls()}</div>
+      <div class="identity">
+        <img class="brand-icon" src="${chrome.runtime.getURL("icons/icon32.png")}" alt="" width="20" height="20">
+        <div class="brand-copy"><strong>Ariadne</strong><span class="detected-label">${t("popup.statusDetected")}</span></div>
+        <span class="timer" aria-hidden="true">00:00</span>
+      </div>
+      <div class="actions">
+        <div class="start-controls"><button class="primary-button" id="start-capture" type="button">${icon("play", { size: 15 })}<span class="start-label">${t("popup.startCapture")}</span></button></div>
+        <div class="controls" inert aria-hidden="true">
+          <button class="icon-button video-button" type="button" aria-label="${t("banner.enableVideoAria")}" data-asterion-enable-video>${icon("video", { size: 17 })}</button>
+          <button class="danger-button" id="stop-capture" type="button">${t("banner.stopButton")}</button>
+          <button class="icon-button" id="toggle-expanded" type="button" aria-expanded="false" aria-controls="capture-details" aria-label="${t("banner.expandAria")}">${icon("chevron-down", { size: 17 })}</button>
+        </div>
+      </div>
     </div>
-    ${sources}
+    <div class="details" id="capture-details" inert aria-hidden="true"><div class="details-inner">
+      <div class="divider"></div>
+      <div class="sources">
+        ${sourceRow("transcript", "file-text", t("common.transcript"))}
+        ${sourceRow("audio", "volume-2", t("common.audio"))}
+        ${sourceRow("video", "video", t("common.video"))}
+      </div>
+      <div class="info-row">${icon("info", { size: 16, color: "var(--text-secondary)" })}<span>${t("banner.recordingInfo")}</span></div>
+    </div></div>
   </div>`;
 }
 
 function renderError() {
-  return `<div class="banner pill">
+  return `<div class="banner pill error-banner" tabindex="-1">
     <div class="recording-copy"><span class="dot" style="background:var(--accent-red)"></span><div class="brand-copy"><strong>${t("popup.statusError")}</strong><span>${t("banner.errorCopy")}</span></div></div>
   </div>`;
 }
@@ -90,44 +79,92 @@ function renderFinished() {
   </div>`;
 }
 
+function setAccessible(element, visible) {
+  element.toggleAttribute("inert", !visible);
+  element.setAttribute("aria-hidden", String(!visible));
+}
+
+function updateSource(name, active, label) {
+  const status = contentEl.querySelector(`[data-source="${name}"] .source-status`);
+  status.classList.toggle("is-active", active);
+  status.querySelector(".status-label").textContent = label;
+}
+
 function wireEvents() {
-  contentEl.querySelector("#start-capture")?.addEventListener("click", callbacks.onStart);
-  contentEl.querySelector("#stop-capture")?.addEventListener("click", callbacks.onStop);
-  contentEl.querySelector("#toggle-expanded")?.addEventListener("click", () => {
-    isExpanded = !isExpanded;
-    render();
-  });
-  contentEl.querySelector("#view-recording")?.addEventListener("click", () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL("src/history/history.html") });
-  });
-  contentEl.querySelector("#dismiss-banner")?.addEventListener("click", () => {
-    contentEl.innerHTML = "";
-    clearInterval(timerInterval);
-    timerInterval = null;
+  // Delegate once so metadata updates never duplicate listeners or lose focus.
+  contentEl.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || button.disabled || button.closest("[inert], [hidden]")) return;
+    switch (button.id) {
+      case "start-capture":
+        currentState = "starting";
+        render();
+        callbacks.onStart();
+        break;
+      case "stop-capture": callbacks.onStop(); break;
+      case "toggle-expanded": isExpanded = !isExpanded; render(); break;
+      case "view-recording": chrome.tabs.create({ url: chrome.runtime.getURL("src/history/history.html") }); break;
+      case "dismiss-banner":
+        contentEl.hidden = true;
+        clearInterval(timerInterval);
+        timerInterval = null;
+        break;
+    }
   });
 }
 
 function render() {
   if (!contentEl) return;
-  clearInterval(timerInterval);
-  timerInterval = null;
+  contentEl.hidden = false;
+  const meeting = contentEl.querySelector(".meeting");
+  const recording = currentState === "recording" || currentState === "video-enabled";
+  const specialState = currentState === "finished" || currentState === "error";
+  const activeElement = contentEl.getRootNode().activeElement;
+  meeting.hidden = specialState;
+  contentEl.querySelector(".error-banner").hidden = currentState !== "error";
+  contentEl.querySelector(".finished").hidden = currentState !== "finished";
 
-  if (currentState === "finished") {
-    contentEl.innerHTML = renderFinished();
-  } else if (currentState === "error") {
-    contentEl.innerHTML = renderError();
-  } else if (currentState === "recording" || currentState === "video-enabled") {
-    contentEl.innerHTML = renderRecording();
-    timerInterval = setInterval(() => {
-      const timerEl = contentEl?.querySelector(".timer");
-      if (timerEl) timerEl.textContent = formatElapsed(currentMeta.startedAt);
-    }, 1000);
-  } else {
-    contentEl.innerHTML = renderDetected();
+  const start = contentEl.querySelector("#start-capture");
+  start.disabled = currentState === "starting" || recording;
+  start.setAttribute("aria-busy", String(currentState === "starting"));
+  setAccessible(contentEl.querySelector(".start-controls"), !recording && !specialState);
+  setAccessible(contentEl.querySelector(".controls"), recording);
+  setAccessible(contentEl.querySelector(".detected-label"), !recording);
+  const timer = contentEl.querySelector(".timer");
+  timer.setAttribute("aria-hidden", String(!recording));
+  timer.textContent = formatElapsed(currentMeta.startedAt);
+  meeting.dataset.recording = String(recording);
+  meeting.dataset.expanded = String(recording && isExpanded);
+  const toggle = contentEl.querySelector("#toggle-expanded");
+  toggle.setAttribute("aria-expanded", String(recording && isExpanded));
+  toggle.setAttribute("aria-label", t(isExpanded ? "banner.collapseAria" : "banner.expandAria"));
+  setAccessible(contentEl.querySelector(".details"), recording && isExpanded);
+  contentEl.querySelector(".video-button").classList.toggle("is-active", Boolean(currentMeta.videoEnabled));
+  contentEl.querySelector(".video-button").setAttribute("aria-pressed", String(Boolean(currentMeta.videoEnabled)));
+  updateSource("transcript", Boolean(currentMeta.transcriptActive) && !currentMeta.captionStorage?.error, captionStatusLabel(currentMeta, t));
+  updateSource("audio", true, t("popup.activeMasc"));
+  updateSource("video", Boolean(currentMeta.videoEnabled), t(currentMeta.videoEnabled ? "popup.activeMasc" : "popup.notActive"));
+
+  if (recording && timerInterval === null) {
+    timerInterval = setInterval(() => { timer.textContent = formatElapsed(currentMeta.startedAt); }, 1000);
+  } else if (!recording) {
+    clearInterval(timerInterval);
+    timerInterval = null;
   }
-
-  wireEvents();
-  if (currentMeta.videoError) console.warn("[Ariadne] Could not enable video:", currentMeta.videoError);
+  // Transfer focus only when the previously focused control becomes unavailable.
+  const focusUnavailable = activeElement && contentEl.contains(activeElement) && (
+    activeElement.closest("[inert], [hidden]") ||
+    (activeElement === start && start.disabled) ||
+    (activeElement === meeting && recording)
+  );
+  if (focusUnavailable) {
+    let destination = start;
+    if (currentState === "finished") destination = contentEl.querySelector("#view-recording");
+    else if (currentState === "error") destination = contentEl.querySelector(".error-banner");
+    else if (recording) destination = contentEl.querySelector("#stop-capture");
+    else if (start.disabled) destination = meeting;
+    destination.focus({ preventScroll: true });
+  }
 }
 
 function clamp(value, min, max) {
@@ -138,6 +175,7 @@ function applyBannerPosition(position, shouldClamp = false) {
   const { edge, offset } = position || {};
   if (!contentEl || !["top", "right", "bottom", "left"].includes(edge) || !Number.isFinite(offset)) return;
 
+  bannerPosition = { edge, offset };
   contentEl.style.left = "auto";
   contentEl.style.right = "auto";
   contentEl.style.top = "auto";
@@ -207,6 +245,7 @@ function wireDragEvents() {
     if (!dragState.moved && Math.hypot(dx, dy) < 5) return;
 
     dragState.moved = true;
+    isDragging = true;
     contentEl.style.cursor = "grabbing";
     contentEl.style.left = `${dragState.originLeft + dx}px`;
     contentEl.style.top = `${dragState.originTop + dy}px`;
@@ -219,6 +258,7 @@ function wireDragEvents() {
     if (dragState.moved) snapToNearestEdge();
     if (contentEl.hasPointerCapture(event.pointerId)) contentEl.releasePointerCapture(event.pointerId);
     dragState = null;
+    isDragging = false;
     contentEl.style.cursor = "";
   };
 
@@ -245,17 +285,15 @@ export async function showBanner({ onStart, onStop }) {
   shadowRoot.innerHTML = `<link rel="stylesheet" href="${chrome.runtime.getURL("src/shared/theme.css")}">
     <style>
       #content { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; font-family: Inter, system-ui, sans-serif; touch-action: none; }
-      .banner { width: 320px; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px var(--shadow); color: var(--text-primary); padding: 12px; }
+      .banner { width: 320px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; scrollbar-width: thin; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px var(--shadow); color: var(--text-primary); padding: 12px; }
       .pill { border-radius: 999px; }
-      .expanded, .finished { border-radius: 20px; }
-      .detected, .recording-top, .recording-copy, .controls, .brand-copy, .source-label, .source-status, .info-row, .finish-badge, .secondary-button, .primary-button, .danger-button, .icon-button { display: flex; align-items: center; }
-      .detected, .recording-top { justify-content: space-between; gap: 12px; }
+      .recording-top, .recording-copy, .controls, .brand-copy, .source-label, .source-status, .info-row, .finish-badge, .secondary-button, .primary-button, .danger-button, .icon-button { display: flex; align-items: center; }
+      .recording-top { justify-content: space-between; gap: 8px; min-height: 32px; }
       .brand-icon { flex: 0 0 auto; border-radius: 6px; }
       .brand-copy { min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
       strong { color: var(--text-primary); font-size: 13px; font-weight: 650; }
       .brand-copy span, .timer { color: var(--text-secondary); font-size: 12px; }
       .recording-copy { gap: 8px; min-width: 0; }
-      .controls { gap: 6px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
       .dot.small { width: 6px; height: 6px; }
       button { font: inherit; cursor: pointer; }
@@ -263,35 +301,99 @@ export async function showBanner({ onStart, onStop }) {
       .primary-button { background: var(--accent-blue); }
       .danger-button { background: var(--accent-red); }
       .secondary-button { background: var(--bg-button); color: var(--text-primary); }
-      .icon-button { justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: var(--bg-button); color: var(--text-secondary); }
+      .icon-button { flex: 0 0 32px; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: var(--bg-button); color: var(--text-secondary); }
       .video-button.is-active { background: var(--accent-green); color: #fff; }
       .divider { border-top: 1px solid var(--border); margin: 12px 0; }
       .sources { display: flex; flex-direction: column; gap: 10px; }
       .source-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
       .source-label { gap: 8px; color: var(--text-primary); font-size: 12px; }
-      .source-status { gap: 5px; font-size: 11px; white-space: nowrap; }
+      .source-status { gap: 5px; font-size: 11px; white-space: nowrap; color: var(--text-muted); }
       .info-row { gap: 8px; margin-top: 12px; color: var(--text-secondary); font-size: 11px; line-height: 1.35; align-items: flex-start; }
       .info-row svg { flex: 0 0 auto; margin-top: 1px; }
       .info-row span { min-width: 0; }
-      .finished { display: flex; align-items: center; gap: 10px; min-width: 430px; }
+      .finished { border-radius: 20px; display: flex; align-items: center; gap: 10px; width: 430px; flex-wrap: wrap; }
       .finish-badge { justify-content: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%; background: var(--accent-green); color: #fff; }
       .finish-copy { flex: 1; }
       .finished .icon-button { margin-left: -2px; }
-    </style><div id="content"></div>`;
+      [hidden] { display: none !important; }
+      .meeting {
+        --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+        --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+        --state-duration: 180ms;
+        border-radius: 28px;
+        transition: border-radius var(--state-duration) var(--ease-drawer);
+      }
+      .meeting[data-recording="true"] { --state-duration: 240ms; }
+      .meeting[data-expanded="true"] { border-radius: 20px; }
+      .identity { position: relative; display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+      .identity .brand-copy { display: block; height: 32px; flex: 1; position: relative; }
+      .identity strong { display: block; line-height: 16px; transition: transform var(--state-duration) var(--ease-drawer); }
+      .detected-label { position: absolute; left: 0; right: 0; bottom: 0; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 120ms var(--ease-out); }
+      .timer { position: absolute; right: 0; width: 58px; text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; white-space: nowrap; opacity: 0; transform: translateY(4px); transition: opacity var(--state-duration) var(--ease-out), transform var(--state-duration) var(--ease-out); }
+      .meeting[data-recording="true"] .identity strong { transform: translateY(8px); }
+      .meeting[data-recording="true"] .detected-label { opacity: 0; }
+      .meeting[data-recording="true"] .timer { opacity: 1; transform: translateY(0); }
+      .actions { display: grid; grid-template-columns: minmax(0, 1fr); width: 144px; flex: 0 0 144px; }
+      .start-controls, .controls { grid-area: 1 / 1; justify-content: flex-end; display: flex; align-items: center; }
+      .controls { gap: 4px; opacity: 0; pointer-events: none; transition: opacity 180ms var(--ease-out); }
+      .start-controls { min-width: 0; opacity: 1; transition: opacity 120ms var(--ease-out); }
+      .start-label { overflow: hidden; text-overflow: ellipsis; }
+      .start-controls button { min-width: 0; max-width: 100%; }
+      .start-controls svg { flex-shrink: 0; }
+      .meeting[data-recording="true"] .start-controls { opacity: 0; pointer-events: none; transition-duration: 240ms; }
+      .meeting[data-recording="true"] .controls { opacity: 1; pointer-events: auto; transition-duration: 400ms; }
+      .controls .icon-button { opacity: 0; transform: translateY(4px); transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out), background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
+      .meeting[data-recording="true"] .controls .icon-button { opacity: 1; transform: translateY(0); transition-duration: 400ms, 400ms, 120ms, 120ms; transition-delay: 40ms, 40ms, 0ms, 0ms; }
+      .meeting[data-recording="true"] #toggle-expanded { transition-delay: 80ms, 80ms, 0ms, 0ms; }
+      #toggle-expanded svg { transition: transform var(--state-duration) var(--ease-drawer); }
+      .meeting[data-expanded="true"] #toggle-expanded svg { transform: rotate(180deg); }
+      .details { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 180ms var(--ease-drawer), opacity 180ms var(--ease-out); }
+      .details-inner { min-height: 0; overflow: hidden; }
+      .meeting[data-expanded="true"] .details { grid-template-rows: 1fr; opacity: 1; transition-duration: 240ms; }
+      .source-status.is-active { color: var(--accent-green); }
+      .source-status .dot { background: currentColor; }
+      button { transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+      button:active:not(:disabled), .meeting[data-recording="true"] .controls .icon-button:active { transform: scale(0.97); transition-delay: 0ms; }
+      button:focus-visible, .error-banner:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
+      button:disabled { cursor: wait; opacity: 0.7; }
+      @media (hover: hover) and (pointer: fine) {
+        button:hover:not(:disabled) { filter: brightness(1.1); }
+      }
+      @media (max-width: 359px) {
+        .identity .brand-icon { display: none; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .meeting, .identity strong, #toggle-expanded svg { transition: none; }
+        .details { transition: opacity 120ms var(--ease-out); }
+        .meeting[data-expanded="true"] .details { transition-duration: 120ms; }
+        .timer, .controls .icon-button, button { transform: none !important; transition: opacity 120ms var(--ease-out), background-color 120ms var(--ease-out); transition-delay: 0ms !important; }
+        .controls, .meeting[data-recording="true"] .controls, .meeting[data-recording="true"] .controls .icon-button, .meeting[data-recording="true"] .start-controls { transition-duration: 120ms; }
+      }
+    </style><div id="content">${renderMeeting()}${renderError()}${renderFinished()}</div>`;
   contentEl = shadowRoot.getElementById("content");
   wireDragEvents();
+  wireEvents();
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      if (!isDragging && Number.isFinite(bannerPosition.offset)) applyBannerPosition(bannerPosition, true);
+    }).observe(contentEl);
+  }
+  window.addEventListener("resize", () => {
+    if (!isDragging && Number.isFinite(bannerPosition.offset)) applyBannerPosition(bannerPosition, true);
+  });
 
   chrome.storage.local.get({ [BANNER_POSITION_KEY]: null }, ({ [BANNER_POSITION_KEY]: bannerPosition }) => {
     applyBannerPosition(bannerPosition);
+    render();
     document.body.appendChild(hostEl);
     applyBannerPosition(bannerPosition, true);
-    render();
   });
 }
 
 export function updateBannerState(state, meta = {}) {
   currentState = state;
   currentMeta = { ...currentMeta, ...meta };
+  if (meta.videoError) console.warn("[Ariadne] Could not enable video:", meta.videoError);
   if (state !== "recording" && state !== "video-enabled") isExpanded = false;
   render();
 }
