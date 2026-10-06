@@ -30,6 +30,7 @@
   "popup.statusReady": "Prêt",
   "popup.statusReadyCopy": "Ouvrez une réunion Google Meet pour commencer.",
   "popup.statusDetected": "Réunion détectée",
+  "popup.actionError": "Impossible de terminer cette action. Réessayez.",
   "popup.startCapture": "Démarrer la capture",
   "popup.statusError": "Erreur",
   "popup.statusErrorCopy": "Impossible de démarrer l'enregistrement. Veuillez réessayer.",

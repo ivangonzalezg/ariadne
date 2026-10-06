@@ -30,6 +30,7 @@
   "popup.statusReady": "Ready",
   "popup.statusReadyCopy": "Open a Google Meet meeting to get started.",
   "popup.statusDetected": "Meeting detected",
+  "popup.actionError": "Could not complete the action. Please try again.",
   "popup.startCapture": "Start capture",
   "popup.statusError": "Error",
   "popup.statusErrorCopy": "Recording could not be started. Please try again.",

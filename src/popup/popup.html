@@ -5,24 +5,24 @@
     <title>Ariadne</title>
     <link rel="stylesheet" href="../shared/theme.css" />
     <style>
-      body { width: 320px; padding: 16px; background: var(--bg); }
-      .card { display: flex; flex-direction: column; gap: 16px; }
-      .header { display: flex; justify-content: space-between; align-items: center; }
+      body { width: 320px; max-height: 600px; overflow-y: auto; padding: 16px; background: var(--bg); }
+      .card { display: flex; flex-direction: column; gap: 0; }
+      .header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
       .brand { display: flex; align-items: center; gap: 8px; color: var(--text-primary); font-weight: 600; font-size: 15px; }
-      .status-row { display: flex; align-items: center; gap: 8px; }
+      .status-row { margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
       .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
       .status-title { color: var(--text-primary); font-weight: 600; font-size: 14px; }
       .status-copy { color: var(--text-secondary); font-size: 13px; line-height: 1.4; }
-      .meeting-name { color: var(--text-primary); font-weight: 600; font-size: 18px; }
-      .timer { color: var(--text-secondary); font-size: 13px; }
+      .meeting-name { overflow-wrap: anywhere; color: var(--text-primary); font-weight: 600; font-size: 18px; }
+      .timer { font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 13px; }
       .source-row { display: flex; justify-content: space-between; align-items: center; }
       .source-left { display: flex; align-items: center; gap: 10px; color: var(--text-primary); font-size: 13px; }
       .source-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
       .toggle-row { display: flex; justify-content: space-between; align-items: center; }
-      .toggle { width: 42px; height: 24px; border-radius: 12px; padding: 3px; display: flex; align-items: center; cursor: pointer; }
-      .toggle-knob { width: 18px; height: 18px; border-radius: 50%; background: #FFFFFF; transition: transform 0.15s; }
+      .toggle { width: 42px; height: 24px; border: 0; border-radius: 12px; padding: 3px; display: flex; align-items: center; background: var(--toggle-off); flex: 0 0 42px; }
+      .toggle-knob { width: 18px; height: 18px; border-radius: 50%; background: #FFFFFF; }
       .helper { color: var(--text-muted); font-size: 12px; line-height: 1.35; }
-      .link-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 500; background: var(--bg-button); border-radius: 10px; padding: 10px; }
+      .link-row { border: 0; text-align: left; display: flex; justify-content: space-between; align-items: center; cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 500; background: var(--bg-button); border-radius: 10px; padding: 10px; }
       .link-row .source-left span { font-size: 14px; font-weight: 500; }
       .card-box { background: var(--bg-elevated); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
       button.primary, button.danger { width: 100%; border: none; border-radius: 10px; padding: 10px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
@@ -30,10 +30,69 @@
       button.danger { background: var(--accent-red); color: #fff; }
       .divider { border-top: 1px solid var(--border); margin: 4px 0; }
       .brand img { border-radius: 4px; }
+      [hidden] { display: none !important; }
+      #app { --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); }
+      #app:not([data-ready]) { visibility: hidden; }
+      button { font-family: inherit; cursor: pointer; }
+      .intro { margin-bottom: 16px; }
+      .footer { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+      .settings-button { display: flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: 6px; background: transparent; }
+      .source-left { min-width: 0; }
+      .source-left svg { flex: 0 0 auto; }
+      .source-row { gap: 12px; }
+      .source-status { color: var(--text-muted); text-align: right; }
+      .source-status.is-active { color: var(--accent-green); }
+      .source-status .dot { width: 6px; height: 6px; background: currentColor; }
+      .status-row > .dot { background: var(--accent-blue); }
+      #app[data-state="ready"] .status-row > .dot { background: var(--accent-green); }
+      #app[data-state="error"] .status-row > .dot, #app[data-recording="true"] .status-row > .dot { background: var(--accent-red); }
+      .collapsible { display: grid; grid-template-rows: 0fr; opacity: 0; }
+      .collapsible[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+      .collapse-inner { min-height: 0; overflow: hidden; }
+      .recording-content { display: flex; flex-direction: column; gap: 16px; padding-bottom: 16px; }
+      .capture-actions { display: grid; }
+      .action-layer { grid-area: 1 / 1; opacity: 1; transform: translateY(0); }
+      .stop-layer { opacity: 0; transform: translateY(4px); pointer-events: none; }
+      #app[data-recording="true"] .start-layer { opacity: 0; transform: translateY(-4px); pointer-events: none; }
+      #app[data-recording="true"] .stop-layer { opacity: 1; transform: translateY(0); pointer-events: auto; }
+      .services .source-row { opacity: 0; transform: translateY(4px); }
+      #app[data-recording="true"] .services .source-row { opacity: 1; transform: translateY(0); }
+      .conversion-content { margin-top: 16px; }
+      .conversion-audio, .conversion-video { display: flex; }
+      .toggle[aria-checked="true"] { background: var(--accent-blue); }
+      .toggle[aria-checked="true"] .toggle-knob { transform: translateX(18px); }
+      .action-error { color: var(--accent-red); font-size: 12px; line-height: 1.4; margin-top: 12px; }
+      button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
+      #app:focus { outline: none; }
+      button:disabled { cursor: wait; opacity: 0.7; }
+      #app[data-ready] .recording-region { transition: grid-template-rows 300ms var(--ease-drawer), opacity 300ms var(--ease-out); }
+      #app[data-ready] .recording-region[data-open="true"] { transition-duration: 400ms; }
+      #app[data-ready] .conversion-region { transition: grid-template-rows 300ms var(--ease-drawer), opacity 300ms var(--ease-out); }
+      #app[data-ready] .conversion-region[data-open="true"] { transition-duration: 240ms; }
+      #app[data-ready] .action-layer { transition: opacity 240ms var(--ease-out), transform 240ms var(--ease-out); }
+      #app[data-ready][data-recording="true"] .stop-layer { transition-duration: 400ms; }
+      #app[data-ready] .services .source-row { transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out); }
+      #app[data-ready][data-recording="true"] .services .source-row { transition-duration: 400ms; }
+      #app[data-ready][data-recording="true"] .services .source-row:nth-child(2) { transition-delay: 40ms; }
+      #app[data-ready][data-recording="true"] .services .source-row:nth-child(3) { transition-delay: 80ms; }
+      #app[data-ready] .toggle { transition: background-color 240ms var(--ease-out), transform 120ms var(--ease-out); }
+      #app[data-ready] .toggle-knob { transition: transform 240ms var(--ease-drawer); }
+      #app[data-ready] button { transition: transform 120ms var(--ease-out), background-color 120ms var(--ease-out); }
+      button:active:not(:disabled) { transform: scale(0.97); }
+      @media (hover: hover) and (pointer: fine) {
+        button:hover:not(:disabled) { filter: brightness(1.1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #app[data-ready] .collapsible { transition: opacity 120ms var(--ease-out) !important; }
+        #app[data-ready] .action-layer, #app[data-ready] .services .source-row { transform: none; transition: opacity 120ms var(--ease-out); transition-duration: 120ms !important; transition-delay: 0ms !important; }
+        #app[data-ready] .toggle-knob { transition: none; }
+        #app[data-ready] button { transition: background-color 120ms var(--ease-out); }
+        button:active:not(:disabled) { transform: none; }
+      }
     </style>
   </head>
   <body>
-    <div id="app" class="card"></div>
+    <div id="app" class="card" tabindex="-1"></div>
     <script type="module" src="popup.js"></script>
   </body>
 </html>
