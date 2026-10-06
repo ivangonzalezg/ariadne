@@ -320,11 +320,12 @@ export async function showBanner({ onStart, onStop }) {
         --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
         --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
         --state-duration: 180ms;
+        --panel-duration: 300ms;
         border-radius: 28px;
-        transition: border-radius var(--state-duration) var(--ease-drawer);
+        transition: border-radius var(--panel-duration) var(--ease-drawer);
       }
       .meeting[data-recording="true"] { --state-duration: 240ms; }
-      .meeting[data-expanded="true"] { border-radius: 20px; }
+      .meeting[data-expanded="true"] { --panel-duration: 240ms; border-radius: 20px; }
       .identity { position: relative; display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
       .identity .brand-copy { display: block; height: 32px; flex: 1; position: relative; }
       .identity strong { display: block; line-height: 16px; transition: transform var(--state-duration) var(--ease-drawer); }
@@ -345,11 +346,11 @@ export async function showBanner({ onStart, onStop }) {
       .controls .icon-button { opacity: 0; transform: translateY(4px); transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out), background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
       .meeting[data-recording="true"] .controls .icon-button { opacity: 1; transform: translateY(0); transition-duration: 400ms, 400ms, 120ms, 120ms; transition-delay: 40ms, 40ms, 0ms, 0ms; }
       .meeting[data-recording="true"] #toggle-expanded { transition-delay: 80ms, 80ms, 0ms, 0ms; }
-      #toggle-expanded svg { transition: transform var(--state-duration) var(--ease-drawer); }
+      #toggle-expanded svg { transition: transform var(--panel-duration) var(--ease-drawer); }
       .meeting[data-expanded="true"] #toggle-expanded svg { transform: rotate(180deg); }
-      .details { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 180ms var(--ease-drawer), opacity 180ms var(--ease-out); }
+      .details { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--panel-duration) var(--ease-drawer), opacity var(--panel-duration) var(--ease-out); }
       .details-inner { min-height: 0; overflow: hidden; }
-      .meeting[data-expanded="true"] .details { grid-template-rows: 1fr; opacity: 1; transition-duration: 240ms; }
+      .meeting[data-expanded="true"] .details { grid-template-rows: 1fr; opacity: 1; }
       .source-status.is-active { color: var(--accent-green); }
       .source-status .dot { background: currentColor; }
       button { transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 120ms cubic-bezier(0.23, 1, 0.32, 1); }
