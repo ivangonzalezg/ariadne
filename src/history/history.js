@@ -14,8 +14,11 @@ const resultsCountEl = document.getElementById("results-count");
 const sortSelect = document.getElementById("sort-select");
 const meetingsListEl = document.getElementById("meetings-list");
 const detailPanelEl = document.getElementById("detail-panel");
-let activeMediaElement = null;
-let activeMediaUrl = null;
+let detailSession = null;
+let nextDetailId = 0;
+let detailShell, meetingRegion, meetingFooter, deleteMeetingButton, meetingAnimation;
+let openMoreMenu = null;
+const pendingDeletes = new Set();
 
 document.getElementById("page-heading").textContent = t("history.pageHeading");
 document.getElementById("page-description").textContent = t("history.pageDescription");
@@ -181,24 +184,38 @@ function renderKpis() {
 }
 
 function renderMeetings() {
+  closeOpenMoreMenu(false, true);
   const meetings = deriveVisibleMeetings(state); resultsCountEl.textContent = t("history.resultsCount", { count: meetings.length }); meetingsListEl.replaceChildren();
   if (!meetings.length) { const empty = document.createElement("p"); empty.className = "empty-state"; empty.textContent = t("history.emptyState"); meetingsListEl.appendChild(empty); return; }
   meetings.forEach((meeting) => meetingsListEl.appendChild(createMeetingCard(meeting)));
 }
 
-function closeOpenMoreMenu() {
-  meetingsListEl.querySelector(".more-menu")?.remove();
-  meetingsListEl.querySelectorAll(".more-button.is-open").forEach((button) => { button.classList.remove("is-open"); button.setAttribute("aria-expanded", "false"); });
+function closeOpenMoreMenu(restoreFocus = false, immediate = false) {
+  if (!openMoreMenu) return;
+  const { menu, button } = openMoreMenu; openMoreMenu = null;
+  button.classList.remove("is-open"); button.setAttribute("aria-expanded", "false");
+  menu.inert = true;
+  if (restoreFocus && button.isConnected) button.focus();
+  if (!immediate && menu.animate) {
+    menu.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: "cubic-bezier(0.23, 1, 0.32, 1)" }).finished.then(() => menu.remove(), () => menu.remove());
+  } else menu.remove();
 }
-document.addEventListener("click", closeOpenMoreMenu);
-
-function openMeetingDetail(meeting, tab) {
-  state.selectedMeetingId = meetingId(meeting); state.selectedTab = tab ?? null; renderMeetings(); renderDetail();
+document.addEventListener("click", event => {
+  if (openMoreMenu && !openMoreMenu.menu.contains(event.target) && event.target !== openMoreMenu.button) closeOpenMoreMenu();
+});
+function openMeetingDetail(meeting, tab, event) {
+  if (state.selectedMeetingId !== meetingId(meeting)) state.selectedTab = null;
+  state.selectedMeetingId = meetingId(meeting);
+  if (tab) state.selectedTab = tab;
+  for (const card of meetingsListEl.querySelectorAll(".meeting-card")) card.classList.toggle("is-selected", card.dataset.meetingId === state.selectedMeetingId);
+  renderDetail(Boolean(event?.detail));
+  if (tab && detailSession?.pages.has(tab)) selectPage(detailSession, tab, !event?.detail);
 }
 
 function createMeetingCard(meeting) {
   const card = document.createElement("article"); card.className = `meeting-card${meetingId(meeting) === state.selectedMeetingId ? " is-selected" : ""}`;
-  card.addEventListener("click", () => openMeetingDetail(meeting));
+  card.dataset.meetingId = meetingId(meeting);
+  card.addEventListener("click", event => openMeetingDetail(meeting, null, event));
   const header = document.createElement("div"); header.className = "meeting-card-header";
   const title = document.createElement("h3"); title.className = "meeting-title"; title.textContent = titleFor(meeting);
   const moreWrap = document.createElement("div"); moreWrap.className = "more-wrap";
@@ -206,26 +223,37 @@ function createMeetingCard(meeting) {
   more.addEventListener("click", (event) => {
     event.stopPropagation();
     const wasOpen = more.classList.contains("is-open");
-    closeOpenMoreMenu();
+    closeOpenMoreMenu(false, true);
     if (wasOpen) return;
     more.classList.add("is-open"); more.setAttribute("aria-expanded", "true");
     const menu = document.createElement("div"); menu.className = "more-menu"; menu.setAttribute("role", "menu");
     const deleteItem = document.createElement("button"); deleteItem.type = "button"; deleteItem.className = "more-menu-item"; deleteItem.setAttribute("role", "menuitem");
     deleteItem.innerHTML = icon("trash-2", { size: 14, color: "currentColor" });
     deleteItem.appendChild(document.createTextNode(t("common.deleteMeeting")));
-    deleteItem.addEventListener("click", (deleteEvent) => { deleteEvent.stopPropagation(); closeOpenMoreMenu(); showDeleteDialog(meeting, more); });
+    deleteItem.addEventListener("click", (deleteEvent) => { deleteEvent.stopPropagation(); closeOpenMoreMenu(false, true); showDeleteDialog(meeting, more); });
     menu.appendChild(deleteItem);
     moreWrap.appendChild(menu);
+    openMoreMenu = { menu, button: more };
+    menu.addEventListener("keydown", event => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeOpenMoreMenu(true, true); }
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) { event.preventDefault(); deleteItem.focus(); }
+      if (event.key === "Tab") closeOpenMoreMenu(true, true);
+    });
+    if (event.detail && menu.animate && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) menu.animate([{ opacity: 0, transform: "scale(0.97)" }, { opacity: 1, transform: "scale(1)" }], { duration: 160, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+    deleteItem.focus();
+  });
+  more.addEventListener("keydown", event => {
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); if (!more.classList.contains("is-open")) more.click(); }
   });
   moreWrap.appendChild(more);
   header.append(title, moreWrap);
   const date = document.createElement("p"); date.className = "meeting-date"; date.textContent = formatMeetingDate(meeting);
   const chips = document.createElement("div"); chips.className = "file-chips";
   [[meeting.hasTranscript, "file-text", t("common.transcript"), "transcript"], [true, "volume-2", t("common.audio"), "audio"], [meeting.hasVideo, "video", t("common.video"), "video"], [true, "braces", t("common.manifest"), "manifest"]].forEach(([available, iconName, label, tab]) => {
-    const chip = document.createElement("span"); chip.className = `file-chip${available ? " is-available" : " is-unavailable"}`;
+    const chip = document.createElement(available ? "button" : "span"); if (available) chip.type = "button"; chip.className = `file-chip${available ? " is-available" : " is-unavailable"}`;
     chip.innerHTML = icon(iconName, { size: 12, color: "currentColor" });
     chip.appendChild(document.createTextNode(label));
-    if (available) { chip.setAttribute("role", "button"); chip.tabIndex = 0; chip.addEventListener("click", (event) => { event.stopPropagation(); openMeetingDetail(meeting, tab); }); }
+    if (available) { chip.addEventListener("click", (event) => { event.stopPropagation(); openMeetingDetail(meeting, tab, event); }); }
     chips.appendChild(chip);
   });
   const detailsRow = document.createElement("div"); detailsRow.className = "details-row";
@@ -257,7 +285,7 @@ async function readActiveFile(meeting, tab) {
     return { file, name: preferred };
   } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
 }
-function createFileFooter(activeFile, meeting) {
+function createFileFooter(activeFile, meeting, tab) {
   const footer = document.createElement("footer"); footer.className = "detail-footer";
   const fileRow = document.createElement("div"); fileRow.className = "detail-file-row";
   const metadata = document.createElement("div"); metadata.className = "detail-file-meta"; const name = document.createElement("span"); name.className = "detail-file-name"; name.textContent = activeFile.name; const size = document.createElement("span"); size.className = "detail-file-size"; size.textContent = formatFileSize(activeFile.file.size); metadata.append(name, size);
@@ -265,36 +293,76 @@ function createFileFooter(activeFile, meeting) {
   const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>${t("common.open")}</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
   const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("common.download")}</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
   actions.append(view, download);
-  if (state.selectedTab === "transcript") {
+  if (tab === "transcript") {
     const downloadTxt = document.createElement("button"); downloadTxt.type = "button"; downloadTxt.className = "detail-action"; downloadTxt.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("history.downloadTxt")}</span>`;
     downloadTxt.addEventListener("click", () => downloadFile(new Blob([transcriptToTxt(activeFile.value)], { type: "text/plain" }), "transcripcion.txt"));
     const downloadMd = document.createElement("button"); downloadMd.type = "button"; downloadMd.className = "detail-action"; downloadMd.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("history.downloadMarkdown")}</span>`;
     downloadMd.addEventListener("click", () => downloadFile(new Blob([transcriptToMarkdown(activeFile.value, titleFor(meeting))], { type: "text/markdown" }), "transcripcion.md"));
     actions.append(downloadTxt, downloadMd);
   }
-  const separator = document.createElement("span"); separator.className = "detail-footer-separator"; separator.setAttribute("aria-hidden", "true");
-  const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-meeting-button"; remove.innerHTML = `${icon("trash-2", { size: 14, color: "currentColor" })}<span>${t("common.deleteMeeting")}</span>`; remove.addEventListener("click", () => showDeleteDialog(state.meetings.find((item) => meetingId(item) === state.selectedMeetingId), remove));
-  fileRow.append(metadata, actions); footer.append(fileRow, separator, remove); return footer;
+  fileRow.append(metadata, actions); footer.append(fileRow); return footer;
 }
-function cleanupActiveMedia() {
-  if (activeMediaElement) { activeMediaElement.pause(); activeMediaElement.removeAttribute("src"); activeMediaElement.load(); activeMediaElement = null; }
-  if (activeMediaUrl) { URL.revokeObjectURL(activeMediaUrl); activeMediaUrl = null; }
+function disposePage(page) {
+  if (page.media) { page.media.pause(); page.media.removeAttribute("src"); page.media.load(); }
+  if (page.url) URL.revokeObjectURL(page.url);
+  page.media = null; page.url = null;
+}
+function closeDetailSession() {
+  clearTimeout(recoveryPoll);
+  if (!detailSession) return;
+  meetingAnimation?.cancel();
+  detailSession.closed = true;
+  for (const page of detailSession.pages.values()) disposePage(page);
+  detailSession = null;
 }
 function createMediaButton(className, label, iconName, size = 18) {
   const button = document.createElement("button"); button.type = "button"; button.className = className; button.setAttribute("aria-label", label); button.title = label; button.innerHTML = icon(iconName, { size, color: "currentColor" }); return button;
 }
 function setRangeProgress(range, value, max) { range.style.setProperty("--range-progress", `${max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0}%`); }
-function createMediaPlayer(activeFile, isVideo) {
+function createMediaPlayer(activeFile, isVideo, session, page) {
   const player = document.createElement("div"); player.className = `custom-media-player${isVideo ? " custom-video-player" : " custom-audio-player"}`;
   const media = document.createElement(isVideo ? "video" : "audio"); media.className = isVideo ? "custom-video-element" : "custom-audio-element"; media.preload = "metadata"; media.controls = false;
-  const sourceUrl = URL.createObjectURL(activeFile.file); activeMediaElement = media; activeMediaUrl = sourceUrl;
+  const sourceUrl = URL.createObjectURL(activeFile.file); page.media = media; page.url = sourceUrl;
   const seek = document.createElement("input"); seek.type = "range"; seek.className = "media-seek"; seek.min = "0"; seek.max = "0"; seek.value = "0"; seek.step = "0.1"; seek.disabled = true; seek.setAttribute("aria-label", t("history.seekAria"));
   const time = document.createElement("span"); time.className = "media-time";
   const volume = document.createElement("input"); volume.type = "range"; volume.className = "media-volume"; volume.min = "0"; volume.max = "1"; volume.value = "1"; volume.step = "0.05"; volume.setAttribute("aria-label", t("common.volumeAria")); setRangeProgress(volume, 1, 1);
   const play = createMediaButton("media-play", t("common.play"), "play", isVideo ? 18 : 20);
   const update = () => { const duration = Number.isFinite(media.duration) ? media.duration : 0; seek.max = String(duration); seek.disabled = duration <= 0; seek.value = String(Math.min(media.currentTime || 0, duration)); setRangeProgress(seek, Number(seek.value), duration); time.textContent = `${formatMediaTime(media.currentTime)} / ${formatMediaTime(duration)}`; };
   const updatePlayButton = () => { const paused = media.paused || media.ended; play.setAttribute("aria-label", paused ? t("common.play") : t("common.pause")); play.title = paused ? t("common.play") : t("common.pause"); play.innerHTML = icon(paused ? "play" : "pause", { size: isVideo ? 18 : 20, color: "currentColor" }); player.classList.toggle("is-playing", !paused); };
-  const togglePlayback = async () => { if (media.paused || media.ended) { try { await media.play(); } catch { updatePlayButton(); } } else media.pause(); };
+  const togglePlayback = async () => {
+    if (media.paused || media.ended) {
+      const previousIntent = session.playIntent;
+      const intent = { media }; session.playIntent = intent;
+      try {
+        await media.play();
+        if (session.closed || session.playIntent !== intent) {
+          if (session.closed || (session.playIntent?.media !== media && session.playingMedia !== media)) media.pause();
+        }
+      } catch {
+        if (session.playIntent === intent) session.playIntent = previousIntent;
+        updatePlayButton();
+      }
+    } else {
+      session.playIntent = null;
+      media.pause();
+    }
+  };
+  media.addEventListener("playing", () => {
+    if (session.closed || page.media !== media || session.pages.get(page.key) !== page) { media.pause(); return; }
+    if (session.playIntent?.media !== media) {
+      if (session.playingMedia !== media) media.pause();
+      return;
+    }
+    session.playingMedia = media;
+    for (const other of session.pages.values()) if (other.media && other.media !== media) other.media.pause();
+    updatePlaybackStatus(session);
+  });
+  const stopped = () => {
+    if (session.playingMedia === media) session.playingMedia = null;
+    updatePlaybackStatus(session);
+  };
+  media.addEventListener("pause", stopped); media.addEventListener("ended", stopped); media.addEventListener("error", stopped);
+  media.addEventListener("volumechange", () => { volume.value = String(media.volume); setRangeProgress(volume, media.volume, 1); });
   play.addEventListener("click", togglePlayback); seek.addEventListener("input", () => { if (!seek.disabled) media.currentTime = Number(seek.value); update(); }); volume.addEventListener("input", () => { media.volume = Number(volume.value); setRangeProgress(volume, media.volume, 1); });
   media.addEventListener("loadedmetadata", update); media.addEventListener("durationchange", update); media.addEventListener("timeupdate", update); media.addEventListener("play", updatePlayButton); media.addEventListener("pause", updatePlayButton); media.addEventListener("ended", () => { update(); updatePlayButton(); }); media.addEventListener("error", () => { const error = document.createElement("p"); error.className = "media-error"; error.textContent = t("history.mediaLoadError"); player.appendChild(error); });
   if (isVideo) {
@@ -320,13 +388,13 @@ function createMediaPlayer(activeFile, isVideo) {
   }
   media.src = sourceUrl; update(); return player;
 }
-function renderTabContent(content, activeFile) {
-  if (state.selectedTab === "transcript") {
+function renderTabContent(content, activeFile, tab, session, page) {
+  if (tab === "transcript") {
     const list = document.createElement("div"); list.className = "transcript-list";
     activeFile.value.forEach((segment) => { const row = document.createElement("div"); row.className = "transcript-row"; const timestamp = document.createElement("time"); timestamp.className = "transcript-time"; timestamp.textContent = formatSegmentTimestamp(segment.startTime); const spoken = document.createElement("p"); spoken.className = "transcript-spoken"; const speaker = document.createElement("strong"); speaker.textContent = segment.speaker; spoken.append(speaker, document.createTextNode(` ${segment.text}`)); row.append(timestamp, spoken); list.appendChild(row); });
     if (!list.childElementCount) { const empty = document.createElement("p"); empty.className = "detail-empty"; empty.textContent = t("history.noTranscriptSegments"); content.appendChild(empty); } else content.appendChild(list);
-  } else if (state.selectedTab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
-  else content.appendChild(createMediaPlayer(activeFile, state.selectedTab === "video"));
+  } else if (tab === "manifest") { const code = document.createElement("pre"); code.className = "manifest-code"; code.innerHTML = highlightJson(activeFile.value); content.appendChild(code); }
+  else content.appendChild(createMediaPlayer(activeFile, tab === "video", session, page));
 }
 let recoveryPoll = null;
 const recoveryRequests = new Set();
@@ -380,31 +448,219 @@ function createRecoveryPanel(meeting) {
     finally { recoveryRequests.delete(meeting.sessionId); await refresh(); }
   });
   panel.addEventListener("asterion:recovery-update", event => {
-    if (apply(event.detail)) { clearTimeout(recoveryPoll); recoveryPoll = setTimeout(refresh, 2000); }
+    clearTimeout(recoveryPoll);
+    if (apply(event.detail)) recoveryPoll = setTimeout(refresh, 2000);
   });
   apply(meeting);
   queueMicrotask(refresh);
   return panel;
 }
 
-async function renderDetail() {
-  clearTimeout(recoveryPoll); cleanupActiveMedia(); detailPanelEl.replaceChildren(); const meeting = state.meetings.find((item) => meetingId(item) === state.selectedMeetingId);
-  if (!meeting) { const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = t("history.selectMeetingPlaceholder"); detailPanelEl.appendChild(placeholder); return; }
-  const tabs = availableTabs(meeting); if (!tabs.some(([, key]) => key === state.selectedTab)) state.selectedTab = tabs[0][1];
-  const renderKey = `${meetingId(meeting)}:${state.selectedTab}`;
-  const detail = document.createElement("div"); detail.className = "detail-content";
-  const header = document.createElement("header"); header.className = "detail-header"; const title = document.createElement("h2"); title.className = "detail-title"; title.textContent = titleFor(meeting); const date = document.createElement("p"); date.className = "detail-date"; date.textContent = formatDetailDate(meeting); const metadata = document.createElement("p"); metadata.className = "detail-metadata"; metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`; header.append(title, date, metadata, createRecoveryPanel(meeting));
-  const tablist = document.createElement("div"); tablist.className = "detail-tabs"; tablist.setAttribute("role", "tablist"); const tabIcons = { transcript: "file-text", audio: "volume-2", video: "video", manifest: "braces" }; tabs.forEach(([, key, label]) => { const tab = document.createElement("button"); const active = key === state.selectedTab; tab.type = "button"; tab.className = `detail-tab${active ? " is-active" : ""}`; tab.innerHTML = `${icon(tabIcons[key], { size: 14, color: "currentColor" })}<span>${label}</span>`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(active)); tab.addEventListener("click", () => { state.selectedTab = key; renderDetail(); }); tablist.appendChild(tab); });
-  const content = document.createElement("section"); content.className = `detail-tab-content${state.selectedTab === "audio" ? " is-audio" : state.selectedTab === "video" ? " is-video" : ""}`; content.setAttribute("role", "tabpanel"); const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = t("history.loadingFile"); content.appendChild(loading); detail.append(header, tablist, content); detailPanelEl.appendChild(detail);
-  try { const activeFile = await readActiveFile(meeting, state.selectedTab); if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); renderTabContent(content, activeFile); detail.appendChild(createFileFooter(activeFile, meeting)); } catch (error) { if (`${state.selectedMeetingId}:${state.selectedTab}` !== renderKey) return; content.replaceChildren(); const unavailable = document.createElement("p"); unavailable.className = "detail-empty"; unavailable.textContent = t("history.fileOpenError"); content.appendChild(unavailable); }
+function fileRevision(meeting, key) {
+  if (key === "audio") return String(Boolean(meeting.hasAudioMp3));
+  if (key === "video") return String(Boolean(meeting.hasVideoMp4));
+  if (key === "transcript") return `${meeting.hasTranscript}:${meeting.transcriptExportStatus}`;
+  return JSON.stringify([meeting.transcriptExportStatus, meeting.audioConversionStatus, meeting.videoConversionStatus, meeting.recordingStatus]);
 }
+function loadPage(session, page) {
+  if (page.pending || (page.file && !page.dirty)) return page.pending;
+  if (page.media && !page.media.paused) return;
+  const revision = page.revision;
+  page.pending = (async () => {
+    try {
+      const file = await readActiveFile(session.meeting, page.key);
+      if (session.closed || session.pages.get(page.key) !== page) return;
+      if (page.media && !page.media.paused) { page.dirty = true; return; }
+      const position = page.content.scrollTop;
+      const playback = page.media && { time: page.media.currentTime, volume: page.media.volume, rate: page.media.playbackRate };
+      disposePage(page);
+      page.content.replaceChildren(); page.footer?.remove();
+      page.file = file;
+      renderTabContent(page.content, file, page.key, session, page);
+      page.footer = createFileFooter(file, session.meeting, page.key);
+      page.panel.appendChild(page.footer);
+      page.content.scrollTop = position;
+      if (playback && page.media) {
+        page.media.volume = playback.volume; page.media.playbackRate = playback.rate;
+        const media = page.media;
+        media.addEventListener("loadedmetadata", () => {
+          media.currentTime = Math.min(playback.time, Number.isFinite(media.duration) ? media.duration : playback.time);
+        }, { once: true });
+      }
+      page.dirty = page.revision !== revision;
+    } catch {
+      if (session.closed || session.pages.get(page.key) !== page) return;
+      if (!page.file) {
+        const unavailable = document.createElement("p"); unavailable.className = "detail-empty";
+        unavailable.textContent = t("history.fileOpenError"); page.content.replaceChildren(unavailable);
+      }
+      page.dirty = false;
+    } finally {
+      page.pending = null;
+      if (!session.closed && session.pages.get(page.key) === page && page.dirty && state.selectedTab === page.key && (!page.media || page.media.paused)) loadPage(session, page);
+    }
+  })();
+  return page.pending;
+}
+function selectPage(session, key, immediate = false, visit = true) {
+  state.selectedTab = key;
+  const pages = [...session.pages.values()];
+  for (const page of pages) {
+    const active = page.key === key;
+    page.tab.classList.toggle("is-active", active);
+    page.tab.setAttribute("aria-selected", String(active)); page.tab.tabIndex = active ? 0 : -1;
+    page.panel.setAttribute("aria-hidden", String(!active)); page.panel.inert = !active;
+    if (!active && page.panel.contains(document.activeElement)) session.pages.get(key).tab.focus();
+  }
+  session.track.classList.toggle("is-immediate", immediate);
+  session.track.style.transform = `translateX(-${pages.findIndex(page => page.key === key) * 100}%)`;
+  // Commit immediate keyboard/initial positions before subsequent pointer transitions.
+  if (immediate) session.track.getBoundingClientRect();
+  const selected = session.pages.get(key);
+  if (visit || !selected.file) loadPage(session, selected);
+}
+function syncDetail(session, meeting) {
+  const previous = session.meeting; session.meeting = meeting;
+  session.title.textContent = titleFor(meeting); session.date.textContent = formatDetailDate(meeting);
+  session.metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`;
+  session.recovery.dispatchEvent(new CustomEvent("asterion:recovery-update", { detail: meeting }));
+  const available = availableTabs(meeting);
+  const keys = available.map(([, key]) => key);
+  let changed = false;
+  let focusRemoved = false;
+  for (const [key, page] of session.pages) if (!keys.includes(key)) {
+    focusRemoved ||= page.panel.contains(document.activeElement) || page.tab === document.activeElement;
+    disposePage(page); page.panel.remove(); page.tab.remove(); session.pages.delete(key); changed = true;
+  }
+  const ordered = new Map();
+  const icons = { transcript: "file-text", audio: "volume-2", video: "video", manifest: "braces" };
+  for (const [, key, label] of available) {
+    let page = session.pages.get(key);
+    if (!page) {
+      changed = true;
+      const tab = document.createElement("button"); tab.type = "button"; tab.className = "detail-tab";
+      tab.id = `detail-${session.id}-${key}-tab`; tab.setAttribute("role", "tab");
+      tab.innerHTML = `${icon(icons[key], { size: 14, color: "currentColor" })}<span>${label}</span>`;
+      const panel = document.createElement("section"); panel.className = "detail-page"; panel.id = `detail-${session.id}-${key}-panel`;
+      panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", tab.id); tab.setAttribute("aria-controls", panel.id);
+      const content = document.createElement("div"); content.className = `detail-tab-content is-${key}`;
+      const loading = document.createElement("p"); loading.className = "detail-loading"; loading.textContent = t("history.loadingFile"); content.appendChild(loading); panel.appendChild(content);
+      page = { key, tab, panel, content, revision: fileRevision(meeting, key), dirty: false, pending: null, file: null, media: null, url: null };
+      tab.addEventListener("click", () => selectPage(session, key));
+      tab.addEventListener("keydown", event => {
+        const list = [...session.pages.keys()]; const index = list.indexOf(key);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? list.length - 1 : event.key === "ArrowRight" ? (index + 1) % list.length : event.key === "ArrowLeft" ? (index + list.length - 1) % list.length : null;
+        if (next === null) return;
+        event.preventDefault(); selectPage(session, list[next], true); session.pages.get(list[next]).tab.focus();
+      });
+    } else if (page.revision !== fileRevision(meeting, key)) {
+      page.revision = fileRevision(meeting, key); page.dirty = true;
+      if (key !== "audio" && key !== "video" && page.file) loadPage(session, page);
+    } else if (!page.file && previous !== meeting) page.dirty = true;
+    ordered.set(key, page);
+  }
+  session.pages = ordered;
+  // Reordering connected media nodes can interrupt playback; only move new/out-of-order pages.
+  for (const [index, page] of [...ordered.values()].entries()) {
+    if (session.tablist.children[index] !== page.tab) session.tablist.insertBefore(page.tab, session.tablist.children[index] ?? null);
+    if (session.track.children[index] !== page.panel) session.track.insertBefore(page.panel, session.track.children[index] ?? null);
+  }
+  if (!ordered.has(state.selectedTab)) state.selectedTab = keys[0];
+  selectPage(session, state.selectedTab, changed, false);
+  if (focusRemoved) session.pages.get(state.selectedTab).tab.focus();
+}
+function updatePlaybackStatus(session) {
+  if (session.closed) return;
+  const active = [...session.pages.values()].find(page => page.media && page.media === session.playingMedia && !page.media.paused && !page.media.ended);
+  for (const page of session.pages.values()) page.tab.classList.toggle("is-playing", page === active);
+  session.playback.hidden = !active;
+  session.pause.disabled = !active;
+  const label = active ? t(active.key === "video" ? "history.playingVideo" : "history.playingAudio") : "";
+  if (session.playbackLabel.textContent !== label) session.playbackLabel.textContent = label;
+}
+function mountDetailShell() {
+  if (detailShell) return;
+  detailShell = document.createElement("div"); detailShell.className = "detail-content";
+  meetingRegion = document.createElement("div"); meetingRegion.className = "meeting-region";
+  meetingFooter = document.createElement("footer"); meetingFooter.className = "meeting-footer";
+  deleteMeetingButton = document.createElement("button"); deleteMeetingButton.type = "button"; deleteMeetingButton.className = "delete-meeting-button";
+  deleteMeetingButton.innerHTML = `${icon("trash-2", { size: 14, color: "currentColor" })}<span>${t("common.deleteMeeting")}</span>`;
+  deleteMeetingButton.addEventListener("click", () => { if (detailSession) showDeleteDialog(detailSession.meeting, deleteMeetingButton); });
+  meetingFooter.appendChild(deleteMeetingButton); detailShell.append(meetingRegion, meetingFooter); detailPanelEl.replaceChildren(detailShell);
+}
+function renderDetail(animate = false) {
+  mountDetailShell();
+  const meeting = state.meetings.find(item => meetingId(item) === state.selectedMeetingId);
+  if (meeting && detailSession?.meetingId === meetingId(meeting)) { syncDetail(detailSession, meeting); return; }
+  const hadMeeting = Boolean(detailSession);
+  const focusInside = meetingRegion.contains(document.activeElement);
+  closeDetailSession(); meetingRegion.replaceChildren(); meetingFooter.hidden = !meeting;
+  detailShell.classList.toggle("has-meeting", Boolean(meeting));
+  if (!meeting) {
+    const placeholder = document.createElement("p"); placeholder.className = "detail-placeholder"; placeholder.textContent = t("history.selectMeetingPlaceholder"); meetingRegion.appendChild(placeholder); return;
+  }
+  const header = document.createElement("header"); header.className = "detail-header";
+  const title = document.createElement("h2"); title.className = "detail-title";
+  const date = document.createElement("p"); date.className = "detail-date";
+  const metadata = document.createElement("p"); metadata.className = "detail-metadata";
+  const recovery = createRecoveryPanel(meeting); header.append(title, date, metadata, recovery);
+  const tablist = document.createElement("div"); tablist.className = "detail-tabs"; tablist.setAttribute("role", "tablist");
+  const navigation = document.createElement("div"); navigation.className = "detail-navigation";
+  const playbackSlot = document.createElement("div"); playbackSlot.className = "playback-slot";
+  const playback = document.createElement("div"); playback.className = "playback-status"; playback.hidden = true;
+  const playbackLabel = document.createElement("span"); playbackLabel.setAttribute("role", "status");
+  const pause = document.createElement("button"); pause.type = "button"; pause.className = "detail-action"; pause.textContent = t("common.pause"); pause.disabled = true;
+  playback.append(playbackLabel, pause); playbackSlot.appendChild(playback);
+  const viewport = document.createElement("div"); viewport.className = "detail-pager";
+  const track = document.createElement("div"); track.className = "detail-track"; viewport.appendChild(track);
+  navigation.append(tablist, playbackSlot);
+  meetingRegion.append(header, navigation, viewport);
+  const session = { id: ++nextDetailId, meetingId: meetingId(meeting), meeting, pages: new Map(), title, date, metadata, recovery, tablist, track, playback, playbackLabel, pause, closed: false, playIntent: null, playingMedia: null };
+  detailSession = session;
+  pause.addEventListener("click", () => {
+    session.playIntent = null; session.playingMedia?.pause();
+    if (playback.contains(document.activeElement)) session.pages.get(state.selectedTab)?.tab.focus();
+  });
+  syncDetail(session, meeting);
+  if (focusInside) session.pages.get(state.selectedTab)?.tab.focus();
+  if (hadMeeting && animate && meetingRegion.animate) {
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    meetingAnimation = meetingRegion.animate(reduced ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: reduced ? 120 : 240, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+  }
+}
+window.addEventListener("pagehide", closeDetailSession);
 function showDeleteDialog(meeting, opener) {
   if (!meeting) return;
   const overlay = document.createElement("div"); overlay.className = "delete-modal-backdrop"; overlay.setAttribute("role", "presentation");
   const dialog = document.createElement("section"); dialog.className = "delete-modal"; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true"); dialog.setAttribute("aria-labelledby", "delete-modal-title"); const title = document.createElement("h2"); title.id = "delete-modal-title"; title.textContent = t("common.deleteMeeting"); const body = document.createElement("p"); body.textContent = t("history.deleteConfirmBody", { title: titleFor(meeting) }); const actions = document.createElement("div"); actions.className = "delete-modal-actions"; const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "modal-cancel"; cancel.textContent = t("common.cancel"); const confirm = document.createElement("button"); confirm.type = "button"; confirm.className = "modal-confirm"; confirm.textContent = t("common.delete"); actions.append(cancel, confirm); dialog.append(title, body, actions); overlay.appendChild(dialog); document.body.appendChild(overlay);
-  const close = () => { document.removeEventListener("keydown", onKeydown); overlay.remove(); opener.focus(); };
+  const error = document.createElement("p"); error.className = "action-error"; error.setAttribute("role", "alert"); error.hidden = true; dialog.insertBefore(error, actions);
+  const position = [...meetingsListEl.children].findIndex(card => card.dataset.meetingId === meetingId(meeting));
+  const close = () => {
+    document.removeEventListener("keydown", onKeydown); overlay.remove();
+    const fallback = meetingsListEl.children[Math.max(0, Math.min(position, meetingsListEl.children.length - 1))]?.querySelector(".details-button");
+    if (opener.isConnected && !opener.closest("[hidden]")) opener.focus(); else (fallback ?? searchInput).focus();
+  };
   const onKeydown = (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } if (event.key === "Tab") { const controls = [...dialog.querySelectorAll("button:not([disabled])")]; const first = controls[0]; const last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
-  cancel.addEventListener("click", close); confirm.addEventListener("click", async () => { confirm.disabled = true; try { const result = await chrome.runtime.sendMessage({ type: "asterion:delete-session", sessionId: meeting.sessionId, folderName: meeting.folderName }); if (!result?.ok) throw new Error(result?.error ?? "Delete failed"); state.meetings = state.meetings.filter((item) => meetingId(item) !== meetingId(meeting)); state.selectedMeetingId = null; state.selectedTab = null; renderAllExceptDetail(); renderDetail(); close(); } catch { confirm.disabled = false; } });
+  cancel.addEventListener("click", close);
+  confirm.disabled = pendingDeletes.has(meetingId(meeting));
+  confirm.addEventListener("click", async () => {
+    const id = meetingId(meeting); if (pendingDeletes.has(id)) return;
+    pendingDeletes.add(id); confirm.disabled = true; dialog.setAttribute("aria-busy", "true"); error.hidden = true;
+    try {
+      const result = await chrome.runtime.sendMessage({ type: "asterion:delete-session", sessionId: meeting.sessionId, folderName: meeting.folderName });
+      if (!result?.ok) throw new Error(result?.error ?? "Delete failed");
+      state.meetings = state.meetings.filter(item => meetingId(item) !== id);
+      if (state.selectedMeetingId === id) { state.selectedMeetingId = null; state.selectedTab = null; }
+      renderAllExceptDetail(); renderDetail();
+      if (overlay.isConnected) close();
+    } catch {
+      if (overlay.isConnected) { error.textContent = t("history.deleteError"); error.hidden = false; }
+    } finally {
+      pendingDeletes.delete(id); confirm.disabled = false; dialog.setAttribute("aria-busy", "false");
+      document.querySelectorAll(".modal-confirm").forEach(button => { if (button.dataset.meetingId === id) button.disabled = false; });
+    }
+  });
+  confirm.dataset.meetingId = meetingId(meeting);
   document.addEventListener("keydown", onKeydown); cancel.focus();
 }
 function renderAllExceptDetail() { renderSidebar(); renderMeetings(); }
@@ -413,15 +669,11 @@ searchInput.addEventListener("input", () => { state.search = searchInput.value; 
 sortSelect.addEventListener("change", () => { state.sort = sortSelect.value; renderMeetings(); });
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !changes.meetingHistory) return;
-  const previous = state.meetings.find(meeting => meetingId(meeting) === state.selectedMeetingId);
   state.meetings = Array.isArray(changes.meetingHistory.newValue) ? changes.meetingHistory.newValue : [];
   const selected = state.meetings.find(meeting => meetingId(meeting) === state.selectedMeetingId);
   if (state.selectedMeetingId && !selected) state.selectedMeetingId = null;
   renderAllExceptDetail();
-  const panel = detailPanelEl.querySelector(".recovery-panel");
-  if (panel && previous && selected && previous.hasTranscript === selected.hasTranscript && previous.hasAudioMp3 === selected.hasAudioMp3 && previous.hasVideoMp4 === selected.hasVideoMp4) {
-    panel.dispatchEvent(new CustomEvent("asterion:recovery-update", { detail: selected }));
-  } else renderDetail();
+  renderDetail();
 });
 chrome.storage.local.get({ meetingHistory: [] }, ({ meetingHistory }) => { state.meetings = Array.isArray(meetingHistory) ? meetingHistory : []; renderAllExceptDetail(); renderDetail(); });
 

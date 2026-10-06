@@ -113,5 +113,14 @@
   "history.recoveryTaskError": "No se pudo completar el proceso. Puedes reintentar los pendientes.",
   "history.processing.pending": "Pendiente",
   "history.processing.succeeded": "Disponible",
-  "history.processing.failed": "Falló"
+  "history.processing.failed": "Falló",
+  "history.deleteError": "No se pudo eliminar la reunión. Inténtalo de nuevo.",
+  "history.playingAudio": "Reproduciendo audio",
+  "history.playingVideo": "Reproduciendo video",
+  "settings.loading": "Cargando…",
+  "settings.saving": "Guardando…",
+  "settings.saved": "Guardado",
+  "settings.loadError": "No se pudo cargar este ajuste. Inténtalo de nuevo.",
+  "settings.saveError": "No se pudo guardar el cambio. Se restauró el valor anterior.",
+  "settings.retry": "Reintentar"
 }

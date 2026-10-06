@@ -113,5 +113,14 @@
   "history.recoveryTaskError": "Processing could not finish. You can retry the pending tasks.",
   "history.processing.pending": "Pending",
   "history.processing.succeeded": "Available",
-  "history.processing.failed": "Failed"
+  "history.processing.failed": "Failed",
+  "history.deleteError": "Could not delete the meeting. Please try again.",
+  "history.playingAudio": "Playing audio",
+  "history.playingVideo": "Playing video",
+  "settings.loading": "Loading…",
+  "settings.saving": "Saving…",
+  "settings.saved": "Saved",
+  "settings.loadError": "Could not load this setting. Please try again.",
+  "settings.saveError": "Could not save the change. The previous value was restored.",
+  "settings.retry": "Retry"
 }

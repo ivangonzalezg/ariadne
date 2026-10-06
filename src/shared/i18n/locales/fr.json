@@ -113,5 +113,14 @@
   "history.recoveryTaskError": "Le traitement n’a pas abouti. Vous pouvez réessayer les tâches restantes.",
   "history.processing.pending": "En attente",
   "history.processing.succeeded": "Disponible",
-  "history.processing.failed": "Échec"
+  "history.processing.failed": "Échec",
+  "history.deleteError": "Impossible de supprimer la réunion. Réessayez.",
+  "history.playingAudio": "Lecture audio",
+  "history.playingVideo": "Lecture vidéo",
+  "settings.loading": "Chargement…",
+  "settings.saving": "Enregistrement…",
+  "settings.saved": "Enregistré",
+  "settings.loadError": "Impossible de charger ce réglage. Réessayez.",
+  "settings.saveError": "Impossible d’enregistrer la modification. La valeur précédente a été rétablie.",
+  "settings.retry": "Réessayer"
 }

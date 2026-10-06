@@ -35,35 +35,45 @@ backButton.addEventListener("click", () => {
   }
 });
 
-chrome.storage.local.get({ videoPreset: "medium" }, ({ videoPreset }) => {
-  videoPresetSelect.value = videoPreset;
-});
-
-videoPresetSelect.addEventListener("change", () => {
-  chrome.storage.local.set({ videoPreset: videoPresetSelect.value });
-});
-
-chrome.storage.local.get({ minimumMeetingDurationSeconds: 0 }, ({ minimumMeetingDurationSeconds }) => {
-  minimumMeetingDurationInput.value = Number.isSafeInteger(minimumMeetingDurationSeconds) && minimumMeetingDurationSeconds >= 0 ? minimumMeetingDurationSeconds : 0;
-});
-
-minimumMeetingDurationInput.addEventListener("change", () => {
-  if (!minimumMeetingDurationInput.reportValidity()) return;
-  chrome.storage.local.set({ minimumMeetingDurationSeconds: minimumMeetingDurationInput.valueAsNumber });
-});
-
-function renderDebugLoggingToggle(enabled) {
-  debugLoggingToggle.setAttribute("aria-checked", String(enabled));
-  debugLoggingToggle.style.background = enabled ? "var(--accent-blue)" : "var(--toggle-off)";
-  debugLoggingToggle.style.justifyContent = enabled ? "flex-end" : "flex-start";
+function bindPreference(control, key, fallback, read, render, valid = () => true) {
+  const status = document.createElement("p"); status.className = "setting-status"; status.id = `${control.id}-status`; status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+  const retry = document.createElement("button"); retry.type = "button"; retry.className = "retry-setting"; retry.textContent = t("settings.retry"); retry.hidden = true;
+  control.closest(".setting-card").append(status, retry);
+  control.setAttribute("aria-describedby", [control.getAttribute("aria-describedby"), status.id].filter(Boolean).join(" "));
+  let confirmed = fallback, pending = false, loaded = false, timer, retryAction, ownedFocus = false;
+  const show = (message, failed = false) => { status.textContent = message; status.classList.toggle("is-error", failed); retry.hidden = !failed; };
+  const busy = value => {
+    if (value) ownedFocus = document.activeElement === control || document.activeElement === retry;
+    pending = value; control.disabled = value || !loaded; retry.disabled = value; control.setAttribute("aria-busy", String(value));
+    if (!value && loaded && ownedFocus && document.activeElement === document.body) control.focus({ preventScroll: true });
+  };
+  const load = async () => {
+    if (pending) return;
+    clearTimeout(timer); busy(true); show(t("settings.loading"));
+    try {
+      const result = await chrome.storage.local.get({ [key]: fallback });
+      confirmed = result[key]; loaded = true; render(confirmed); show("");
+    } catch { retryAction = load; show(t("settings.loadError"), true); }
+    finally { busy(false); }
+  };
+  const save = async value => {
+    if (pending || !loaded || !valid()) return;
+    clearTimeout(timer); render(value); busy(true); show(t("settings.saving"));
+    try {
+      await chrome.storage.local.set({ [key]: value });
+      confirmed = value; show(t("settings.saved")); timer = setTimeout(() => show(""), 2000);
+    } catch { render(confirmed); retryAction = () => save(value); show(t("settings.saveError"), true); }
+    finally { busy(false); }
+  };
+  control.addEventListener(control === debugLoggingToggle ? "click" : "change", () => save(read()));
+  retry.addEventListener("click", () => retryAction?.());
+  window.addEventListener("pagehide", () => clearTimeout(timer), { once: true });
+  load();
 }
-
-chrome.storage.local.get({ debugLogging: false }, ({ debugLogging }) => {
-  renderDebugLoggingToggle(debugLogging);
-});
-
-debugLoggingToggle.addEventListener("click", () => {
-  const enabled = debugLoggingToggle.getAttribute("aria-checked") !== "true";
-  renderDebugLoggingToggle(enabled);
-  chrome.storage.local.set({ debugLogging: enabled });
+bindPreference(videoPresetSelect, "videoPreset", "medium", () => videoPresetSelect.value, value => { videoPresetSelect.value = value; });
+bindPreference(minimumMeetingDurationInput, "minimumMeetingDurationSeconds", 0, () => minimumMeetingDurationInput.valueAsNumber, value => {
+  minimumMeetingDurationInput.value = Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}, () => minimumMeetingDurationInput.reportValidity());
+bindPreference(debugLoggingToggle, "debugLogging", false, () => debugLoggingToggle.getAttribute("aria-checked") !== "true", value => {
+  debugLoggingToggle.setAttribute("aria-checked", String(Boolean(value)));
 });

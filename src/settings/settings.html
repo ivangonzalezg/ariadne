@@ -124,6 +124,20 @@
         background: #ffffff;
         transition: transform 0.15s;
       }
+      .toggle { background: var(--toggle-off); transition: background-color 240ms cubic-bezier(0.23, 1, 0.32, 1); }
+      .toggle-knob { transform: translateX(0); transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1); }
+      .toggle[aria-checked="true"] { background: var(--accent-blue); }
+      .toggle[aria-checked="true"] .toggle-knob { transform: translateX(18px); }
+      .setting-status { min-height: 20px; margin: 8px 0 0; color: var(--text-secondary); font-size: 12px; }
+      .setting-status.is-error { color: var(--accent-red); }
+      .retry-setting { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-button); color: var(--text-primary); cursor: pointer; }
+      button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+      button { transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+      button:active:not(:disabled) { transform: scale(0.97); }
+      button:disabled, input:disabled, select:disabled { opacity: .65; cursor: wait; }
+      @media (hover: hover) and (pointer: fine) { .retry-setting:hover { filter: brightness(1.1); } }
+      @media (hover: none), (pointer: coarse) { .back-button:hover { background: transparent; } }
+      @media (prefers-reduced-motion: reduce) { .toggle { transition-duration: 120ms; } .toggle-knob { transition: none; } button { transition-property: background-color; } button:active:not(:disabled) { transform: none; } }
     </style>
   </head>
   <body>
@@ -161,7 +175,7 @@
             type="button"
             role="switch"
             aria-checked="false"
-            style="background: var(--toggle-off); justify-content: flex-start"
+            aria-labelledby="debug-logging-label"
           >
             <span class="toggle-knob"></span>
           </button>
