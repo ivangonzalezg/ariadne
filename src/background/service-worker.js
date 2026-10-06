@@ -101,10 +101,29 @@ async function forwardStorage(message, tabId) {
   }
   const { [ACTIVE_SESSIONS_KEY]: active } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
   const registration = active[message.sessionId];
+  if (message.type === "asterion:session-starting") {
+    const { minimumMeetingDurationSeconds } = await chrome.storage.local.get({ minimumMeetingDurationSeconds: 0 });
+    message = { ...message, minimumMeetingDurationSeconds };
+  }
   const result = await chrome.runtime.sendMessage({ ...message, target: "asterion-offscreen", tabId: tabId ?? registration?.tabId,
     folderName: message.folderName ?? registration?.folderName });
   if (!result) throw new Error("Storage transport unavailable");
+  if (message.type === "asterion:session-ended" && result.discarded) await discardSession(result);
   return result;
+}
+
+async function discardSession({ sessionId, folderName }) {
+  deletedSessions.add(sessionId);
+  const intent = historyQueue.then(async () => {
+    const { pendingSessionDeletions } = await chrome.storage.local.get({ pendingSessionDeletions: {} });
+    pendingSessionDeletions[sessionId] = folderName;
+    await chrome.storage.local.set({ pendingSessionDeletions });
+  });
+  historyQueue = intent.catch(() => {});
+  await intent;
+  const result = await forwardStorage({ type: "asterion:delete-session", sessionId, folderName });
+  if (!result.ok) throw new Error(result.error ?? "Could not discard session");
+  await removeFromHistory(sessionId);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -246,6 +265,7 @@ async function reconcileSessions() {
     if (result.ok) await removeFromHistory(sessionId);
   }
   const result = await forwardStorage({ type: "asterion:recover-storage" });
+  for (const discarded of result.discarded ?? []) await discardSession(discarded);
   conversionPending = result.pending;
   for (const meta of result.unpublished ?? []) {
     await appendToHistory(meta);

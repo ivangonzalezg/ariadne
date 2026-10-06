@@ -287,7 +287,7 @@ window.addEventListener("message", (event) => {
         muteManifest: message.muteManifest, endedAt: message.endedAt, expectedSequences: message.expectedSequences,
         interruptionReason: message.interruptionReason ?? delivery?.fatal?.message ?? null,
       });
-      if (!result?.error) {
+      if (!result?.error && !result?.discarded) {
         const status = await chrome.runtime.sendMessage({ type: "asterion:storage-status", sessionId: message.sessionId, folderName: result.folderName });
         if (!status?.error) postToMainWorld({ type: "asterion:storage-progress", ...status, pending: delivery?.pending.size ?? 0, storageRecoveries: delivery?.recoveries ?? 0 });
       }

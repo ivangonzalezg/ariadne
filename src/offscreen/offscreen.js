@@ -47,7 +47,7 @@ async function restorePending() {
     try {
       if (!sessions.has(state.sessionId) && await recoverySettled(directory, state)) continue;
       const writer = await openSession({ ...state, folderName: directory.name });
-      if (state.recordingStatus !== "recording") {
+      if (!["recording", "discarded"].includes(state.recordingStatus)) {
         if (state.recordingStatus === "finalizing") {
           await writer.finalize({ muteManifest: state.muteManifest, endedAt: state.endedAt,
             expectedSequences: state.expectedSequences, expectedCaptionEvents: state.expectedCaptionEvents,
@@ -69,9 +69,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await restoration; conversionQueue.wake(); processingQueue.wake();
       const recordings = [...sessions.values()].filter((writer) => writer.journal.state.recordingStatus === "recording")
         .map((writer) => ({ sessionId: writer.sessionId, tabId: writer.tabId, meetingTitle: writer.meetingTitle, folderName: writer.folderName }));
-      const unpublished = [...sessions.values()].filter(writer => writer.recordingStatus !== "recording" && !writer.journal.state.historyPublished)
+      const discarded = [...sessions.values()].filter(writer => writer.recordingStatus === "discarded")
+        .map(writer => ({ sessionId: writer.sessionId, folderName: writer.folderName }));
+      const unpublished = [...sessions.values()].filter(writer => !["recording", "discarded"].includes(writer.recordingStatus) && !writer.journal.state.historyPublished)
         .map(writer => writer.getMetadata());
-      return { pending: conversionQueue.snapshot().length > 0 || processingQueue.snapshot().length > 0 || recordings.length > 0, recordings, unpublished };
+      return { pending: conversionQueue.snapshot().length > 0 || processingQueue.snapshot().length > 0 || recordings.length > 0 || discarded.length > 0, recordings, unpublished, discarded };
     }
     if (message.type === "asterion:delete-session" && deletions.has(message.sessionId)) return deletions.get(message.sessionId);
     if (message.type === "asterion:delete-session" && !sessions.has(message.sessionId)) {

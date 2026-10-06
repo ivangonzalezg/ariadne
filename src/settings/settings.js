@@ -12,6 +12,9 @@ const videoPresetHelperEl = document.getElementById("video-preset-helper");
 const debugLoggingToggle = document.getElementById("debug-logging");
 const debugLoggingLabelEl = document.getElementById("debug-logging-label");
 const debugLoggingHelperEl = document.getElementById("debug-logging-helper");
+const minimumMeetingDurationInput = document.getElementById("minimum-meeting-duration");
+const minimumMeetingDurationLabelEl = document.getElementById("minimum-meeting-duration-label");
+const minimumMeetingDurationHelperEl = document.getElementById("minimum-meeting-duration-helper");
 
 document.title = t("settings.pageTitle");
 backButton.setAttribute("aria-label", t("settings.backAria"));
@@ -20,6 +23,8 @@ videoPresetLabelEl.textContent = t("settings.videoPresetLabel");
 videoPresetHelperEl.textContent = t("settings.videoPresetHelper");
 debugLoggingLabelEl.textContent = t("settings.debugLoggingLabel");
 debugLoggingHelperEl.textContent = t("settings.debugLoggingHelper");
+minimumMeetingDurationLabelEl.textContent = t("settings.minimumMeetingDurationLabel");
+minimumMeetingDurationHelperEl.textContent = t("settings.minimumMeetingDurationHelper");
 
 backButton.innerHTML = icon("chevron-left", { size: 18, color: "var(--text-secondary)" });
 backButton.addEventListener("click", () => {
@@ -36,6 +41,15 @@ chrome.storage.local.get({ videoPreset: "medium" }, ({ videoPreset }) => {
 
 videoPresetSelect.addEventListener("change", () => {
   chrome.storage.local.set({ videoPreset: videoPresetSelect.value });
+});
+
+chrome.storage.local.get({ minimumMeetingDurationSeconds: 0 }, ({ minimumMeetingDurationSeconds }) => {
+  minimumMeetingDurationInput.value = Number.isSafeInteger(minimumMeetingDurationSeconds) && minimumMeetingDurationSeconds >= 0 ? minimumMeetingDurationSeconds : 0;
+});
+
+minimumMeetingDurationInput.addEventListener("change", () => {
+  if (!minimumMeetingDurationInput.reportValidity()) return;
+  chrome.storage.local.set({ minimumMeetingDurationSeconds: minimumMeetingDurationInput.valueAsNumber });
 });
 
 function renderDebugLoggingToggle(enabled) {

@@ -25,7 +25,7 @@
       .page-header {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         margin-bottom: 8px;
       }
 
@@ -46,14 +46,14 @@
 
       h1 {
         margin: 0;
-        font-size: 22px;
-        line-height: 1.2;
+        font-size: 20px;
+        line-height: 28px;
       }
 
       .setting-card {
-        padding: 18px;
+        padding: 16px;
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 16px;
         background: var(--bg-elevated);
         box-shadow: 0 6px 18px var(--shadow);
       }
@@ -62,31 +62,43 @@
         display: block;
         margin-bottom: 8px;
         font-size: 16px;
+        line-height: 24px;
         font-weight: 600;
       }
 
-      select {
+      select,
+      #minimum-meeting-duration {
+        box-sizing: border-box;
         width: 100%;
-        padding: 10px;
+        height: 40px;
+        padding: 8px 12px;
         border: 1px solid var(--border);
         border-radius: 8px;
         background: var(--bg-button);
         color: var(--text-primary);
+        font: inherit;
         font-size: 14px;
+        line-height: 20px;
       }
 
       .helper {
-        margin: 10px 0 0;
+        margin: 8px 0 0;
         color: var(--text-secondary);
-        font-size: 13px;
-        line-height: 1.4;
+        font-size: 14px;
+        line-height: 20px;
+      }
+
+      select:focus-visible,
+      #minimum-meeting-duration:focus-visible {
+        outline: 2px solid var(--accent-blue);
+        outline-offset: 2px;
       }
 
       .toggle-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
       }
 
       .toggle-row label {
@@ -120,6 +132,11 @@
         <button id="back-button" class="back-button" type="button" aria-label="Volver"></button>
         <h1 id="page-heading">Configuración</h1>
       </header>
+      <section class="setting-card">
+        <label id="minimum-meeting-duration-label" for="minimum-meeting-duration">Duración mínima de la reunión (segundos)</label>
+        <input id="minimum-meeting-duration" type="number" min="0" max="9007199254740991" step="1" value="0" required aria-describedby="minimum-meeting-duration-helper" />
+        <p id="minimum-meeting-duration-helper" class="helper">0 desactiva el mínimo. Las grabaciones que duren menos del tiempo indicado se descartan sin procesar ni guardar en el historial.</p>
+      </section>
       <section class="setting-card">
         <label id="video-preset-label" for="video-preset">Velocidad y calidad del video</label>
         <select id="video-preset">

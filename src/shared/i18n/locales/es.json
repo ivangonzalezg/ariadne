@@ -17,6 +17,8 @@
   "settings.pageTitle": "Ariadne - Configuración",
   "settings.backAria": "Volver",
   "settings.title": "Configuración",
+  "settings.minimumMeetingDurationLabel": "Duración mínima de la reunión (segundos)",
+  "settings.minimumMeetingDurationHelper": "0 desactiva el mínimo. Las grabaciones que duren menos del tiempo indicado se descartan sin procesar ni guardar en el historial.",
   "settings.videoPresetLabel": "Velocidad y calidad del video",
   "settings.videoPresetHelper": "Más rápido = menos calidad/compresión, más lento = mejor compresión.",
   "settings.debugLoggingLabel": "Registro de depuración",

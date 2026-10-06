@@ -27,8 +27,8 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-async function createWriter({ audio = true, video = true } = {}) {
-  const writer = new SessionWriter({ sessionId: "session-1", tabId: 7, meetingTitle: "Daily sync" });
+async function createWriter({ audio = true, video = true, minimumMeetingDurationSeconds = 0 } = {}) {
+  const writer = new SessionWriter({ sessionId: "session-1", tabId: 7, meetingTitle: "Daily sync", minimumMeetingDurationSeconds });
   await writer.ready;
   if (audio) await writer.writeChunk("meeting", new Uint8Array([1, 2]));
   if (video) await writer.writeChunk("video", new Uint8Array([3, 4]));
@@ -59,6 +59,40 @@ describe("SessionWriter conversion flow", () => {
       value: { getDirectory: vi.fn().mockResolvedValue(root) },
     });
     ffmpeg.runFfmpegAttempt.mockReset();
+  });
+
+  it.each([
+    [0, 1, false],
+    [5, 4999, true],
+    [5, 5000, false],
+    [5, 5001, false],
+  ])("applies minimum %s seconds to a %s ms recording (discarded: %s)", async (minimumMeetingDurationSeconds, durationMs, discarded) => {
+    const writer = await createWriter({ audio: false, video: false, minimumMeetingDurationSeconds });
+    const result = await writer.finalize({ endedAt: writer.startedAt + durationMs });
+    expect(result.discarded === true).toBe(discarded);
+    expect(writer.recordingStatus).toBe(discarded ? "discarded" : "complete");
+    if (discarded) {
+      expect(writer.journal.state.conversions).toEqual([]);
+      expect(writer.journal.state.recoveryTasks).toBeUndefined();
+      expect(writer.meetingHandle.files.has("manifest.json")).toBe(false);
+    }
+  });
+
+  it("persists the minimum across restoration and skips transcript export and media conversion", async () => {
+    const writer = await createWriter({ minimumMeetingDurationSeconds: 10 });
+    await writer.onCaptionSnapshot({ text: "Prueba", speaker: "Ana", receivedAt: writer.startedAt });
+    await writer.checkpoint({ muteManifest: { checkpointAt: writer.startedAt + 1000, intervals: [] } });
+    const restored = await SessionWriter.restore(writer.folderName);
+    const prepare = vi.spyOn(restored.recovery, "prepare");
+    const exportTranscript = vi.spyOn(restored, "exportTranscript");
+    const result = await restored.finalize({ interruptionReason: "capture-tab-disappeared" });
+    expect(result).toMatchObject({ discarded: true, sessionId: writer.sessionId });
+    expect(restored.endedAt).toBe(writer.startedAt + 1000);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(exportTranscript).not.toHaveBeenCalled();
+    expect(ffmpeg.runFfmpegAttempt).not.toHaveBeenCalled();
+    const discarded = await SessionWriter.restore(writer.folderName);
+    expect(await discarded.finalize({})).toMatchObject({ discarded: true });
   });
 
   it("drains caption writes, preserves same-speaker interventions, and exports the final revision after recovery", async () => {

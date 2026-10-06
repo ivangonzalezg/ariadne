@@ -30,13 +30,14 @@ function sendConversionMessage(message) {
 }
 
 export class SessionWriter {
-  constructor({ sessionId, tabId, meetingTitle, folderName = null, restore = false }) {
+  constructor({ sessionId, tabId, meetingTitle, minimumMeetingDurationSeconds = 0, folderName = null, restore = false }) {
     this.sessionId = sessionId;
     this.tabId = tabId;
     this.meetingTitle = meetingTitle || "Reunión sin título";
     this.startedAt = Date.now();
     this.folderName = folderName;
     this.restoring = restore;
+    this.minimumMeetingDurationSeconds = Number.isSafeInteger(minimumMeetingDurationSeconds) && minimumMeetingDurationSeconds > 0 ? minimumMeetingDurationSeconds : 0;
     this.writeFailures = new Map();
     this.writeQueueByStream = new Map();
     this.segments = new Map();
@@ -59,11 +60,13 @@ export class SessionWriter {
     this.journal = await CaptureJournal.open(this.meetingHandle, this.restoring ? null : {
       version: CAPTURE_FORMAT_VERSION, sessionId: this.sessionId, tabId: this.tabId, folderName: this.folderName,
       meetingTitle: this.meetingTitle, startedAt: this.startedAt, recordingStatus: "recording",
+      minimumMeetingDurationSeconds: this.minimumMeetingDurationSeconds,
       generations: [], expectedSequences: {}, conversions: [], captionSnapshots: [], speakerLabels: [], muteManifest: null,
     });
     if (this.journal.state.sessionId !== this.sessionId) throw new Error("Session state mismatch");
     const state = this.journal.state;
     this.startedAt = state.startedAt; this.endedAt = state.endedAt; this.meetingTitle = state.meetingTitle;
+    this.minimumMeetingDurationSeconds = state.minimumMeetingDurationSeconds ?? 0;
     this.captionSnapshots = state.captionSnapshots ?? []; this.speakerLabels = state.speakerLabels ?? [];
     this.captions = await CaptionJournal.open(this.meetingHandle, this.sessionId);
     this.hasCaption = this.captionSnapshots.length > 0 || this.captions.model.utterances.size > 0;
@@ -194,6 +197,12 @@ export class SessionWriter {
     await Promise.all(this.writeQueueByStream.values());
     await this.captionQueue;
     await this.captions.queue;
+    if (this.recordingStatus === "discarded" || (this.minimumMeetingDurationSeconds > 0 &&
+        Math.max(0, this.endedAt - this.startedAt) < this.minimumMeetingDurationSeconds * 1000)) {
+      await this.journal.checkpoint({ endedAt: this.endedAt, recordingStatus: "discarded" });
+      this.recordingStatus = "discarded";
+      return { discarded: true, sessionId: this.sessionId, folderName: this.folderName };
+    }
     expectedCaptionEvents = Math.max(expectedCaptionEvents, this.journal.state.expectedCaptionEvents ?? 0);
     const captionState = this.captions.snapshot(expectedCaptionEvents);
     this.transcriptStatus = this.transcriptStatus === "incomplete" || captionPersistenceErrors.length || captionState.gaps.length || captionState.errors.length ? "incomplete" : "complete";
