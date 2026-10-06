@@ -38,7 +38,11 @@ Everything is written straight to your browser's local storage. Nothing is uploa
 
 ## Installation
 
-Ariadne isn't published on the Chrome Web Store (it's a personal project, not a distributed product), so you'll load it as an unpacked extension:
+Ariadne is available on the [Chrome Web Store](https://chromewebstore.google.com/detail/agkkphmnhcmphpgddlcelhomobdgfhdg). Open the listing and click **Add to Chrome** to install it.
+
+### Install from source
+
+For local development, you can also load it as an unpacked extension:
 
 ```bash
 git clone <this-repo-url>
