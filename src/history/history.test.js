@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import en from "../shared/i18n/locales/en.json";
 
 document.body.innerHTML = `
   <aside class="sidebar" aria-label="Filtros del historial">
@@ -29,7 +30,9 @@ globalThis.chrome = {
   tabs: { create: () => {}, sendMessage: () => {} },
   downloads: { download: () => {}, onChanged: { addListener: () => {}, removeListener: () => {} } },
 };
-globalThis.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 404, json: async () => ({}) }));
+globalThis.fetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => Object.fromEntries(
+  ["untitledMeeting", "transcript", "audio", "video", "manifest"].map(key => [`common.${key}`, en[`common.${key}`]])
+) }));
 
 const { deriveVisibleMeetings } = await import("./history.js");
 
@@ -156,6 +159,45 @@ async function openFixture(id = 'pager') {
   return { root, entry, getDirectory, select, page };
 }
 
+it('names every download using the meeting title, file type and actual extension', async () => {
+  const { root, entry, select, page } = await openFixture('download-names');
+  const updated = { ...entry, meetingTitle: '  Reunión: -- sobre   algo! ', hasAudioMp3: true, hasVideoMp4: true };
+  const folder = await root.getDirectoryHandle(entry.folderName);
+  for (const name of ['audio-reunion.mp3', 'video-reunion.mp4']) {
+    const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
+    await writable.write('converted'); await writable.close();
+  }
+  historyChanged({ meetingHistory: { newValue: [updated] } }, 'local');
+  chrome.downloads.download = vi.fn();
+  for (const [tab, extensions, type] of [
+    ['transcript', ['json', 'txt', 'md'], 'transcript'],
+    ['audio', ['mp3'], 'audio'],
+    ['video', ['mp4'], 'video'],
+    ['manifest', ['json'], 'manifest'],
+  ]) {
+    select(tab);
+    await vi.waitFor(() => expect(page(tab).querySelector('.detail-footer')).toBeTruthy());
+    expect(page(tab).querySelector('.detail-file-name').textContent).toBe(`reunion-sobre-algo-${type}.${extensions[0]}`);
+    const actions = page(tab).querySelectorAll('.detail-action');
+    extensions.forEach((extension, index) => {
+      actions[index + 1].click();
+      expect(chrome.downloads.download).toHaveBeenLastCalledWith(
+        expect.objectContaining({ filename: `reunion-sobre-algo-${type}.${extension}` }), expect.any(Function));
+    });
+  }
+  for (const tab of ['audio', 'video']) {
+    await folder.removeEntry(`${tab}-reunion.${tab === 'audio' ? 'mp3' : 'mp4'}`);
+  }
+  historyChanged({ meetingHistory: { newValue: [{ ...updated, hasAudioMp3: false, hasVideoMp4: false }] } }, 'local');
+  for (const tab of ['audio', 'video']) {
+    select(tab);
+    await vi.waitFor(() => expect(page(tab).querySelector('.detail-file-name').textContent).toBe(`reunion-sobre-algo-${tab}.webm`));
+    page(tab).querySelectorAll('.detail-action')[1].click();
+    expect(chrome.downloads.download).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filename: `reunion-sobre-algo-${tab}.webm` }), expect.any(Function));
+  }
+});
+
 it('keeps mounted pages, independent scroll, media state and file-specific actions', async () => {
   const { select, page, getDirectory } = await openFixture();
   const transcript = page('transcript'); const content = transcript.querySelector('.detail-tab-content'); content.scrollTop = 123;
@@ -179,7 +221,7 @@ it('keeps mounted pages, independent scroll, media state and file-specific actio
   expect(getDirectory).toHaveBeenCalledTimes(reads);
   chrome.downloads.download = vi.fn();
   page('audio').querySelectorAll('.detail-action')[1].click();
-  expect(chrome.downloads.download.mock.calls[0][0].filename).toBe('audio-reunion.webm');
+  expect(chrome.downloads.download.mock.calls[0][0].filename).toBe('weekly-sync-audio.webm');
   expect(transcript.querySelectorAll('.detail-action')).toHaveLength(4);
   document.querySelector('.meeting-card.is-selected').click();
   expect(page('audio').querySelector('audio')).toBe(audio); expect(audio.paused).toBe(false);
@@ -194,6 +236,7 @@ it('preserves metadata updates, refreshes converted media only while paused, and
   const writable = await (await folder.getFileHandle('audio-reunion.mp3', { create: true })).createWritable(); await writable.write('converted'); await writable.close();
   historyChanged({ meetingHistory: { newValue: [{ ...entry, hasAudioMp3: true, meetingTitle: 'Updated' }, { ...entry, sessionId: 'conversion-other', folderName: 'conversion-other' }] } }, 'local');
   expect(page('audio').querySelector('audio')).toBe(audio); expect(audio.paused).toBe(false);
+  expect(page('audio').querySelector('.detail-file-name').textContent).toBe('updated-audio.webm');
   audio.pause(); select('manifest'); select('audio');
   await vi.waitFor(() => expect(page('audio').querySelector('audio')).not.toBe(audio));
   const replacement = page('audio').querySelector('audio'); replacement.dispatchEvent(new Event('loadedmetadata'));

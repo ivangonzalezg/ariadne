@@ -1,6 +1,7 @@
 // src/history/history.js
 import { icon } from "../shared/icons.js";
 import { formatSegmentTimestamp, transcriptToTxt, transcriptToMarkdown } from "../lib/transcript-export.js";
+import { meetingDownloadFilename } from "../lib/download-filename.js";
 import { initI18n } from "../shared/i18n/i18n.js";
 
 const { t, localeTag } = await initI18n();
@@ -286,18 +287,22 @@ async function readActiveFile(meeting, tab) {
   } catch { return { file: await (await directory.getFileHandle(fallback)).getFile(), name: fallback }; }
 }
 function createFileFooter(activeFile, meeting, tab) {
+  const downloadName = extension => {
+    const currentMeeting = state.meetings.find(entry => meetingId(entry) === meetingId(meeting)) ?? meeting;
+    return meetingDownloadFilename(currentMeeting.meetingTitle, t(`common.${tab}`), extension, t("common.untitledMeeting"));
+  };
   const footer = document.createElement("footer"); footer.className = "detail-footer";
   const fileRow = document.createElement("div"); fileRow.className = "detail-file-row";
-  const metadata = document.createElement("div"); metadata.className = "detail-file-meta"; const name = document.createElement("span"); name.className = "detail-file-name"; name.textContent = activeFile.name; const size = document.createElement("span"); size.className = "detail-file-size"; size.textContent = formatFileSize(activeFile.file.size); metadata.append(name, size);
+  const metadata = document.createElement("div"); metadata.className = "detail-file-meta"; const name = document.createElement("span"); name.className = "detail-file-name"; name.textContent = downloadName(activeFile.name.split(".").pop()); const size = document.createElement("span"); size.className = "detail-file-size"; size.textContent = formatFileSize(activeFile.file.size); metadata.append(name, size);
   const actions = document.createElement("div"); actions.className = "detail-file-actions";
   const view = document.createElement("button"); view.type = "button"; view.className = "detail-action"; view.innerHTML = `${icon("external-link", { size: 12, color: "currentColor" })}<span>${t("common.open")}</span>`; view.addEventListener("click", () => viewFile(activeFile.file));
-  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("common.download")}</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, activeFile.name));
+  const download = document.createElement("button"); download.type = "button"; download.className = "detail-action"; download.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("common.download")}</span>`; download.addEventListener("click", () => downloadFile(activeFile.file, downloadName(activeFile.name.split(".").pop())));
   actions.append(view, download);
   if (tab === "transcript") {
     const downloadTxt = document.createElement("button"); downloadTxt.type = "button"; downloadTxt.className = "detail-action"; downloadTxt.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("history.downloadTxt")}</span>`;
-    downloadTxt.addEventListener("click", () => downloadFile(new Blob([transcriptToTxt(activeFile.value)], { type: "text/plain" }), "transcripcion.txt"));
+    downloadTxt.addEventListener("click", () => downloadFile(new Blob([transcriptToTxt(activeFile.value)], { type: "text/plain" }), downloadName("txt")));
     const downloadMd = document.createElement("button"); downloadMd.type = "button"; downloadMd.className = "detail-action"; downloadMd.innerHTML = `${icon("download", { size: 12, color: "currentColor" })}<span>${t("history.downloadMarkdown")}</span>`;
-    downloadMd.addEventListener("click", () => downloadFile(new Blob([transcriptToMarkdown(activeFile.value, titleFor(meeting))], { type: "text/markdown" }), "transcripcion.md"));
+    downloadMd.addEventListener("click", () => downloadFile(new Blob([transcriptToMarkdown(activeFile.value, titleFor(meeting))], { type: "text/markdown" }), downloadName("md")));
     actions.append(downloadTxt, downloadMd);
   }
   fileRow.append(metadata, actions); footer.append(fileRow); return footer;
@@ -557,6 +562,10 @@ function syncDetail(session, meeting) {
       page.revision = fileRevision(meeting, key); page.dirty = true;
       if (key !== "audio" && key !== "video" && page.file) loadPage(session, page);
     } else if (!page.file && previous !== meeting) page.dirty = true;
+    if (page.footer && page.file) {
+      page.footer.querySelector(".detail-file-name").textContent = meetingDownloadFilename(
+        meeting.meetingTitle, t(`common.${key}`), page.file.name.split(".").pop(), t("common.untitledMeeting"));
+    }
     ordered.set(key, page);
   }
   session.pages = ordered;
