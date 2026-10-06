@@ -95,14 +95,15 @@ describe("SessionWriter conversion flow", () => {
     expect(writer.captions.model.values()).toHaveLength(1);
   });
 
-  it("marks caption gaps incomplete while retaining successful audio conversion", async () => {
+  it("retains caption-gap diagnostics without marking the published meeting incomplete", async () => {
     ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ audio: true, video: false }); const finished = finishConversions(writer);
     const result = await writer.finalize({ endedAt: writer.startedAt + 1000, expectedCaptionEvents: 1,
       captionPersistenceErrors: [{ eventSeq: 1, message: "Unconfirmed" }] });
     await finished;
-    expect(result).toMatchObject({ recordingStatus: "complete", transcriptStatus: "incomplete" });
-    expect(manifestOf(writer)).toMatchObject({ transcriptStatus: "incomplete", audioConversionStatus: "succeeded" });
+    expect(result).toMatchObject({ recordingStatus: "complete", transcriptStatus: "complete" });
+    expect(manifestOf(writer)).toMatchObject({ transcriptStatus: "complete", audioConversionStatus: "succeeded" });
+    expect(writer.journal.state.transcriptStatus).toBe("incomplete");
   });
 
   it("finalizes and returns metadata without waiting for conversion", async () => {
@@ -326,14 +327,15 @@ describe("SessionWriter conversion flow", () => {
     expect(restored.committedChunks).toBe(2);
   });
 
-  it("converts the continuous prefix while keeping capture incomplete", async () => {
+  it("converts the saved prefix and keeps gaps as internal diagnostics", async () => {
     ffmpeg.runFfmpegAttempt.mockResolvedValue(new Uint8Array([9]));
     const writer = await createWriter({ video: false });
     await writer.writeChunk("meeting", new Uint8Array([3]), { seq: 3 });
     const finished = finishConversions(writer); await writer.finalize({}); await finished;
     expect(manifestOf(writer)).toMatchObject({ audioConversionStatus: "succeeded", hasAudioMp3: true,
       recoveredCoverage: { meeting: { lastSequence: 1, partial: true, gaps: [2] } } });
-    expect(manifestOf(writer).recordingStatus).toBe("incomplete");
+    expect(manifestOf(writer).recordingStatus).toBe("complete");
+    expect(writer.journal.state.recordingStatus).toBe("incomplete");
     expect(ffmpeg.runFfmpegAttempt.mock.calls[0][0].inputs).toEqual([new Uint8Array([1, 2])]);
   });
 
@@ -376,7 +378,8 @@ it("restores captions, speaker labels and a partial mute checkpoint and marks in
   const finished = finishConversions(restored);
   const meta = await restored.finalize({ interruptionReason: "capture-tab-disappeared", endedAt: writer.startedAt + 1000 });
   await finished;
-  expect(meta.recordingStatus).toBe("incomplete");
+  expect(meta.recordingStatus).toBe("complete");
+  expect(restored.journal.state.recordingStatus).toBe("complete");
   expect(manifestOf(restored)).toMatchObject({ metadataDegraded: true, audioConversionStatus: "succeeded", hasAudioMp3: true,
     muteManifest: { degraded: true, intervals: [{ startMs: 10, endMs: 40 }], openIntervalStartMs: 100 } });
   expect(JSON.parse(new TextDecoder().decode(restored.meetingHandle.files.get("transcripcion.json").bytes))[0]).toMatchObject({ text: "Saved", speaker: "Local (You)" });

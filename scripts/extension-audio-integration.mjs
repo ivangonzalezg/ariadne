@@ -179,9 +179,9 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
     await wait(6500);
     const incompleteHistory = await worker.evaluate('chrome.storage.local.get({meetingHistory:[]})');
     const incomplete = incompleteHistory.meetingHistory.find(entry=>entry.sessionId!==sessionId);
-    assert(incomplete?.recordingStatus==='incomplete', 'Definitive storage failure stops and marks the recording incomplete');
+    assert(incomplete?.recordingStatus==='complete', 'The published recording describes a finished capture, independent of closure reason');
     const incompleteManifest = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});return JSON.parse(await(await(await dir.getFileHandle('manifest.json')).getFile()).text());})()`);
-    assert(incompleteManifest.recordingStatus === "incomplete", "Partial capture remains incomplete after conversion");
+    assert(incompleteManifest.recordingStatus === "complete", "Recovered artifacts belong to a completed recording");
     const prefix = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});const bytes=new Uint8Array(await(await(await dir.getFileHandle('audio-reunion.webm')).getFile()).arrayBuffer());let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);})()`);
     const prefixDuration = await page.evaluate(`(async()=>{const ctx=new AudioContext();const bytes=Uint8Array.from(atob(${JSON.stringify(prefix)}),c=>c.charCodeAt(0));const decoded=await ctx.decodeAudioData(bytes.buffer);const duration=decoded.duration;await ctx.close();return duration;})()`);
     assert(prefixDuration>1.5, 'The continuous durable prefix remains decodable after definitive failure');
@@ -247,7 +247,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
         if(recovered?.hasAudioMp3 && filesRecovered && !recovered.processing?.pending) break;
         await wait(200);
       }
-      assert(recovered?.hasAudioMp3 && recovered.recordingStatus==='incomplete','Same-profile browser restart recovers the old partial recording');
+      assert(recovered?.hasAudioMp3 && recovered.recordingStatus==='complete','Same-profile browser restart recovers the old partial recording');
       const recoveryOffscreen=await connect((await find(target=>target.url.endsWith('src/offscreen/offscreen.html') && target.type!=='page')).webSocketDebuggerUrl);clients.push(recoveryOffscreen);
       const recoveredBytes=await recoveryOffscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(incomplete.folderName)});const bytes=new Uint8Array(await(await(await dir.getFileHandle('audio-reunion.mp3')).getFile()).arrayBuffer());let value='';for(const byte of bytes)value+=String.fromCharCode(byte);return btoa(value);})()`);
       const recoveredDuration=await historyPage.evaluate(`(async()=>{const ctx=new AudioContext();const audio=await ctx.decodeAudioData(Uint8Array.from(atob(${JSON.stringify(recoveredBytes)}),c=>c.charCodeAt(0)).buffer);await ctx.close();return audio.duration;})()`);
@@ -260,8 +260,8 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
       await historyPage.command('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
       await historyPage.evaluate(`document.querySelector('.meeting-card')?.click()`);
       await wait(300);
-      const recoveryUi=await historyPage.evaluate(`({message:document.querySelector('.recovery-message')?.textContent,status:document.querySelector('.recovery-status')?.textContent})`);
-      assert(recoveryUi.message && recoveryUi.status,'History displays recovered processing state and the partial-recording notice');
+      const recoveryUi=await historyPage.evaluate(`({hidden:document.querySelector('.recovery-panel')?.hidden,availability:!!document.querySelector('.recovery-status')})`);
+      assert(recoveryUi.hidden && !recoveryUi.availability,'Completed meetings have no redundant recovery or availability banner');
       const screenshot=await historyPage.command('Page.captureScreenshot',{format:'png'});
       await writeFile(join(tmpdir(),'ariadne-recovery-history.png'),Buffer.from(screenshot.data,'base64'));
       console.log(JSON.stringify({browserRestartRecovery:{ok:true,recoveredDuration,recoveredVideoDuration,recordingStatus:recovered.recordingStatus,transcriptSegments:transcriptAfterRestart.length}},null,2));

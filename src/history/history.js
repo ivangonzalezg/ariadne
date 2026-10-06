@@ -220,8 +220,6 @@ function createMeetingCard(meeting) {
   moreWrap.appendChild(more);
   header.append(title, moreWrap);
   const date = document.createElement("p"); date.className = "meeting-date"; date.textContent = formatMeetingDate(meeting);
-  if (meeting.transcriptStatus === "incomplete") date.appendChild(document.createTextNode(` · ${t("transcript.incomplete")}`));
-  if (meeting.recordingStatus === "incomplete") date.appendChild(document.createTextNode(` · ${t("history.incompleteRecording")}`));
   const chips = document.createElement("div"); chips.className = "file-chips";
   [[meeting.hasTranscript, "file-text", t("common.transcript"), "transcript"], [true, "volume-2", t("common.audio"), "audio"], [meeting.hasVideo, "video", t("common.video"), "video"], [true, "braces", t("common.manifest"), "manifest"]].forEach(([available, iconName, label, tab]) => {
     const chip = document.createElement("span"); chip.className = `file-chip${available ? " is-available" : " is-unavailable"}`;
@@ -342,24 +340,18 @@ export function recoveryErrorMessage(error) {
 function createRecoveryPanel(meeting) {
   const panel = document.createElement("section"); panel.className = "recovery-panel";
   panel.setAttribute("aria-label", t("history.recoveryTitle"));
-  const status = document.createElement("div"); status.className = "recovery-status";
+  panel.hidden = true;
   const message = document.createElement("p"); message.className = "recovery-message";
   message.setAttribute("role", "status"); message.setAttribute("aria-atomic", "true");
   const retry = document.createElement("button"); retry.type = "button"; retry.className = "recovery-retry";
   retry.textContent = t("history.retryPending"); retry.hidden = true;
-  panel.append(status, message, retry);
+  panel.append(message, retry);
   const apply = result => {
     const recovery = result.recovery ?? result.processing;
-    status.replaceChildren();
-    for (const [label, value] of [["common.audio", result.audioConversionStatus], ["common.video", result.videoConversionStatus], ["common.transcript", result.transcriptExportStatus]]) {
-      if (!value || value === "skipped") continue;
-      const row = document.createElement("p");
-      row.textContent = `${t(label)}: ${t(`history.processing.${value}`)}`; status.appendChild(row);
-    }
     const error = recovery?.tasks?.find(task => task.error && task.state === "failed")?.error;
-    const partial = result.recordingStatus === "incomplete" || Object.values(recovery?.recoveredCoverage ?? {}).some(coverage => coverage.partial);
-    message.textContent = recovery?.supported === false ? t("history.recoveryUnavailable") : error ? recoveryErrorMessage(error) : partial ? t("history.recoveredPartial") : recovery?.pending ? t("history.recoveryInProgress") : "";
-    retry.hidden = !recovery?.supported || (!recovery.canRetry && !recovery.pending);
+    panel.hidden = !recovery?.supported || !(recovery.pending || recovery.canRetry || error);
+    message.textContent = error ? recoveryErrorMessage(error) : recovery?.pending ? t("history.recoveryInProgress") : recovery?.canRetry ? t("history.recoveryTaskError") : "";
+    retry.hidden = !recovery?.canRetry;
     retry.disabled = recovery?.pending || recoveryRequests.has(meeting.sessionId);
     retry.textContent = t(retry.disabled ? "history.recoveryInProgress" : "history.retryPending");
     return recovery?.pending;
@@ -374,7 +366,7 @@ function createRecoveryPanel(meeting) {
       const pending = apply(result);
       if (pending) recoveryPoll = setTimeout(refresh, 2000);
     } catch {
-      if (panel.isConnected) apply({ recovery: { supported: false } });
+      if (panel.isConnected && !panel.hidden) recoveryPoll = setTimeout(refresh, 2000);
     }
   };
   retry.addEventListener("click", async () => {

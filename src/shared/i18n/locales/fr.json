@@ -104,7 +104,6 @@
   "history.recoveryTitle": "Récupération",
   "history.retryPending": "Réessayer les tâches",
   "history.recoveryInProgress": "Récupération en cours",
-  "history.recoveredPartial": "Le fichier contient uniquement la partie sauvegardée. L’enregistrement reste incomplet.",
   "history.recoveryUnavailable": "Cette réunion ne dispose pas de journal récupérable. Les fichiers existants restent disponibles.",
   "history.recoveryQuotaError": "Le stockage est plein. Libérez de l’espace et réessayez.",
   "history.recoveryNoData": "Aucune partie continue sauvegardée ne peut être récupérée.",

@@ -104,7 +104,6 @@
   "history.recoveryTitle": "Recuperación",
   "history.retryPending": "Reintentar pendientes",
   "history.recoveryInProgress": "Recuperación en curso",
-  "history.recoveredPartial": "El archivo contiene únicamente el tramo guardado. La grabación sigue incompleta.",
   "history.recoveryUnavailable": "No hay un registro recuperable para esta reunión. Los archivos existentes siguen disponibles.",
   "history.recoveryQuotaError": "No hay espacio suficiente. Libera espacio y vuelve a intentar.",
   "history.recoveryNoData": "No hay un tramo continuo guardado que pueda recuperarse.",

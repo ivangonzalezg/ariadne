@@ -196,7 +196,7 @@ export class SessionWriter {
     await this.captions.queue;
     expectedCaptionEvents = Math.max(expectedCaptionEvents, this.journal.state.expectedCaptionEvents ?? 0);
     const captionState = this.captions.snapshot(expectedCaptionEvents);
-    this.transcriptStatus = this.transcriptStatus === "incomplete" || interruptionReason || captionPersistenceErrors.length || captionState.gaps.length || captionState.errors.length ? "incomplete" : "complete";
+    this.transcriptStatus = this.transcriptStatus === "incomplete" || captionPersistenceErrors.length || captionState.gaps.length || captionState.errors.length ? "incomplete" : "complete";
     expectedSequences = Object.fromEntries(["meeting", "video"].map(stream => [stream,
       Math.max(expectedSequences[stream] ?? 0, this.journal.state.expectedSequences?.[stream] ?? 0)]));
     await this.journal.checkpoint({ endedAt: this.endedAt, expectedSequences, muteManifest: resolvedMuteManifest,
@@ -204,7 +204,7 @@ export class SessionWriter {
       transcriptStatus: this.transcriptStatus, localIdentity: this.captions.model.localIdentity ?? null,
       persistenceErrors: [...this.writeFailures].map(([chunk, message]) => ({ chunk, message })) });
     const gaps = [...this.streamsUsed].some((stream) => this.journal.snapshot(stream).gaps.length);
-    this.recordingStatus = interruptionReason || gaps || this.writeFailures.size ? "incomplete" : "complete";
+    this.recordingStatus = gaps || this.writeFailures.size ? "incomplete" : "complete";
     this.interruptionReason = interruptionReason ?? (gaps ? "missing-fragments" : this.writeFailures.size ? "storage-error" : null);
     await this.journal.checkpoint({ completionStatus: this.recordingStatus, interruptionReason: this.interruptionReason });
     this.hasVideo = this.streamsUsed.has("video");
@@ -239,11 +239,13 @@ export class SessionWriter {
       const job = [...(this.journal.state.conversions ?? []), ...this.recovery.tasks].find(job => job.stream === stream);
       return !job ? "skipped" : ["waiting", "running"].includes(job.state) ? "pending" : job.state;
     };
+    // Public completion describes our capture lifecycle, not the meeting's duration.
+    const finalized = ["complete", "incomplete"].includes(this.recordingStatus);
     return { sessionId: this.sessionId, tabId: this.tabId, folderName: this.folderName,
       startedAt: this.startedAt, endedAt: this.endedAt, durationMs: Math.max(0, this.endedAt - this.startedAt),
       meetingTitle: this.meetingTitle, hasVideo: this.hasVideo, hasTranscript: this.transcriptExported ?? false,
-      recordingStatus: this.recordingStatus, interruptionReason: this.interruptionReason,
-      transcriptStatus: this.transcriptStatus, transcriptExportStatus: status("transcript"),
+      recordingStatus: finalized ? "complete" : this.recordingStatus,
+      transcriptStatus: finalized ? "complete" : this.transcriptStatus, transcriptExportStatus: status("transcript"),
       audioConversionStatus: status("meeting"), videoConversionStatus: status("video"),
       hasAudioMp3: status("meeting") === "succeeded" || Boolean(this.journal.state.conversions?.find(job => job.stream === "meeting")?.outputReady),
       hasVideoMp4: status("video") === "succeeded" || Boolean(this.journal.state.conversions?.find(job => job.stream === "video")?.outputReady),
@@ -262,13 +264,13 @@ export class SessionWriter {
       JSON.stringify(
         {
           persistentFormatVersion: CAPTURE_FORMAT_VERSION,
-          metadataDegraded: Boolean(this.interruptionReason || muteManifest?.degraded),
-          recordingStatus: this.recordingStatus, interruptionReason: this.interruptionReason,
+          metadataDegraded: Boolean(muteManifest?.degraded),
+          recordingStatus: this.getMetadata().recordingStatus,
           startedAt: this.startedAt,
           endedAt: this.endedAt,
           durationMs: this.endedAt - this.startedAt,
           meetingTitle: this.meetingTitle,
-          hasTranscript: this.transcriptExported ?? this.hasCaption, transcriptStatus: this.transcriptStatus,
+          hasTranscript: this.transcriptExported ?? false, transcriptStatus: this.getMetadata().transcriptStatus,
           localIdentity: this.captions.model.localIdentity ?? null,
           hasVideo: this.hasVideo,
           muteManifest,
@@ -337,7 +339,7 @@ export class SessionWriter {
           this.journal.state.recoveredCoverage ??= {};
           this.journal.state.recoveredCoverage[job.stream] = { firstSequence: segments[0].firstSequence,
             lastSequence: last.lastSequence, firstCaptureTs: segments[0].firstCaptureTs, lastCaptureTs: last.lastCaptureTs,
-            partial: this.recordingStatus === "incomplete", gaps: this.journal.snapshot(job.stream).gaps };
+            partial: this.journal.snapshot(job.stream).gaps.length > 0, gaps: this.journal.snapshot(job.stream).gaps };
           await this.journal.checkpoint({ captureSegments: [...this.segments.values()] });
           const inputs = [];
           for (const segment of segments) inputs.push(new Uint8Array(await (await this.meetingHandle.getFileHandle(segment.name)).getFile().then((file) => file.arrayBuffer())));

@@ -1,13 +1,15 @@
 import { processingQueue, terminal, retryDelay, deadline } from "../offscreen/conversion-queue.js";
 import { readJson } from "./capture-journal.js";
 
+const RECOVERY_VERSION = 2;
+
 export async function hasFile(directory, name) {
   try { return (await (await directory.getFileHandle(name)).getFile()).size > 0; }
   catch (error) { if (error.name === "NotFoundError") return false; throw error; }
 }
 
 export async function recoverySettled(directory, state) {
-  if (!state.historyPublished || !state.recoveryVersion || !["complete", "incomplete"].includes(state.recordingStatus)) return false;
+  if (!state.historyPublished || state.recoveryVersion !== RECOVERY_VERSION || !["complete", "incomplete"].includes(state.recordingStatus)) return false;
   const jobs = [...(state.conversions ?? []), ...(state.recoveryTasks ?? [])];
   if (!jobs.length || jobs.some(job => !terminal(job) || !job.published)) return false;
   const publication = jobs.find(job => job.stream === "publication");
@@ -71,9 +73,12 @@ export class SessionRecovery {
       for (const job of [...state.conversions, ...this.tasks]) {
         if (retry && (job.state === "failed" || job.settlementAttempts >= 10)) resetTask(job);
       }
-      // A new recovery schema discovers old incomplete sessions only once.
-      if (!state.recoveryVersion) {
-        state.recoveryVersion = 1;
+      // Republish old presentation metadata without re-encoding existing artifacts.
+      if (state.recoveryVersion !== RECOVERY_VERSION) {
+        state.recoveryVersion = RECOVERY_VERSION;
+        for (const coverage of Object.values(state.recoveredCoverage ?? {})) {
+          coverage.partial = Boolean(coverage.gaps?.length);
+        }
         state.recoveryRevision = (state.recoveryRevision ?? 0) + 1;
       }
       await writer.journal.checkpoint({ endedAt: writer.endedAt, transcriptExported: writer.transcriptExported });

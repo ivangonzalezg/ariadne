@@ -5,6 +5,7 @@ const ffmpeg = vi.hoisted(() => ({ runFfmpegAttempt: vi.fn() }));
 vi.mock("../offscreen/ffmpeg-client.js", () => ffmpeg);
 import { SessionWriter } from "./session-writer.js";
 import { conversionQueue, processingQueue } from "../offscreen/conversion-queue.js";
+import { recoverySettled } from "./session-recovery.js";
 import { readJson, writeFile } from "./capture-journal.js";
 let root;
 let index = 0;
@@ -38,14 +39,14 @@ afterEach(async () => {
 });
 
 describe("interrupted session recovery", () => {
-  it("migrates the old incomplete/no-jobs state and retains transcript and integrity warnings", async () => {
+  it("migrates old incomplete sessions and publishes them as completed", async () => {
     const writer = await captured({ captions: true });
     await writer.checkpoint({ recordingStatus: "incomplete", transcriptStatus: "incomplete",
       endedAt: writer.startedAt + 3000, interruptionReason: "capture-tab-disappeared", historyPublished: true });
     const restored = await SessionWriter.restore(writer.folderName);
     await restored.resumeRecovery(); await done(restored);
     const manifest = await readJson(restored.meetingHandle, "manifest.json");
-    expect(manifest).toMatchObject({ recordingStatus: "incomplete", transcriptStatus: "incomplete",
+    expect(manifest).toMatchObject({ recordingStatus: "complete", transcriptStatus: "complete",
       audioConversionStatus: "succeeded", hasAudioMp3: true, transcriptExportStatus: "succeeded", hasTranscript: true });
     expect(await readJson(restored.meetingHandle, "transcripcion.json")).toMatchObject([{ text: "Saved words", speaker: "Ana" }]);
     expect(ffmpeg.runFfmpegAttempt).toHaveBeenCalledOnce();
@@ -116,19 +117,19 @@ describe("interrupted session recovery", () => {
     expect(writer.getMetadata().hasAudioMp3).toBe(true);
   });
 
-  it("retries transcript export independently and never upgrades incomplete capture", async () => {
+  it("retries transcript export independently of how capture ended", async () => {
     const writer = await captured({ captions: true });
     const file = await writer.meetingHandle.getFileHandle("transcripcion.json", { create: true });
     const createWritable = file.createWritable.bind(file);
     vi.spyOn(file, "createWritable").mockRejectedValueOnce(new Error("temporary export failure"));
     await writer.finalize({ interruptionReason: "capture-tab-disappeared" });
     await vi.waitFor(() => expect(writer.getMetadata().hasAudioMp3).toBe(true));
-    expect(writer.getMetadata()).toMatchObject({ transcriptExportStatus: "pending", hasTranscript: false, transcriptStatus: "incomplete" });
+    expect(writer.getMetadata()).toMatchObject({ transcriptExportStatus: "pending", hasTranscript: false, transcriptStatus: "complete" });
     file.createWritable = createWritable;
     const transcriptTask = writer.recovery.tasks.find(job => job.stream === "transcript");
     transcriptTask.nextAttemptAt = Date.now(); processingQueue.wake();
     await done(writer);
-    expect(writer.getMetadata()).toMatchObject({ hasTranscript: true, transcriptExportStatus: "succeeded", transcriptStatus: "incomplete" });
+    expect(writer.getMetadata()).toMatchObject({ hasTranscript: true, transcriptExportStatus: "succeeded", transcriptStatus: "complete" });
     expect(ffmpeg.runFfmpegAttempt).toHaveBeenCalledOnce();
   });
 
@@ -181,7 +182,7 @@ it("restores all 501 committed chunks from the supplied interrupted-session shap
     interruptionReason: "capture-tab-disappeared", conversions: [], historyPublished: true });
   const restored = await SessionWriter.restore(writer.folderName);
   await restored.resumeRecovery(); await done(restored);
-  expect(restored.getMetadata()).toMatchObject({ recordingStatus: "incomplete", audioConversionStatus: "succeeded", hasAudioMp3: true });
+  expect(restored.getMetadata()).toMatchObject({ recordingStatus: "complete", audioConversionStatus: "succeeded", hasAudioMp3: true });
   expect(restored.journal.records.size).toBe(501);
   expect(restored.recovery.snapshot().recoveredCoverage.meeting.lastSequence).toBe(501);
   expect(ffmpeg.runFfmpegAttempt.mock.calls[0][0].inputs[0].byteLength).toBe(502);
@@ -211,4 +212,28 @@ it("publishes the meeting in history even when the manifest cannot be written", 
   const publications = chrome.runtime.sendMessage.mock.calls.filter(([message]) => message.type === "asterion:session-finalized");
   expect(publications.length).toBeGreaterThan(0);
   expect(publications[0][0].processing.tasks.find(job => job.stream === "publication")).toMatchObject({ state: "failed", error: "Full" });
+});
+
+
+it("republishes settled v1 metadata as a completed recording without re-encoding or changing transcript bytes", async () => {
+  const writer = await captured({ captions: true });
+  await writer.finalize({}); await done(writer);
+  const captionFile = writer.meetingHandle.files.get("transcripcion.json");
+  const captionBytes = captionFile.bytes.slice();
+  const manifest = await readJson(writer.meetingHandle, "manifest.json");
+  await writeFile(writer.meetingHandle, "manifest.json", JSON.stringify({ ...manifest,
+    recordingStatus: "incomplete", transcriptStatus: "incomplete", interruptionReason: "capture-tab-disappeared" }));
+  await writer.checkpoint({ recoveryVersion: 1, recordingStatus: "incomplete", transcriptStatus: "incomplete",
+    interruptionReason: "capture-tab-disappeared", recoveredCoverage: { meeting: { partial: true, gaps: [] } } });
+  expect(await recoverySettled(writer.meetingHandle, writer.journal.state)).toBe(false);
+  const restored = await SessionWriter.restore(writer.folderName);
+  await restored.resumeRecovery(); await done(restored);
+  const republished = await readJson(restored.meetingHandle, "manifest.json");
+  expect(republished).toMatchObject({ recordingStatus: "complete", transcriptStatus: "complete",
+    recoveredCoverage: { meeting: { partial: false } }, audioConversionStatus: "succeeded", transcriptExportStatus: "succeeded" });
+  expect(republished).not.toHaveProperty("interruptionReason");
+  expect(restored.journal.state.interruptionReason).toBe("capture-tab-disappeared");
+  expect(await recoverySettled(restored.meetingHandle, restored.journal.state)).toBe(true);
+  expect(captionFile.bytes).toEqual(captionBytes);
+  expect(ffmpeg.runFfmpegAttempt).toHaveBeenCalledOnce();
 });

@@ -104,7 +104,6 @@
   "history.recoveryTitle": "Recovery",
   "history.retryPending": "Retry pending tasks",
   "history.recoveryInProgress": "Recovery in progress",
-  "history.recoveredPartial": "The file contains only the saved portion. The recording remains incomplete.",
   "history.recoveryUnavailable": "This meeting has no recoverable journal. Existing files remain available.",
   "history.recoveryQuotaError": "Storage is full. Free some space and try again.",
   "history.recoveryNoData": "No continuous saved portion is available to recover.",

@@ -80,20 +80,43 @@ it("renders recovery states, deduplicates retry, and preserves content on progre
   await vi.waitFor(() => expect(document.querySelector(".transcript-list")).toBeTruthy());
   const content = document.querySelector(".transcript-list");
   const button = document.querySelector(".recovery-retry");
+  expect(button.hidden).toBe(true);
   expect(button.disabled).toBe(true);
+  expect(document.querySelector(".recovery-panel").hidden).toBe(false);
+  expect(document.querySelector(".recovery-status")).toBeNull();
   expect(document.querySelector(".recovery-message").getAttribute("role")).toBe("status");
   const failed = { ...entry, audioConversionStatus: "failed", processing: { supported: true, pending: false, canRetry: true, tasks: [{ stream: "meeting", state: "failed", error: "INPUT_INVALID" }] } };
   chrome.runtime.sendMessage.mockResolvedValue({ ...failed, recovery: failed.processing });
   historyChanged({ meetingHistory: { newValue: [failed] } }, "local");
   expect(document.querySelector(".transcript-list")).toBe(content);
   expect(document.querySelector(".recovery-retry")).toBe(button);
+  expect(button.hidden).toBe(false);
   expect(button.disabled).toBe(false);
   button.click(); button.click();
   await vi.waitFor(() => expect(chrome.runtime.sendMessage.mock.calls.filter(([message]) => message.type === "asterion:retry-recovery")).toHaveLength(1));
+  const completed = { ...entry, audioConversionStatus: "succeeded", processing: { supported: true, pending: false, canRetry: false, tasks: [] } };
+  chrome.runtime.sendMessage.mockResolvedValue({ ...completed, recovery: completed.processing });
+  historyChanged({ meetingHistory: { newValue: [completed] } }, "local");
+  expect(document.querySelector(".recovery-panel").hidden).toBe(true);
+  expect(document.querySelector(".transcript-list")).toBe(content);
 });
 
 it("uses understandable quota and unrecoverable-data errors", async () => {
   const { recoveryErrorMessage } = await import("./history.js");
   expect(recoveryErrorMessage("QuotaExceededError")).toBe("history.recoveryQuotaError");
   expect(recoveryErrorMessage("INPUT_INVALID: no continuous saved prefix")).toBe("history.recoveryNoData");
+});
+
+
+it("does not show incompleteness notices for legacy recovered meetings", async () => {
+  const entry = meeting({ folderName: "recovery-folder", recordingStatus: "incomplete", transcriptStatus: "incomplete",
+    audioConversionStatus: "succeeded", transcriptExportStatus: "succeeded",
+    processing: { supported: true, pending: false, canRetry: false, recoveredCoverage: { meeting: { partial: true } }, tasks: [] } });
+  chrome.runtime.sendMessage = vi.fn().mockResolvedValue({ ...entry, recovery: entry.processing });
+  historyChanged({ meetingHistory: { newValue: [entry] } }, "local");
+  document.querySelector(".meeting-card").click();
+  await vi.waitFor(() => expect(document.querySelector(".recovery-panel").hidden).toBe(true));
+  expect(document.querySelector(".recovery-status")).toBeNull();
+  expect(document.querySelector(".meeting-date").textContent).not.toContain("incomplete");
+  expect(document.querySelector(".recovery-message").textContent).toBe("");
 });
