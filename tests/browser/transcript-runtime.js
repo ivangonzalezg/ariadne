@@ -66,7 +66,10 @@ window.runTranscriptTest = async () => {
     return { passed: true, checks: results, segments: output, durableEvents: restored.captions.events.size };
   } finally {
     stopDom?.(); await service.stop(); delivery.dispose(); local.close(); remote.close();
-    await root.removeEntry(writer.folderName, { recursive: true });
+    // The harness discards its whole temporary Chrome profile. A pending OPFS
+    // writer can still hold a lock here; cleanup must not hide the actual test
+    // failure behind a removeEntry DOMException.
+    await root.removeEntry(writer.folderName, { recursive: true }).catch(error => console.warn("OPFS fixture cleanup:", error.message));
   }
 };
 

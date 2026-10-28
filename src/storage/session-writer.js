@@ -30,10 +30,11 @@ function sendConversionMessage(message) {
 }
 
 export class SessionWriter {
-  constructor({ sessionId, tabId, meetingTitle, minimumMeetingDurationSeconds = 0, folderName = null, restore = false }) {
+  constructor({ sessionId, tabId, meetingTitle, platform = null, minimumMeetingDurationSeconds = 0, folderName = null, restore = false }) {
     this.sessionId = sessionId;
     this.tabId = tabId;
     this.meetingTitle = meetingTitle || "Reunión sin título";
+    this.platform = ["meet", "teams"].includes(platform) ? platform : null;
     this.startedAt = Date.now();
     this.folderName = folderName;
     this.restoring = restore;
@@ -59,13 +60,14 @@ export class SessionWriter {
     this.meetingHandle = await root.getDirectoryHandle(this.folderName, { create: !this.restoring });
     this.journal = await CaptureJournal.open(this.meetingHandle, this.restoring ? null : {
       version: CAPTURE_FORMAT_VERSION, sessionId: this.sessionId, tabId: this.tabId, folderName: this.folderName,
-      meetingTitle: this.meetingTitle, startedAt: this.startedAt, recordingStatus: "recording",
+      meetingTitle: this.meetingTitle, platform: this.platform, startedAt: this.startedAt, recordingStatus: "recording",
       minimumMeetingDurationSeconds: this.minimumMeetingDurationSeconds,
       generations: [], expectedSequences: {}, conversions: [], captionSnapshots: [], speakerLabels: [], muteManifest: null,
     });
     if (this.journal.state.sessionId !== this.sessionId) throw new Error("Session state mismatch");
     const state = this.journal.state;
     this.startedAt = state.startedAt; this.endedAt = state.endedAt; this.meetingTitle = state.meetingTitle;
+    this.platform = ["meet", "teams"].includes(state.platform) ? state.platform : null;
     this.minimumMeetingDurationSeconds = state.minimumMeetingDurationSeconds ?? 0;
     this.captionSnapshots = state.captionSnapshots ?? []; this.speakerLabels = state.speakerLabels ?? [];
     this.captions = await CaptionJournal.open(this.meetingHandle, this.sessionId);
@@ -252,7 +254,7 @@ export class SessionWriter {
     const finalized = ["complete", "incomplete"].includes(this.recordingStatus);
     return { sessionId: this.sessionId, tabId: this.tabId, folderName: this.folderName,
       startedAt: this.startedAt, endedAt: this.endedAt, durationMs: Math.max(0, this.endedAt - this.startedAt),
-      meetingTitle: this.meetingTitle, hasVideo: this.hasVideo, hasTranscript: this.transcriptExported ?? false,
+      meetingTitle: this.meetingTitle, platform: this.platform, hasVideo: this.hasVideo, hasTranscript: this.transcriptExported ?? false,
       recordingStatus: finalized ? "complete" : this.recordingStatus,
       transcriptStatus: finalized ? "complete" : this.transcriptStatus, transcriptExportStatus: status("transcript"),
       audioConversionStatus: status("meeting"), videoConversionStatus: status("video"),
@@ -279,6 +281,7 @@ export class SessionWriter {
           endedAt: this.endedAt,
           durationMs: this.endedAt - this.startedAt,
           meetingTitle: this.meetingTitle,
+          platform: this.platform,
           hasTranscript: this.transcriptExported ?? false, transcriptStatus: this.getMetadata().transcriptStatus,
           localIdentity: this.captions.model.localIdentity ?? null,
           hasVideo: this.hasVideo,

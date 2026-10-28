@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<title>Teams integration fixture</title>
+<style>body { font: 16px system-ui; padding: 24px; } button { margin: 8px; padding: 12px; }</style>
+<h1 data-tid="meeting-title">Teams integration fixture</h1>
+<div id="call"></div>
+<script>
+const context = new AudioContext();
+const tones = [];
+function tone(frequency) {
+  const oscillator = context.createOscillator(), gain = context.createGain(), output = context.createMediaStreamDestination();
+  oscillator.frequency.value = frequency; gain.gain.value = 0.1;
+  oscillator.connect(gain); gain.connect(output); oscillator.start(); tones.push(oscillator);
+  return output.stream;
+}
+const remote = document.createElement("audio"); remote.srcObject = tone(440); document.body.append(remote);
+const pc = new RTCPeerConnection(); pc.addTrack(tone(880).getAudioTracks()[0]);
+function join() {
+  document.getElementById("call").innerHTML = `
+    <div id="call-controls"><button id="hangup-button">Leave</button>
+    <button id="microphone-button" aria-label="Unmute mic">Mic</button>
+    <button id="closed-captions-button" aria-pressed="false">Captions</button></div>
+    <div data-tid="closed-captions-renderer" hidden></div>`;
+  document.getElementById("hangup-button").onclick = () => document.getElementById("call").replaceChildren();
+  document.getElementById("microphone-button").onclick = event => {
+    const button = event.currentTarget;
+    button.setAttribute("aria-label", button.getAttribute("aria-label") === "Mute mic" ? "Unmute mic" : "Mute mic");
+  };
+  document.getElementById("closed-captions-button").onclick = event => {
+    const button = event.currentTarget, enabled = button.getAttribute("aria-pressed") !== "true";
+    button.setAttribute("aria-pressed", String(enabled)); document.querySelector('[data-tid="closed-captions-renderer"]').hidden = !enabled;
+  };
+}
+function speak(speaker, text, id) {
+  const row = document.createElement("div"); row.dataset.tid = "closed-caption-chat-message"; row.dataset.messageId = id;
+  for (const [tid, value] of [["author", speaker], ["closed-caption-text", text]]) {
+    const span = document.createElement("span"); span.dataset.tid = tid; span.textContent = value; row.append(span);
+  }
+  document.querySelector('[data-tid="closed-captions-renderer"]').append(row);
+}
+window.fixture = { context, pc, remote, join, speak };
+context.resume(); join();
+</script>
+</html>

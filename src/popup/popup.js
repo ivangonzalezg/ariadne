@@ -1,6 +1,7 @@
 import { captionStatusLabel } from "../shared/caption-status.js";
 import { icon } from "../shared/icons.js";
 import { initI18n } from "../shared/i18n/i18n.js";
+import { meetingPlatformForUrl } from "../shared/meeting-platform.js";
 
 const { t } = await initI18n();
 const appEl = document.getElementById("app");
@@ -58,11 +59,13 @@ appEl.innerHTML = `
   <div class="action-error" role="alert" hidden>${t("popup.actionError")}</div>
   <div class="footer">
     <div class="divider"></div>
-    <div class="toggle-row">
-      <div class="source-left" id="auto-start-label">${icon("monitor", { size: 16, color: "var(--text-secondary)" })}<span>${t("popup.autoDetectLabel")}</span></div>
-      <button id="auto-start-toggle" class="toggle" type="button" role="switch" aria-labelledby="auto-start-label" aria-describedby="auto-start-helper" aria-checked="false"><span class="toggle-knob"></span></button>
+    <div class="auto-start-setting">
+      <div class="toggle-row">
+        <div class="source-left" id="auto-start-label">${icon("monitor", { size: 16, color: "var(--text-secondary)" })}<span>${t("popup.autoDetectLabel")}</span></div>
+        <button id="auto-start-toggle" class="toggle" type="button" role="switch" aria-labelledby="auto-start-label" aria-describedby="auto-start-helper" aria-checked="false"><span class="toggle-knob"></span></button>
+      </div>
+      <div class="helper" id="auto-start-helper">${t("popup.autoDetectHelper")}</div>
     </div>
-    <div class="helper" id="auto-start-helper">${t("popup.autoDetectHelper")}</div>
     <button id="history-link" class="link-row" type="button">
       <span class="source-left">${icon("history", { size: 16, color: "var(--text-secondary)" })}<span>${t("popup.historyLink")}</span></span>
       ${icon("chevron-right", { size: 16, color: "var(--text-secondary)" })}
@@ -234,7 +237,7 @@ async function readSnapshot() {
     chrome.tabs.query({ active: true, currentWindow: true }),
   ]);
   const tab = tabs[0];
-  const tabId = tab?.url?.startsWith("https://meet.google.com/") ? tab.id : null;
+  const tabId = meetingPlatformForUrl(tab?.url) ? tab.id : null;
   const nextStatus = tabId === null ? null : await chrome.tabs.sendMessage(tabId, { type: "asterion:get-status" });
   if (disposed || revision !== actionRevision) { refreshQueued = !disposed; return; }
   if (activeTabId !== tabId || !nextStatus?.inMeeting || nextStatus.state === "error") pendingAction = null;

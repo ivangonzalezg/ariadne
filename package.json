@@ -1,6 +1,6 @@
 {
   "name": "ariadne",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,12 +11,14 @@
     "build:offscreen": "esbuild src/offscreen/offscreen.js --bundle --format=esm --outfile=dist/offscreen.bundle.js",
     "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen",
     "test:audio:browser": "node scripts/test-remote-audio-browser.mjs",
-    "test:transcript:browser": "node scripts/test-transcript-browser.mjs"
+    "test:transcript:browser": "node scripts/test-transcript-browser.mjs",
+    "test:teams:browser": "node scripts/test-teams-browser.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
     "jsdom": "^25.0.0",
     "lucide-static": "^1.46.0",
+    "playwright": "^1.58.2",
     "vitest": "^2.1.0"
   },
   "dependencies": {

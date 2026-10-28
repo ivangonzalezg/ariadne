@@ -63,7 +63,7 @@ async function ensureOffscreenDocument() {
       .createDocument({
         url: OFFSCREEN_URL,
         reasons: ["BLOBS"],
-        justification: "Escribir localmente el audio, video y transcripción de una reunión de Meet.",
+        justification: "Escribir localmente el audio, video y transcripción de una reunión de Meet o Teams.",
       })
       .finally(() => {
         offscreenCreationPromise = null;
@@ -218,7 +218,8 @@ function appendToHistory(meta) {
         (existing.processing.revision === meta.processing.revision && !existing.processing.pending && meta.processing.pending))) return;
     const entries = meetingHistory.filter((entry) => entry.sessionId !== meta.sessionId);
     const { sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing } = meta;
-    entries.push({ sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing });
+    const platform = meta.platform ?? existing?.platform ?? null;
+    entries.push({ sessionId, folderName, meetingTitle, platform, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing });
     entries.sort((a, b) => b.startedAt - a.startedAt);
     await chrome.storage.local.set({ meetingHistory: entries.slice(0, 200) });
   });
@@ -294,7 +295,7 @@ async function reconcileSessions() {
       } catch {} finally { clearTimeout(timer); }
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    if (status?.sessionId !== sessionId) await finalizeAbandonedSession(sessionId);
+    if (status?.sessionId !== sessionId && !status?.drainingSessionIds?.includes(sessionId)) await finalizeAbandonedSession(sessionId);
   }
   await updateRecoveryAlarm();
   return result;

@@ -1,14 +1,14 @@
-import { observeLocalIdentity } from "./meet-local-identity.js";
+import { getMeetingPlatform } from "./meeting-platform.js";
 import { CaptionDelivery } from "./caption-delivery.js";
 import { CaptionRouter } from "./caption-router.js";
 // src/content/meet-detector.js
-import { isInActiveMeeting, observeMeetingPresence } from "./meeting-presence.js";
-import { observeMuteState } from "./meet-mute-observer.js";
-import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
+import { observeMeetingPresence } from "./meeting-presence.js";
 import { showBanner, updateBannerState } from "./meet-banner.js";
 import { ChunkDelivery } from "./chunk-delivery.js";
 import { debugEvent, debugLog, isDebugEnabled, setDebugEnabled } from "../shared/debug-log.js";
 
+const platform = getMeetingPlatform();
+const isInActiveMeeting = () => platform.isInActiveMeeting();
 // Nunca debe rechazar: startRecording()/waitForMeeting() esperan esta promesa
 // antes de arrancar, así que si chrome.storage.local.get fallara (ej. una
 // carrera transitoria en un reload en caliente de la extensión) sin este
@@ -32,6 +32,7 @@ function postToMainWorld(message) {
 }
 
 const deliveries = new Map();
+const drainingSessionIds = new Set();
 let storageError = null;
 let sessionId = null;
 let currentState = "idle";
@@ -118,9 +119,7 @@ function cleanupObservers() {
 }
 
 function getCurrentMeetingTitle() {
-  return document.title && document.title.trim() && document.title.trim() !== "Meet"
-    ? document.title.trim()
-    : "Reunión sin título";
+  return platform.getTitle();
 }
 
 async function startRecording() {
@@ -144,10 +143,10 @@ async function startRecording() {
   captionState = "preparing"; captionStorage = { pending: 0, error: null };
   const preferences = await chrome.storage.local.get({ captionMode: "dom" }).catch(() => ({ captionMode: "dom" }));
   if (!canContinueStart(attempt)) return cancelStart(attempt);
-  captionMode = ["dom", "shadow", "hybrid"].includes(preferences.captionMode) ? preferences.captionMode : "dom";
+  captionMode = platform.captionMode(preferences.captionMode);
   videoEnabled = false;
   try {
-    const opened = await chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle });
+    const opened = await chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle, platform: platform.id });
     if (!opened?.folderName || opened.error) throw new Error(opened?.error ?? "Storage initialization failed");
     attempt.opened = true;
     attempt.storageStartedAt = opened.startedAt;
@@ -194,7 +193,7 @@ async function startRecording() {
   delivery.router = new CaptionRouter({ sessionId, mode: captionMode,
     emit: (event) => delivery.captions.add(event), log: debugEvent });
   deliveries.set(sessionId, delivery);
-  delivery.stopIdentity = observeLocalIdentity(identity => {
+  delivery.stopIdentity = platform.observeLocalIdentity(identity => {
     if (sessionId !== delivery.sessionId || delivery.captionCutoff != null) return;
     delivery.router.setLocalIdentity(identity);
     debugEvent("caption-local-identity", { sessionId, ...identity });
@@ -213,7 +212,7 @@ async function startRecording() {
   // llamada - se aprovecha eso para mandar "start-session" recién ahí, con el
   // estado real de mute ya conocido (el GainNode del mic necesita arrancar en
   // el valor correcto desde el primer instante, ver Task 13 del plan).
-  stopMuteObserver = observeMuteState((muted, timestampMs) => {
+  stopMuteObserver = platform.observeMuteState((muted, timestampMs) => {
     micMuted = muted;
     refreshBanner();
     if (isFirstMuteReport) {
@@ -234,7 +233,7 @@ async function startRecording() {
     });
   });
 
-  const cleanup = enableCaptionsAndObserve((snapshot) => {
+  const cleanup = platform.observeCaptions((snapshot) => {
     if (sessionId !== delivery.sessionId || delivery.captionCutoff != null) return;
     delivery.router.receive(snapshot);
   }, {
@@ -377,6 +376,9 @@ window.addEventListener("message", (event) => {
     // Recorder failures may end a capture without an explicit stop click.
     if (!captureAttempt?.stopped) beginNotice(isInActiveMeeting() ? "manual" : "meeting-left", message.endedAt);
     cutoffCaptions(delivery, message.endedAt);
+    // Recovery must keep this writer open while deliveries drain, even if a
+    // new capture starts before this session finishes saving.
+    drainingSessionIds.add(message.sessionId);
     (async () => {
       clearInterval(delivery?.statusTimer);
       const [persistenceErrors, captionPersistenceErrors] = await Promise.all([delivery?.flush() ?? [], delivery?.captions.flush() ?? []]);
@@ -393,6 +395,7 @@ window.addEventListener("message", (event) => {
       }
     })().catch((error) => updateNotice({ sessionId: message.sessionId, error: error.message }))
       .finally(() => {
+        drainingSessionIds.delete(message.sessionId);
         if (!delivery?.captions.pending.size) {
           delivery?.captions.dispose();
           deliveries.delete(message.sessionId);
@@ -415,6 +418,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "asterion:get-status") {
     sendResponse({
       sessionId,
+      drainingSessionIds: [...drainingSessionIds],
+      platform: platform.id,
       inMeeting: isInActiveMeeting(),
       state: currentState,
       meetingTitle: meetingTitle ?? getCurrentMeetingTitle(),
@@ -475,4 +480,4 @@ async function onMeetingPresence(active) {
   }
 }
 
-debugLoggingReady.then(() => observeMeetingPresence(active => { void onMeetingPresence(active); }));
+debugLoggingReady.then(() => observeMeetingPresence(active => { void onMeetingPresence(active); }, { isActive: isInActiveMeeting }));

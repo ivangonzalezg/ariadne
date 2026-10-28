@@ -455,107 +455,48 @@ it('opens the menu by keyboard, handles Escape, and only animates pointer change
   expect(animations[0].cancel).toHaveBeenCalled(); Element.prototype.animate = originalAnimate;
 });
 
-describe.skip('transcript AI integration (temporarily unavailable)', () => {
-it('copies current titled Markdown and opens complete literal transcript URLs from every tab without replacing media', async () => {
-  const { select, page, entry, getDirectory } = await openFixture('ai-actions');
-  const writeText = vi.fn().mockResolvedValue(); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-  chrome.tabs.create = vi.fn().mockResolvedValue({ id: 1 });
-  const control = document.querySelector('.transcript-actions');
-  await vi.waitFor(() => expect(control.querySelector('.split-primary').disabled).toBe(false));
-  const reads = getDirectory.mock.calls.length;
-  historyChanged({ meetingHistory: { newValue: [{ ...entry, meetingTitle: 'Café & ? # % 新' }] } }, 'local');
-  control.querySelector('.split-primary').click();
-  await vi.waitFor(() => expect(control.querySelector('.split-primary').getAttribute('aria-label')).toBe('Transcript copied'));
-  expect(control.querySelector('.transcript-action-status').textContent).toBe('');
-  expect(writeText).toHaveBeenCalledWith('# Café & ? # % 新\n\n**Ana** _[00:00]_\nPersistent transcript\n');
-  expect(getDirectory).toHaveBeenCalledTimes(reads);
-  for (const key of ['audio', 'video', 'manifest']) {
-    select(key); await vi.waitFor(() => expect(page(key).querySelector('.detail-footer')).toBeTruthy());
-    const media = page(key).querySelector('audio,video'); if (media) { page(key).querySelector('.media-play').click(); await vi.waitFor(() => expect(media.paused).toBe(false)); }
-    control.querySelector('.split-trigger').click();
-    expect([...document.querySelectorAll('.split-menu [role="menuitem"]')].map(item => item.textContent)).toEqual(['Open in ChatGPT', 'Open in Claude', 'Open in Grok']);
-    document.querySelector('.split-menu [data-value="chatgpt"]').click();
-    await vi.waitFor(() => expect(control.querySelector('.split-primary').disabled).toBe(false));
-    expect(control.querySelector('.transcript-action-status').textContent).toBe('');
-    const options = chrome.tabs.create.mock.calls.at(-1)[0];
-    expect(new URL(options.url).searchParams.get('q')).toBe(writeText.mock.calls[0][0]); expect(options.active).toBe(true);
-    if (media) { expect(page(key).querySelector('audio,video')).toBe(media); expect(media.paused).toBe(false); }
-  }
-  const { transcriptAiUrl } = await import('./history.js');
-  const long = 'Café & ? # %\n**Ana** 日本語 '.repeat(10000);
-  for (const provider of ['chatgpt', 'claude', 'grok']) expect(new URL(transcriptAiUrl(provider, long)).searchParams.get('q')).toBe(long);
-  expect(new URL(transcriptAiUrl('claude', long)).pathname).toBe('/new');
-  expect(() => transcriptAiUrl('unknown', long)).toThrow();
-});
-it('reports clipboard and tab failures and keeps copying available', async () => {
-  await openFixture('ai-failures');
-  const control = document.querySelector('.transcript-actions');
-  await vi.waitFor(() => expect(control.querySelector('.split-primary').disabled).toBe(false));
-  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('Denied')) } });
-  control.querySelector('.split-primary').click();
-  await vi.waitFor(() => expect(control.textContent).toContain('Could not copy'));
-  expect(control.textContent).not.toContain('Transcript copied');
-  chrome.tabs.create = vi.fn().mockRejectedValue(new Error('URL too long'));
-  control.querySelector('.split-trigger').click(); document.querySelector('.split-menu [data-value="grok"]').click();
-  await vi.waitFor(() => expect(control.textContent).toContain('Could not open'));
-  expect(control.querySelector('.split-primary').disabled).toBe(false);
-});
-it('invalidates transcript content when availability changes and ignores obsolete reads', async () => {
-  const { entry, root } = await openFixture('ai-obsolete');
-  let release;
-  Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: () => new Promise(resolve => { release = () => resolve(root); }) } });
-  historyChanged({ meetingHistory: { newValue: [{ ...entry, transcriptExportStatus: 'pending' }] } }, 'local');
-  const old = document.querySelector('.transcript-actions'); expect(old.querySelector('.split-primary').disabled).toBe(true);
-  historyChanged({ meetingHistory: { newValue: [{ ...entry, hasTranscript: false }] } }, 'local');
-  expect(old.hidden).toBe(true); release(); await Promise.resolve(); await Promise.resolve();
-  expect(old.querySelector('.split-primary').disabled).toBe(true);
-  Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => root } });
-  const folder = await root.getDirectoryHandle(entry.folderName);
-  const writer = await (await folder.getFileHandle('transcripcion.json')).createWritable(); await writer.write('{invalid'); await writer.close();
-  historyChanged({ meetingHistory: { newValue: [{ ...entry, transcriptExportStatus: 'failed' }] } }, 'local');
-  await vi.waitFor(() => expect(old.textContent).toContain('could not be read'));
-  expect(old.querySelector('.split-primary').disabled).toBe(true);
-  document.querySelectorAll('.meeting-card')[0].click();
-  historyChanged({ meetingHistory: { newValue: [] } }, 'local');
-  expect(old.isConnected).toBe(false); expect(document.querySelector('.split-menu')).toBeNull();
-});
-it('does not enable a new meeting with an old pending transcript', async () => {
-  const { root, entry } = await openFixture('ai-switch');
-  let release;
-  Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: () => new Promise(resolve => { release = () => resolve(root); }) } });
-  historyChanged({ meetingHistory: { newValue: [entry, { ...entry, sessionId: 'ai-switch-other', folderName: 'ai-switch-other' }] } }, 'local');
-  document.querySelectorAll('.meeting-card')[1].click();
-  const obsolete = document.querySelector('.transcript-actions');
-  const obsoletePrimary = obsolete.querySelector('.split-primary');
-  expect(obsoletePrimary.disabled).toBe(true);
-  Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => root } });
-  document.querySelectorAll('.meeting-card')[0].click();
-  const current = document.querySelector('.transcript-actions');
-  await vi.waitFor(() => expect(current.querySelector('.split-primary').disabled).toBe(false));
-  release(); await Promise.resolve(); await Promise.resolve();
-  expect(obsolete.isConnected).toBe(false); expect(obsoletePrimary.disabled).toBe(true);
-  expect(current.querySelector('.split-primary').disabled).toBe(false);
-});
-it('shows a green copy check for two seconds only after clipboard success, and restarts its timeout on another copy', async () => {
-  await openFixture('copy-check');
-  const control = document.querySelector('.transcript-actions'), button = control.querySelector('.split-primary');
-  await vi.waitFor(() => expect(button.disabled).toBe(false));
-  vi.useFakeTimers();
-  try {
-    let finish;
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(() => new Promise(resolve => { finish = resolve; })) } });
-    const copySvg = button.querySelector('svg').innerHTML;
-    button.click(); expect(button.querySelector('svg').innerHTML).toBe(copySvg);
-    finish(); await Promise.resolve(); await Promise.resolve();
-    expect(button.querySelector('svg').getAttribute('stroke')).toBe('var(--accent-green)');
-    expect(control.querySelector('.transcript-action-status').textContent).toBe('');
-    await vi.advanceTimersByTimeAsync(1999); expect(button.getAttribute('aria-label')).toBe('Transcript copied');
-    button.click(); finish(); await Promise.resolve(); await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(1999); expect(button.getAttribute('aria-label')).toBe('Transcript copied');
-    await vi.advanceTimersByTimeAsync(1); expect(button.hasAttribute('aria-label')).toBe(false);
-    expect(button.querySelector('svg').innerHTML).toBe(copySvg);
+describe('disabled transcript AI integration', () => {
+  it.each(['transcript', 'audio', 'video', 'manifest'])('keeps AI actions unavailable and local content accessible on the %s tab', async key => {
+    const { select, page } = await openFixture(`disabled-ai-${key}`);
+    select(key);
+    await vi.waitFor(() => expect(page(key).querySelector('.detail-footer')).toBeTruthy());
+    expect(page(key).getAttribute('aria-hidden')).toBe('false');
+    expect(page(key).querySelector('.detail-footer .split-primary').disabled).toBe(false);
+    expect(document.querySelector('.transcript-actions')).toBeNull();
+    expect(document.querySelector('.detail-navigation .split-trigger')).toBeNull();
+    if (key === 'transcript') expect(page(key).textContent).toContain('Persistent transcript');
+    const media = page(key).querySelector('audio,video');
+    if (media) {
+      page(key).querySelector('.media-play').click();
+      await vi.waitFor(() => expect(media.paused).toBe(false));
+      expect(page(key).querySelector('audio,video')).toBe(media);
+    }
     historyChanged({ meetingHistory: { newValue: [] } }, 'local');
-  } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps AI actions unavailable after transcript availability changes and switching meetings', async () => {
+    const { entry, select, page } = await openFixture('disabled-ai-updates');
+    const other = { ...entry, sessionId: 'disabled-ai-updates-other', folderName: 'disabled-ai-updates-other' };
+    historyChanged({ meetingHistory: { newValue: [{ ...entry, hasTranscript: false }, other] } }, 'local');
+    expect(page('transcript')).toBeNull();
+    expect(document.querySelector('.transcript-actions')).toBeNull();
+    historyChanged({ meetingHistory: { newValue: [entry, other] } }, 'local');
+    select('transcript');
+    await vi.waitFor(() => expect(page('transcript').textContent).toContain('Persistent transcript'));
+    expect(document.querySelector('.transcript-actions')).toBeNull();
+    document.querySelectorAll('.meeting-card')[1].click();
+    await vi.waitFor(() => expect(page('transcript').textContent).toContain('Persistent transcript'));
+    expect(document.querySelector('.transcript-actions')).toBeNull();
+    expect(document.querySelector('.detail-navigation .split-trigger')).toBeNull();
+    historyChanged({ meetingHistory: { newValue: [] } }, 'local');
+  });
 });
 
+
+it.each([["teams", "Microsoft Teams"], ["meet", "Google Meet"], [undefined, null]])('displays the saved platform %s without guessing legacy recordings', async (platform, label) => {
+  const { entry } = await openFixture(`platform-${platform ?? 'legacy'}`);
+  historyChanged({ meetingHistory: { newValue: [{ ...entry, platform }] } }, 'local');
+  const metadata = document.querySelector('.detail-metadata').textContent;
+  if (label) expect(metadata).toContain(label);
+  else { expect(metadata).not.toContain('Google Meet'); expect(metadata).not.toContain('Microsoft Teams'); }
 });

@@ -4,6 +4,15 @@ import { CaptionJournal } from "./caption-journal.js";
 const event = { sessionId: "s", source: "dom", utteranceId: "1", eventSeq: 1, revision: 1,
   speaker: "Ana", speakerId: null, text: "Hola", firstReceivedAt: 1, updatedAt: 1 };
 describe("durable caption journal", () => {
+  it("restores simultaneous captions in their first-arrival order after revisions", async () => {
+    const directory = new MemoryDirectoryHandle("simultaneous");
+    const journal = await CaptionJournal.open(directory, "s");
+    await journal.append({ ...event, text: "Primera" });
+    await journal.append({ ...event, utteranceId: "2", eventSeq: 2, text: "Segunda" });
+    await journal.append({ ...event, eventSeq: 3, revision: 2, text: "Primera completa", updatedAt: 3 });
+    const restored = await CaptionJournal.open(directory, "s");
+    expect(restored.model.segments(0, 10).map(segment => segment.text)).toEqual(["Primera completa", "Segunda"]);
+  });
   it("acknowledges only closed files, replays after restart and rejects conflicting sequence", async () => {
     const directory = new MemoryDirectoryHandle("meeting");
     const journal = await CaptionJournal.open(directory, "s");

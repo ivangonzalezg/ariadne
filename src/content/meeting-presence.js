@@ -5,14 +5,14 @@ export function isInActiveMeeting() {
 }
 
 // Keep observing through idle, capture finalization and rejoining the same URL.
-export function observeMeetingPresence(onChange) {
+export function observeMeetingPresence(onChange, { isActive = isInActiveMeeting } = {}) {
   let previous;
   let scheduled = false;
   let disposed = false;
   const check = () => {
     scheduled = false;
     if (disposed) return;
-    const active = isInActiveMeeting();
+    const active = isActive();
     if (active === previous) return;
     previous = active;
     onChange(active);

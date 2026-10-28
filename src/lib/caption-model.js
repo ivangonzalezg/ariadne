@@ -32,10 +32,13 @@ export class CaptionModel {
     const key = captionKey(event), previous = this.utterances.get(key);
     if (this.superseded.has(key) || (previous && event.revision <= previous.revision)) { this.discarded++; return false; }
     for (const oldKey of event.supersedes ?? []) { if (oldKey !== key) { this.superseded.add(oldKey); this.utterances.delete(oldKey); } }
-    this.utterances.set(key, { ...event, firstReceivedAt: previous?.firstReceivedAt ?? event.firstReceivedAt });
+    // Revisions get new journal sequences. Preserve the first sequence for
+    // timestamp ties so correcting an earlier phrase cannot reorder a call.
+    this.utterances.set(key, { ...event, firstReceivedAt: previous?.firstReceivedAt ?? event.firstReceivedAt,
+      firstEventSeq: previous?.firstEventSeq ?? event.eventSeq });
     return true;
   }
-  values() { return [...this.utterances.values()].sort((a, b) => a.firstReceivedAt - b.firstReceivedAt || a.eventSeq - b.eventSeq); }
+  values() { return [...this.utterances.values()].sort((a, b) => a.firstReceivedAt - b.firstReceivedAt || a.firstEventSeq - b.firstEventSeq); }
   segments(startedAt, endedAt) {
     const duration = Math.max(0, endedAt - startedAt);
     const offset = (time) => Math.min(duration, Math.max(0, time - startedAt));

@@ -18,9 +18,11 @@ import { CaptureHealth } from "./capture-health.js";
 import { MainWorldSession } from "./session.js";
 import { startSpeakerObserver } from "./speaker-observer.js";
 import { debugEvent, debugLog, setDebugEnabled } from "../shared/debug-log.js";
+import { meetingPlatformForUrl } from "../shared/meeting-platform.js";
 
 if (!window.__ariadneCaptureInstalled) {
   window.__ariadneCaptureInstalled = true;
+  const isTeams = meetingPlatformForUrl(location.href) === "teams";
   const rtcPatchLog = (event, details) => debugEvent(`rtc-patch:${event}`, details);
 
   let mixer = new MeetingAudioMixer({
@@ -84,7 +86,8 @@ if (!window.__ariadneCaptureInstalled) {
 
   installRtcPatch({
     onRemoteAudioTrack: (payload) => { remoteAudioMonitor.addRemoteTrack(payload); health.schedule(); },
-    onDataChannel: (channel, owner) => { mediaState.observe(channel); captions.observe(channel, owner); },
+    // Meet's protobuf protocols do not apply to Teams' data channels.
+    onDataChannel: (channel, owner) => { if (!isTeams) { mediaState.observe(channel); captions.observe(channel, owner); } },
     onLocalAudioTrack: (track, owner) => { mixer.setLocalSender(owner.sender, track, owner.connectionId); health.schedule(); },
     onConnectionClosed: (connectionId) => { mixer.removeConnection(connectionId); htmlObserver.scan(); },
     onConnectionStateChange: (state, id) => { mixer.connectionStates.set(id, state); health.schedule(); },
@@ -152,14 +155,14 @@ if (!window.__ariadneCaptureInstalled) {
           onChunk: (size) => health.chunk(size),
           onRecorderError: () => health.recover("recorder-error"),
         });
-        captions.start(message.sessionId, message.captionMode ?? "dom");
+        captions.start(message.sessionId, isTeams ? "dom" : message.captionMode ?? "dom");
         session.start();
         session.checkpoint();
         htmlObserver.start();
         remoteAudioMonitor.start(message.sessionId, { managed: true });
         health.start();
         postToIsolated({ type: "asterion:session-started", sessionId: message.sessionId });
-        stopSpeakerObserver = startSpeakerObserver({
+        stopSpeakerObserver = isTeams ? () => {} : startSpeakerObserver({
           onSpeakerLabel: (label) => postToIsolated({ type: "asterion:speaker-label", sessionId: message.sessionId, label }),
           log: rtcPatchLog,
         });

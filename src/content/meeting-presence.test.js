@@ -1,11 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isInActiveMeeting, observeMeetingPresence } from "./meeting-presence.js";
+import { isInTeamsMeeting } from "./teams-selectors.js";
 
 let dispose;
 afterEach(() => { dispose?.(); document.body.replaceChildren(); vi.useRealTimers(); });
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 
 describe("meeting presence", () => {
+  it("uses Teams controls for exit and reentry when observing its platform", async () => {
+    const onChange = vi.fn();
+    dispose = observeMeetingPresence(onChange, { isActive: isInTeamsMeeting });
+    document.body.innerHTML = '<button id="hangup-button">Leave</button>';
+    await flush();
+    document.querySelector("button").hidden = true;
+    await flush();
+    document.querySelector("button").hidden = false;
+    await flush();
+    expect(onChange.mock.calls.map(([active]) => active)).toEqual([false, true, false, true]);
+  });
+
   it("ignores hidden controls and finds a visible icon after a stale hidden icon", () => {
     document.body.innerHTML = '<div hidden><button><i>call_end</i></button></div>';
     expect(isInActiveMeeting()).toBe(false);

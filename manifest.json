@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "default_locale": "en",
   "name": "__MSG_extensionName__",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "__MSG_extensionDescription__",
   "minimum_chrome_version": "116",
   "icons": {
@@ -12,7 +12,12 @@
     "128": "icons/icon128.png"
   },
   "permissions": ["storage", "offscreen", "unlimitedStorage", "downloads", "webNavigation", "alarms"],
-  "host_permissions": ["https://meet.google.com/*"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.cloud.microsoft/*",
+    "https://teams.live.com/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
@@ -25,7 +30,12 @@
         "src/shared/i18n/locales/es.json",
         "src/shared/i18n/locales/fr.json"
       ],
-      "matches": ["https://meet.google.com/*"]
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*"
+      ]
     }
   ],
   "background": {
@@ -34,14 +44,24 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://meet.google.com/*"],
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*"
+      ],
       "js": ["dist/webrtc-bootstrap.bundle.js"],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true
     },
     {
-      "matches": ["https://meet.google.com/*"],
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*"
+      ],
       "js": ["dist/content.bundle.js"],
       "run_at": "document_idle"
     }

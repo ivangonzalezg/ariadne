@@ -686,7 +686,10 @@ function selectPage(session, key, immediate = false, visit = true) {
 function syncDetail(session, meeting) {
   const previous = session.meeting; session.meeting = meeting;
   session.title.textContent = titleFor(meeting); session.date.textContent = formatDetailDate(meeting);
-  session.metadata.textContent = `${formatTimeRange(meeting)} · Google Meet`;
+  const platformLabel = { meet: "Google Meet", teams: "Microsoft Teams" }[meeting.platform];
+  // Older recordings did not store a platform. Omit the label rather than
+  // assigning Teams calls to Meet or guessing from a user-controlled title.
+  session.metadata.textContent = [formatTimeRange(meeting), platformLabel].filter(Boolean).join(" · ");
   session.recovery.dispatchEvent(new CustomEvent("asterion:recovery-update", { detail: meeting }));
   updateTranscriptActions(session);
   const available = availableTabs(meeting);

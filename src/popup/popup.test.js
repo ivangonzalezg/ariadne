@@ -55,6 +55,16 @@ afterEach(() => {
 });
 
 describe("popup capture states", () => {
+  it.each(["teams.microsoft.com", "teams.cloud.microsoft", "teams.live.com"])("controls Teams calls on %s", async host => {
+    const ui = await setup();
+    chrome.tabs.query.mockResolvedValue([{ id: 8, url: `https://${host}/v2/` }]);
+    await ui.refresh(); ui.start.click(); await settle();
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(8, { type: "asterion:popup-start" });
+    ui.setStatus({ state: "recording", startedAt: Date.now() }); await ui.refresh();
+    ui.stop.click(); await settle();
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(8, { type: "asterion:popup-stop" });
+  });
+
   it("keeps start text and nodes while awaiting real recording confirmation", async () => {
     const ui = await setup();
     const text = ui.start.textContent;

@@ -18,7 +18,7 @@
       .source-row { display: flex; justify-content: space-between; align-items: center; }
       .source-left { display: flex; align-items: center; gap: 10px; color: var(--text-primary); font-size: 13px; }
       .source-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-      .toggle-row { display: flex; justify-content: space-between; align-items: center; }
+      .toggle-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
       .toggle { width: 42px; height: 24px; border: 0; border-radius: 12px; padding: 3px; display: flex; align-items: center; background: var(--toggle-off); flex: 0 0 42px; }
       .toggle-knob { width: 18px; height: 18px; border-radius: 50%; background: #FFFFFF; }
       .helper { color: var(--text-muted); font-size: 12px; line-height: 1.35; }
@@ -35,7 +35,9 @@
       #app:not([data-ready]) { visibility: hidden; }
       button { font-family: inherit; cursor: pointer; }
       .intro { margin-bottom: 16px; }
+      #app[data-state="ready"] .intro { margin-bottom: 0; }
       .footer { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+      .auto-start-setting { display: flex; flex-direction: column; gap: 8px; }
       .settings-button { display: flex; align-items: center; justify-content: center; padding: 4px; border: 0; border-radius: 6px; background: transparent; }
       .source-left { min-width: 0; }
       .source-left svg { flex: 0 0 auto; }

@@ -27,8 +27,8 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-async function createWriter({ audio = true, video = true, minimumMeetingDurationSeconds = 0 } = {}) {
-  const writer = new SessionWriter({ sessionId: "session-1", tabId: 7, meetingTitle: "Daily sync", minimumMeetingDurationSeconds });
+async function createWriter({ audio = true, video = true, platform = null, minimumMeetingDurationSeconds = 0 } = {}) {
+  const writer = new SessionWriter({ sessionId: "session-1", tabId: 7, meetingTitle: "Daily sync", platform, minimumMeetingDurationSeconds });
   await writer.ready;
   if (audio) await writer.writeChunk("meeting", new Uint8Array([1, 2]));
   if (video) await writer.writeChunk("video", new Uint8Array([3, 4]));
@@ -59,6 +59,15 @@ describe("SessionWriter conversion flow", () => {
       value: { getDirectory: vi.fn().mockResolvedValue(root) },
     });
     ffmpeg.runFfmpegAttempt.mockReset();
+  });
+
+  it.each(["teams", "meet", null])("preserves platform %s through restoration and manifest publication", async platform => {
+    const writer = await createWriter({ audio: false, video: false, platform });
+    const restored = await SessionWriter.restore(writer.folderName);
+    const metadata = await restored.finalize({ endedAt: writer.startedAt + 1000 });
+    expect(metadata.platform).toBe(platform);
+    expect(restored.journal.state.platform).toBe(platform);
+    expect(manifestOf(restored).platform).toBe(platform);
   });
 
   it.each([

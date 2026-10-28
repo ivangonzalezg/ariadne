@@ -138,7 +138,10 @@ export class MainWorldSession {
     this.stopping = true;
     this.muteManifest.finalize(endedAt);
     this.stopPromise = (async () => {
-      await this.restartPromise;
+      // Failed reconstruction must not prevent saving the previous generation
+      // or releasing the screen capture when the user has already stopped.
+      try { await this.restartPromise; }
+      catch { interruptionReason ??= "capture-restart-failed"; }
       await this._flushRecorders();
       this.videoStream?.getTracks().forEach((track) => track.stop());
       await this.postToIsolated({ type: "asterion:session-ended", sessionId: this.sessionId,

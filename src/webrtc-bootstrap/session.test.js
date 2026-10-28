@@ -48,6 +48,28 @@ describe("recorder generations", () => {
     session.confirmChunk(ack); session.confirmChunk(ack); session.confirmChunk({ ...ack, sessionId: "other" });
     expect(session.committedChunks).toBe(1);
   });
+
+  it("finishes stopping and releases screen capture when pending reconstruction rejects", async () => {
+    const post = vi.fn(), session = create(post); session.start();
+    const screen = { stop: vi.fn() };
+    session.enableVideo({ getVideoTracks: () => [screen], getTracks: () => [screen] });
+    let rejectMixer;
+    const factory = vi.fn(() => new Promise((_, reject) => { rejectMixer = reject; }));
+    const restarted = session.restart(factory);
+    const failedRestart = expect(restarted).rejects.toThrow("Audio startup blocked");
+    await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
+    const stopped = session.stop({ endedAt: 1234 });
+    rejectMixer(new Error("Audio startup blocked"));
+    await failedRestart;
+    await expect(stopped).resolves.toBeUndefined();
+    expect(screen.stop).toHaveBeenCalledOnce();
+    expect(Recorder.instances).toHaveLength(2);
+    expect(post.mock.calls.filter(([message]) => message.type === "asterion:session-ended")).toEqual([
+      [expect.objectContaining({ sessionId: "session", endedAt: 1234, expectedSequences: { meeting: 1, video: 1 }, interruptionReason: "capture-restart-failed" })],
+    ]);
+    await session.stop();
+    expect(post.mock.calls.filter(([message]) => message.type === "asterion:session-ended")).toHaveLength(1);
+  });
 });
 
 it("waits for asynchronous final data when a recorder error already made it inactive", async () => {

@@ -3,6 +3,13 @@ import { CaptionModel } from "./caption-model.js";
 const event = (id, revision, text, at = 1000) => ({ source: "dom", utteranceId: id, revision, text,
   eventSeq: revision, speaker: "Ana", firstReceivedAt: at, updatedAt: at + revision });
 describe("caption identity", () => {
+  it("keeps first-arrival order when simultaneous captions receive later revisions", () => {
+    const model = new CaptionModel();
+    model.apply({ ...event("one", 1, "Primera"), eventSeq: 1 });
+    model.apply({ ...event("two", 1, "Segunda"), eventSeq: 2 });
+    model.apply({ ...event("one", 2, "Primera completa"), eventSeq: 3 });
+    expect(model.segments(0, 10000).map(segment => segment.text)).toEqual(["Primera completa", "Segunda"]);
+  });
   it("keeps distinct phrases from the same speaker and updates an older intervention", () => {
     const model = new CaptionModel();
     model.apply(event("one", 1, "Hola")); model.apply(event("two", 1, "Hola", 2000));

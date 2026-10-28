@@ -164,7 +164,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ...(message.type === "asterion:get-recovery-status" ? { recovery: { supported: false, pending: false, canRetry: false, tasks: [] } } : {}),
       ...(message.type === "asterion:session-ended" && writer ? { sessionId: writer.sessionId,
         folderName: writer.folderName, startedAt: writer.startedAt, endedAt: message.endedAt ?? Date.now(),
-        durationMs: (message.endedAt ?? Date.now()) - writer.startedAt, meetingTitle: writer.meetingTitle,
+        durationMs: (message.endedAt ?? Date.now()) - writer.startedAt, meetingTitle: writer.meetingTitle, platform: writer.platform,
         hasTranscript: writer.transcriptExported ?? writer.hasCaption, transcriptStatus: writer.transcriptStatus, hasVideo: writer.streamsUsed.has("video"), recordingStatus: "incomplete", interruptionReason: message.interruptionReason ?? error.message } : {}) });
   });
   return true;

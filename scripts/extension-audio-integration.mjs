@@ -139,7 +139,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
     assert(durableSnapshot.available && durableSnapshot.conversions.some(job=>job.state==='succeeded'), 'Console diagnostics query current durable conversion state');
     assert(manifestResult.recordingStatus === "complete" && manifestResult.hasAudioMp3, "Real OPFS and packaged FFmpeg produce a complete MP3");
     const transcript = await offscreen.evaluate(`(async()=>{const root=await navigator.storage.getDirectory();const dir=await root.getDirectoryHandle(${JSON.stringify(folderName)});return JSON.parse(await(await(await dir.getFileHandle('transcripcion.json')).getFile()).text());})()`);
-    assert(transcript.length === 3 && transcript.map(segment=>segment.text).join('|') === 'Primera completa|Segunda|Última', 'Packaged extension drains the final caption and restores earlier captions without duplicates');
+    assert(transcript.length === 3 && transcript.map(segment=>segment.text).join('|') === 'Primera completa|Segunda|Última', `Packaged extension drains the final caption and restores earlier captions without duplicates: ${JSON.stringify(transcript)}`);
     assert(manifestResult.transcriptStatus === 'complete', 'Caption persistence stays complete across ACK loss and offscreen/worker restarts');
     assert(transcript[0].speaker === 'Ana (you)' && transcript[1].speaker === 'Ana (you)' && transcript[2].speaker === 'Beto', 'Spanish self labels on an English document survive storage restart and mark only own captions');
     assert(manifestResult.localIdentity?.name === 'Ana', 'Manifest identifies the local extension user');
