@@ -20,7 +20,7 @@ export const SELECTORS = {
   captionText: ".ygicle.VbkSUe",
 };
 
-function isVisible(element) {
+export function isVisible(element) {
   const control = element.closest('button, [role="button"]');
   let checkAriaHidden = !control;
   for (let node = element; node; node = node.parentElement) {
@@ -28,7 +28,7 @@ function isVisible(element) {
     // Only aria-hidden on the control or its ancestors hides the meeting signal.
     if (node === control) checkAriaHidden = true;
     if (node.hidden || node.hasAttribute("inert") ||
-        (checkAriaHidden && node !== element && node.getAttribute("aria-hidden") === "true")) return false;
+        (checkAriaHidden && node.getAttribute("aria-hidden") === "true")) return false;
     const style = getComputedStyle(node);
     if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
   }
