@@ -22,7 +22,7 @@ Ariadne is a Chrome extension that sits quietly in the background during your me
 
 Everything is written straight to your browser's local storage. Nothing is uploaded anywhere, and there's no account, no server, and no subscription - the extension has no idea any of this data exists once it's on your disk, because it never leaves your machine in the first place.
 
-**Supported platforms:** Google Meet and Microsoft Teams web in Chrome. Teams call detection and local audio/transcript saving have been checked in a live call. Two-participant audio, mute behavior and video still need live validation. See [Teams setup and validation](docs/teams-web.md).
+**Supported platforms:** Google Meet and Microsoft Teams web in Chrome. Teams call detection and local audio/transcript saving have been checked in a live call. Two-participant audio, mute behavior and video still need live validation.
 
 ## Features
 
