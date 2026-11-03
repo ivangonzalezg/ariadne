@@ -192,7 +192,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
     const widget = `document.getElementById('asterion-banner-host').shadowRoot`;
     const noticeVisible = `!${widget}.getElementById('content').hidden && !${widget}.querySelector('.finished').hidden`;
     await page.evaluate(`document.querySelector('i').hidden=true`);
-    await wait(100);
+    await wait(3100);
     const exitingNotice = await page.evaluate(`({hidden:${widget}.getElementById('content').hidden,inert:${widget}.getElementById('content').hasAttribute('inert'),animations:${widget}.getElementById('content').getAnimations({subtree:true}).length})`);
     assert(!exitingNotice.hidden && exitingNotice.inert && exitingNotice.animations>0,'A departure has an inert intermediate animation before display:none');
     await wait(200);
@@ -213,7 +213,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
     assert(lifecycleStatus.state==='recording','The real banner starts another recording after reentry');
     await wait(2200);
     await page.evaluate(`document.querySelector('i').hidden=true`);
-    await wait(100);
+    await wait(3100);
     assert(await page.evaluate(noticeVisible), 'Departure during capture keeps the completion notice');
     assert(await page.evaluate(`${widget}.querySelector('#start-capture').disabled`), 'The departure notice has no usable start control');
     const lifecycleScreenshot = await page.command('Page.captureScreenshot',{format:'png'});
@@ -246,7 +246,7 @@ export async function runExtensionIntegration({ root, debuggerUrl, origin, resta
     await wait(100);
     assert(await page.evaluate(`!${widget}.querySelector('#start-capture').disabled`),'Reentry restores capture after opening history');
     await page.evaluate(`document.querySelector('i').hidden=true`);
-    await wait(200);
+    await wait(3200);
     assert(await page.evaluate(`${widget}.getElementById('content').hidden`),'Leaving again without capture shows no old notice');
     console.log(JSON.stringify({meetingLifecycle:{ok:true,sessionId:lifecycleStatus.sessionId,
       checks:['manual stop then departure','late popup start rejected','same-URL reentry','capture ended by departure','linked history selection','notice dismissal']}},null,2));

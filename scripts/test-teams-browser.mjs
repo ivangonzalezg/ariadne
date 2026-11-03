@@ -104,8 +104,8 @@ try {
   // End a second call by leaving, then join again without reloading Teams.
   await page.locator("#hangup-button").click();
   await until(status, state => !state.inMeeting, "meeting leave");
-  // Allow the detector to observe the gap before the next call.
-  await page.waitForTimeout(1100);
+  // Wait for confirmed departure, including the exit animation, before reentry.
+  await page.waitForFunction(() => document.getElementById("asterion-banner-host")?.shadowRoot.getElementById("content").hidden);
   await page.evaluate(() => fixture.join());
   const second = await until(status, state => state.sessionId && state.sessionId !== firstSession && state.state === "recording", "second call in same tab");
   await page.evaluate(() => fixture.speak("María", "Nueva llamada", "3"));

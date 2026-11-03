@@ -12,7 +12,8 @@
     "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen",
     "test:audio:browser": "node scripts/test-remote-audio-browser.mjs",
     "test:transcript:browser": "node scripts/test-transcript-browser.mjs",
-    "test:teams:browser": "node scripts/test-teams-browser.mjs"
+    "test:teams:browser": "node scripts/test-teams-browser.mjs",
+    "test:presence:browser": "node scripts/test-meeting-presence-browser.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

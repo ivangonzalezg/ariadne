@@ -1,3 +1,5 @@
+import { isRendered } from "./element-visibility.js";
+
 // Teams does not publish a DOM API. Keep its interface anchors together so
 // changes can be checked against a real call without touching capture/storage.
 export const TEAMS_SELECTORS = {
@@ -26,7 +28,7 @@ export function findVisible(selector, root = document) {
 }
 
 export function isInTeamsMeeting() {
-  return Boolean(findVisible(TEAMS_SELECTORS.hangup));
+  return [...document.querySelectorAll(TEAMS_SELECTORS.hangup)].some(isRendered);
 }
 
 export function getTeamsMeetingTitle() {

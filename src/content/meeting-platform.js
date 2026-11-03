@@ -1,5 +1,5 @@
 import { meetingPlatformForUrl } from "../shared/meeting-platform.js";
-import { findByIconText } from "./meet-selectors.js";
+import { isInActiveMeeting } from "./meeting-presence.js";
 import { observeMuteState } from "./meet-mute-observer.js";
 import { observeLocalIdentity } from "./meet-local-identity.js";
 import { enableCaptionsAndObserve } from "./meet-caption-observer.js";
@@ -20,7 +20,7 @@ export function getMeetingPlatform(url = location.href) {
   };
   return {
     id: "meet",
-    isInActiveMeeting: () => findByIconText("call_end", { visible: true }) !== null,
+    isInActiveMeeting,
     getTitle: () => document.title?.trim() && document.title.trim() !== "Meet" ? document.title.trim() : "Reunión sin título",
     observeMuteState,
     observeCaptions: enableCaptionsAndObserve,

@@ -61,6 +61,7 @@ function emit(type, fields = {}) {
 }
 function lastBanner() { return banner.updateBannerState.mock.calls.at(-1); }
 function leave() { document.getElementById("leave").hidden = true; }
+async function confirmExit() { leave(); await flush(); await vi.advanceTimersByTimeAsync(3000); }
 function rejoin() { document.getElementById("leave").hidden = false; }
 async function start() {
   expect(await request("asterion:popup-start")).toEqual({ ok: true });
@@ -78,8 +79,38 @@ afterEach(() => {
 });
 
 describe("meeting capture lifecycle", () => {
+  it.each([true, false])("preserves the session and enabled video through modals and brief absences with autoStart=%s", async autoStart => {
+    await setup({ autoStart });
+    const sessionId = autoStart ? (await request("asterion:get-status")).sessionId : await start();
+    emit("asterion:session-started", { sessionId });
+    emit("asterion:video-enabled", { sessionId });
+    const button = document.getElementById("leave");
+    for (let repeat = 0; repeat < 2; repeat++) {
+      button.setAttribute("aria-hidden", "true"); button.setAttribute("inert", "");
+      await flush(); await vi.advanceTimersByTimeAsync(10000);
+      expect(await request("asterion:get-status")).toMatchObject({ sessionId, inMeeting: true, state: "video-enabled", videoEnabled: true });
+      button.removeAttribute("aria-hidden"); button.removeAttribute("inert"); await flush();
+      leave(); await flush(); await vi.advanceTimersByTimeAsync(2999);
+      rejoin(); await flush(); await vi.advanceTimersByTimeAsync(3000);
+    }
+    expect((await request("asterion:get-status")).sessionId).toBe(sessionId);
+    expect(post.mock.calls.filter(([m]) => m.type === "asterion:stop-session")).toHaveLength(0);
+    expect(chrome.runtime.sendMessage.mock.calls.filter(([m]) => m.type === "asterion:session-starting")).toHaveLength(1);
+  });
+
+  it.each(["manual", "pagehide"])("stops immediately on %s during a pending exit, without a duplicate stop", async reason => {
+    await setup(); await start(); leave(); await flush();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(post.mock.calls.filter(([m]) => m.type === "asterion:stop-session")).toHaveLength(0);
+    if (reason === "manual") await request("asterion:popup-stop");
+    else window.dispatchEvent(new Event("pagehide"));
+    expect(post.mock.calls.filter(([m]) => m.type === "asterion:stop-session")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(post.mock.calls.filter(([m]) => m.type === "asterion:stop-session")).toHaveLength(1);
+  });
+
   it("hides after exit without capture and rejects late popup and banner starts", async () => {
-    await setup(); leave(); await flush();
+    await setup(); await confirmExit();
     expect(lastBanner()[1].visible).toBe(false);
     expect(await request("asterion:popup-start")).toMatchObject({ ok: false });
     await banner.showBanner.mock.calls.at(-1)[0].onStart(); await flush();
@@ -90,7 +121,7 @@ describe("meeting capture lifecycle", () => {
 
   it("stops once on exit and keeps a notice through saving, processing and completion", async () => {
     await setup(); const sessionId = await start();
-    leave(); await flush();
+    await confirmExit();
     expect(lastBanner()).toMatchObject(["saving", { visible: true, captureSessionId: sessionId }]);
     await request("asterion:popup-stop");
     expect(post.mock.calls.filter(([m]) => m.type === "asterion:stop-session")).toHaveLength(1);
@@ -103,7 +134,7 @@ describe("meeting capture lifecycle", () => {
 
   it("hides a manual-stop notice on exit and never resurrects it", async () => {
     await setup(); const sessionId = await start(); await request("asterion:popup-stop");
-    expect(lastBanner()[0]).toBe("saving"); leave(); await flush();
+    expect(lastBanner()[0]).toBe("saving"); await confirmExit();
     emit("asterion:session-ended", { sessionId, endedAt: Date.now() }); await flush();
     published(sessionId, { processing: { revision: 3, pending: false } });
     expect(lastBanner()[1].visible).toBe(false);
@@ -122,10 +153,10 @@ describe("meeting capture lifecycle", () => {
     const finalization = deferred();
     await setup({ minimumDurationSeconds: 10, finalization });
     const sessionId = await start();
-    vi.advanceTimersByTime(9999);
+    vi.advanceTimersByTime(reason === "manual" ? 9999 : 6999);
     banner.updateBannerState.mockClear();
     if (reason === "manual") await request("asterion:popup-stop");
-    else { leave(); await flush(); }
+    else { await confirmExit(); }
     emit("asterion:session-ended", { sessionId, endedAt: Date.now() }); await flush();
     expect(banner.updateBannerState.mock.calls.some(([state]) => state === "saving")).toBe(false);
     finalization.resolve({ sessionId, discarded: true }); await flush();
@@ -164,7 +195,7 @@ describe("meeting capture lifecycle", () => {
   it.each([true, false])("respects autoStart=%s on reentry while the previous capture stops", async autoStart => {
     await setup({ autoStart });
     const sessionId = autoStart ? (await request("asterion:get-status")).sessionId : await start();
-    leave(); await flush(); rejoin(); await flush();
+    await confirmExit(); rejoin(); await flush();
     expect(lastBanner()[1].captureSessionId).toBeNull();
     emit("asterion:session-ended", { sessionId, endedAt: Date.now() }); await flush();
     const status = await request("asterion:get-status");
@@ -175,7 +206,7 @@ describe("meeting capture lifecycle", () => {
 
   it("cancels while reading preferences without opening storage or starting media", async () => {
     const captionPreferences = deferred(); await setup({ captionPreferences });
-    const starting = request("asterion:popup-start"); await flush(); leave(); await flush();
+    const starting = request("asterion:popup-start"); await flush(); await confirmExit();
     captionPreferences.resolve({ captionMode: "dom" });
     expect(await starting).toMatchObject({ ok: false });
     expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
@@ -185,7 +216,7 @@ describe("meeting capture lifecycle", () => {
 
   it("finalizes storage opened after exit without starting media", async () => {
     const opening = deferred(); await setup({ opening });
-    const starting = request("asterion:popup-start"); await flush(); leave(); await flush();
+    const starting = request("asterion:popup-start"); await flush(); await confirmExit();
     opening.resolve({ folderName: "folder" }); expect(await starting).toMatchObject({ ok: false });
     expect(chrome.runtime.sendMessage.mock.calls.map(([m]) => m.type)).toEqual(["asterion:session-starting", "asterion:session-ended"]);
     expect(post).not.toHaveBeenCalled();
@@ -214,7 +245,7 @@ describe("meeting capture lifecycle", () => {
   it("restores the start button on reentry after a failed capture start", async () => {
     await setup(); const sessionId = await start();
     emit("asterion:start-failed", { sessionId, reason: "Capture could not start" }); await flush();
-    leave(); await flush(); rejoin(); await flush();
+    await confirmExit(); rejoin(); await flush();
     expect(lastBanner()).toMatchObject(["idle", { visible: true }]);
   });
 });
