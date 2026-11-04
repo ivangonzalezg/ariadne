@@ -136,6 +136,9 @@
       .setting-card > label { box-sizing: border-box; padding-right: 112px; }
       .setting-status.is-confirmation { position: absolute; top: 18px; right: 16px; min-height: 0; margin: 0; line-height: 20px; }
       .retry-setting { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-button); color: var(--text-primary); cursor: pointer; }
+      .backup-title { margin: 0 0 8px; font-size: 14px; line-height: 20px; text-wrap: balance; }
+      .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      #backup-progress { width: 100%; margin-top: 12px; accent-color: var(--accent-blue); }
       button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
       button { transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 120ms cubic-bezier(0.23, 1, 0.32, 1); }
       button:active:not(:disabled) { transform: scale(0.97); }
@@ -189,6 +192,20 @@
             <span class="toggle-knob"></span>
           </button>
         </div>
+      </section>
+      <section class="setting-card" id="meeting-backup" aria-labelledby="backup-title">
+        <h2 class="backup-title" id="backup-title"></h2>
+        <p class="helper" id="backup-helper"></p>
+        <div class="backup-actions">
+          <button class="retry-setting" id="backup-export" type="button" aria-describedby="backup-helper backup-availability" disabled></button>
+          <button class="retry-setting" id="backup-import" type="button" aria-describedby="backup-helper backup-availability" disabled></button>
+          <input id="backup-file" type="file" accept=".zip,application/zip" hidden />
+          <button class="retry-setting" id="backup-confirm" type="button" aria-describedby="backup-status backup-availability" hidden></button>
+          <button class="retry-setting" id="backup-cancel" type="button" hidden></button>
+        </div>
+        <progress id="backup-progress" max="100" hidden></progress>
+        <p class="setting-status" id="backup-availability" role="status"></p>
+        <p class="setting-status" id="backup-status" role="status"></p>
       </section>
     </main>
     <script type="module" src="settings.js"></script>

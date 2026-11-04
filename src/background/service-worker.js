@@ -1,3 +1,5 @@
+import { rollbackPendingImport, withLibraryWrite } from "../storage/library-lock.js";
+
 // src/background/service-worker.js
 const OFFSCREEN_URL = "src/offscreen/offscreen.html";
 const ACTIVE_SESSIONS_KEY = "activeRecordingSessions";
@@ -73,12 +75,13 @@ async function ensureOffscreenDocument() {
 }
 
 const STORAGE_TYPES = new Set(["asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:caption-event", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended", "asterion:recover-storage", "asterion:get-recovery-status", "asterion:retry-recovery", "asterion:delete-session"]);
+const BACKUP_EXCLUSIVE_MUTATIONS = new Set(["asterion:session-starting", "asterion:retry-recovery", "asterion:delete-session"]);
 const RECOVERY_ALARM = "asterion-storage-recovery";
 let conversionPending = false;
 let storageRecovery = null;
 let historyQueue = Promise.resolve();
 let recoveryRun = null;
-const deletedSessions = new Set();
+const deletedSessions = new Map();
 
 async function updateRecoveryAlarm() {
   const { [ACTIVE_SESSIONS_KEY]: active } = await chrome.storage.local.get({ [ACTIVE_SESSIONS_KEY]: {} });
@@ -113,7 +116,7 @@ async function forwardStorage(message, tabId) {
 }
 
 async function discardSession({ sessionId, folderName }) {
-  deletedSessions.add(sessionId);
+  deletedSessions.set(sessionId, folderName);
   const intent = historyQueue.then(async () => {
     const { pendingSessionDeletions } = await chrome.storage.local.get({ pendingSessionDeletions: {} });
     pendingSessionDeletions[sessionId] = folderName;
@@ -136,8 +139,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
+  if (message.type === "asterion:backup-status" && sender.url === chrome.runtime.getURL("src/settings/settings.html")) {
+    getBackupStatus().then(sendResponse).catch(() => sendResponse({ reason: "unavailable" }));
+    return true;
+  }
   if (STORAGE_TYPES.has(message.type)) {
-    (async () => {
+    const operation = async () => {
       if (message.type === "asterion:session-starting") await registerActiveSession(message.sessionId, sender.tab?.id ?? null, message.meetingTitle);
       if (message.type === "asterion:session-ended") await withRegistryLock((active) => {
         if (active[message.sessionId]) active[message.sessionId].finalization = message;
@@ -148,7 +155,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (!entry) return { error: "Session mismatch", retryable: false };
       }
       if (message.type === "asterion:delete-session") {
-        deletedSessions.add(message.sessionId);
+        deletedSessions.set(message.sessionId, message.folderName);
         const intent = historyQueue.then(async () => {
           const { pendingSessionDeletions } = await chrome.storage.local.get({ pendingSessionDeletions: {} });
           pendingSessionDeletions[message.sessionId] = message.folderName;
@@ -170,11 +177,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.type === "asterion:recover-storage") conversionPending = result.pending;
       await updateRecoveryAlarm();
       return result;
-    })().then(sendResponse).catch((error) => sendResponse({ error: error.message, retryable: true }));
+    };
+    const fullRecovery = message.type === "asterion:recover-storage" && !message.sessionId;
+    const task = fullRecovery ? operation() : withLibraryWrite(operation, {
+      rejectIfBusy: BACKUP_EXCLUSIVE_MUTATIONS.has(message.type),
+    });
+    Promise.resolve(task).then(sendResponse).catch((error) => sendResponse({ error: error.message, retryable: true }));
     return true;
   }
   if (message.type === "asterion:session-finalized") {
-    appendToHistory(message).then(() => unregisterActiveSession(message.sessionId)).then(updateRecoveryAlarm)
+    withLibraryWrite(() => appendToHistory(message).then(() => unregisterActiveSession(message.sessionId)).then(updateRecoveryAlarm))
       .then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ error: error.message, retryable: true }));
     return true;
   } else if (message.type === "asterion:recovery-pending") {
@@ -212,7 +224,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function appendToHistory(meta) {
   const operation = historyQueue.then(async () => {
     const { meetingHistory, pendingSessionDeletions } = await chrome.storage.local.get({ meetingHistory: [], pendingSessionDeletions: {} });
-    if (deletedSessions.has(meta.sessionId) || pendingSessionDeletions[meta.sessionId]) return;
+    if (deletedSessions.get(meta.sessionId) === meta.folderName || pendingSessionDeletions[meta.sessionId]) return;
     const existing = meetingHistory.find(entry => entry.sessionId === meta.sessionId);
     if (existing?.processing && meta.processing && (existing.processing.revision > meta.processing.revision ||
         (existing.processing.revision === meta.processing.revision && !existing.processing.pending && meta.processing.pending))) return;
@@ -221,7 +233,7 @@ function appendToHistory(meta) {
     const platform = meta.platform ?? existing?.platform ?? null;
     entries.push({ sessionId, folderName, meetingTitle, platform, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing });
     entries.sort((a, b) => b.startedAt - a.startedAt);
-    await chrome.storage.local.set({ meetingHistory: entries.slice(0, 200) });
+    await chrome.storage.local.set({ meetingHistory: entries });
   });
   historyQueue = operation.catch(() => {});
   return operation;
@@ -246,30 +258,41 @@ async function finalizeAbandonedSession(sessionId) {
     interruptionReason: "capture-tab-disappeared" });
 }
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
+async function finalizeTabSessions(tabId) {
   const sessionIds = await findActiveSessionIdsForTab(tabId);
   for (const sessionId of sessionIds) {
     await finalizeAbandonedSession(sessionId);
   }
-});
+}
 
-chrome.webNavigation.onCommitted.addListener(async (details) => {
-  if (details.frameId !== 0) return;
-  const sessionIds = await findActiveSessionIdsForTab(details.tabId);
-  for (const sessionId of sessionIds) {
-    await finalizeAbandonedSession(sessionId);
-  }
+chrome.tabs.onRemoved.addListener(tabId => withLibraryWrite(() => finalizeTabSessions(tabId)));
+chrome.webNavigation.onCommitted.addListener(details => {
+  if (details.frameId === 0) return withLibraryWrite(() => finalizeTabSessions(details.tabId));
 });
 
 export function recoverPendingSessions() {
-  recoveryRun ??= reconcileSessions().finally(() => { recoveryRun = null; });
+  recoveryRun ??= Promise.resolve(withLibraryWrite(reconcileSessions)).finally(() => { recoveryRun = null; });
   return recoveryRun;
 }
 
+async function getBackupStatus() {
+  const { [ACTIVE_SESSIONS_KEY]: active, pendingSessionDeletions } = await chrome.storage.local.get({
+    [ACTIVE_SESSIONS_KEY]: {}, pendingSessionDeletions: {},
+  });
+  if (Object.keys(active).length) return { reason: "recording" };
+  if (recoveryRun || storageRecovery || conversionPending || Object.keys(pendingSessionDeletions).length) {
+    return { reason: "processing" };
+  }
+  await ensureOffscreenDocument();
+  const status = await chrome.runtime.sendMessage({ target: "asterion-offscreen", type: "asterion:backup-status" });
+  return status ?? { reason: "unavailable" };
+}
+
 async function reconcileSessions() {
+  await rollbackPendingImport();
   const { pendingSessionDeletions } = await chrome.storage.local.get({ pendingSessionDeletions: {} });
   for (const [sessionId, folderName] of Object.entries(pendingSessionDeletions)) {
-    deletedSessions.add(sessionId);
+    deletedSessions.set(sessionId, folderName);
     const result = await forwardStorage({ type: "asterion:delete-session", sessionId, folderName });
     if (result.ok) await removeFromHistory(sessionId);
   }

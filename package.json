@@ -9,11 +9,13 @@
     "build:webrtc": "esbuild src/webrtc-bootstrap/bootstrap.js --bundle --outfile=dist/webrtc-bootstrap.bundle.js",
     "copy:ffmpeg": "node scripts/copy-ffmpeg-core.js",
     "build:offscreen": "esbuild src/offscreen/offscreen.js --bundle --format=esm --outfile=dist/offscreen.bundle.js",
-    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen",
+    "build:backup": "esbuild src/storage/meeting-backup.js --bundle --format=esm --outfile=dist/meeting-backup.bundle.js && node -e \"require('node:fs').copyFileSync('node_modules/@zip.js/zip.js/LICENSE','dist/zip-js.LICENSE')\"",
+    "build": "npm run build:content && npm run build:webrtc && npm run copy:ffmpeg && npm run build:offscreen && npm run build:backup",
     "test:audio:browser": "node scripts/test-remote-audio-browser.mjs",
     "test:transcript:browser": "node scripts/test-transcript-browser.mjs",
     "test:teams:browser": "node scripts/test-teams-browser.mjs",
-    "test:presence:browser": "node scripts/test-meeting-presence-browser.mjs"
+    "test:presence:browser": "node scripts/test-meeting-presence-browser.mjs",
+    "test:backup:browser": "node scripts/test-backup-browser.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
@@ -25,6 +27,7 @@
   "dependencies": {
     "@ffmpeg/core": "0.12.10",
     "@ffmpeg/ffmpeg": "0.12.15",
-    "@ffmpeg/util": "0.12.2"
+    "@ffmpeg/util": "0.12.2",
+    "@zip.js/zip.js": "2.24.0"
   }
 }

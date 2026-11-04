@@ -1,3 +1,4 @@
+import { BACKUP_BUSY } from "../storage/library-lock.js";
 import { captionStatusLabel } from "../shared/caption-status.js";
 import { icon } from "../shared/icons.js";
 import { initI18n } from "../shared/i18n/i18n.js";
@@ -142,6 +143,7 @@ function render() {
   elements.toggle.setAttribute("aria-busy", String(savingPreference));
   elements.toggle.setAttribute("aria-checked", String(autoStart));
   elements.error.hidden = !actionError;
+  elements.error.textContent = t(actionError === BACKUP_BUSY ? "backup.busy" : "popup.actionError");
   updateSource("transcript", status?.transcriptActive && !status?.captionStorage?.error, captionStatusLabel(status ?? {}, t));
   updateSource("audio", recording, t("popup.activeMasc"));
   updateSource("video", status?.videoEnabled, t(status?.videoEnabled ? "popup.activeMasc" : "popup.notActive"));
@@ -192,9 +194,11 @@ async function captureAction(action) {
   render();
   try {
     const response = await chrome.tabs.sendMessage(tabId, { type: `asterion:popup-${action}` });
-    if (!response?.ok) throw new Error("Capture action was not accepted");
-  } catch {
-    if (activeTabId === tabId) { actionRevision++; pendingAction = null; actionError = true; render(); }
+    if (!response?.ok) throw Object.assign(new Error("Capture action was not accepted"), { code: response?.code });
+  } catch (cause) {
+    if (activeTabId === tabId) {
+      actionRevision++; pendingAction = null; actionError = cause.code === BACKUP_BUSY ? BACKUP_BUSY : true; render();
+    }
   }
   await refresh();
 }

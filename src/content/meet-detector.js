@@ -1,3 +1,4 @@
+import { BACKUP_BUSY } from "../storage/library-lock.js";
 import { getMeetingPlatform } from "./meeting-platform.js";
 import { CaptionDelivery } from "./caption-delivery.js";
 import { CaptionRouter } from "./caption-router.js";
@@ -131,7 +132,7 @@ async function startRecording() {
   sessionId = attempt.id; // Reserve before awaiting, including popup/banner races.
   notice = null;
   autoStartGeneration = null;
-  setState("starting");
+  setState("starting", { backupBusy: false });
   await debugLoggingReady;
   if (!canContinueStart(attempt)) return cancelStart(attempt);
 
@@ -147,7 +148,9 @@ async function startRecording() {
   videoEnabled = false;
   try {
     const opened = await chrome.runtime.sendMessage({ type: "asterion:session-starting", sessionId, meetingTitle, platform: platform.id });
-    if (!opened?.folderName || opened.error) throw new Error(opened?.error ?? "Storage initialization failed");
+    if (!opened?.folderName || opened.error) {
+      throw Object.assign(new Error(opened?.error ?? "Storage initialization failed"), { code: opened?.code });
+    }
     attempt.opened = true;
     attempt.storageStartedAt = opened.startedAt;
     attempt.minimumMeetingDurationSeconds = opened.minimumMeetingDurationSeconds ?? 0;
@@ -155,9 +158,12 @@ async function startRecording() {
   } catch (error) {
     if (captureAttempt === attempt) {
       updateNotice({ sessionId: attempt.id, error: error.message });
-      sessionId = null; captureAttempt = null; setState("error"); cleanupObservers(); maybeAutoStart();
+      sessionId = null; captureAttempt = null;
+      const backupBusy = error.code === BACKUP_BUSY;
+      setState(backupBusy ? "idle" : "error", { backupBusy });
+      cleanupObservers(); maybeAutoStart();
     }
-    return { ok: false, error: error.message };
+    return { ok: false, error: error.message, ...(error.code ? { code: error.code } : {}) };
   }
   storageError = null;
   const delivery = new ChunkDelivery({ sessionId,
@@ -471,7 +477,7 @@ async function onMeetingPresence(active) {
   if (!sessionId) currentState = "idle";
   if (!sessionId || captureAttempt?.stopped) storageError = null;
   await showBanner({ onStart: () => void startRecording(), onStop: () => stopRecording(), onDismiss: dismissNotice });
-  refreshBanner();
+  refreshBanner({ backupBusy: false });
   const { autoStart } = await chrome.storage.local.get({ autoStart: true }).catch(() => ({ autoStart: false }));
   if (generation !== meetingGeneration || !isInActiveMeeting()) return;
   if (autoStart && lastCaptureGeneration !== generation) {

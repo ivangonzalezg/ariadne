@@ -1,3 +1,4 @@
+import { BACKUP_BUSY } from "../storage/library-lock.js";
 // src/history/history.js
 import { icon } from "../shared/icons.js";
 import { formatSegmentTimestamp, transcriptToTxt, transcriptToMarkdown } from "../lib/transcript-export.js";
@@ -524,9 +525,11 @@ function createRecoveryPanel(meeting) {
     recoveryRequests.add(meeting.sessionId); retry.disabled = true; retry.textContent = t("history.recoveryInProgress");
     try {
       const result = await chrome.runtime.sendMessage({ type: "asterion:retry-recovery", sessionId: meeting.sessionId, folderName: meeting.folderName });
-      if (!result || result.error) throw new Error(result?.error);
+      if (!result || result.error) throw Object.assign(new Error(result?.error), { code: result?.code });
       if (panel.isConnected) apply(result);
-    } catch { if (panel.isConnected) message.textContent = t("history.recoveryTaskError"); }
+    } catch (cause) {
+      if (panel.isConnected) message.textContent = t(cause.code === BACKUP_BUSY ? "backup.busy" : "history.recoveryTaskError");
+    }
     finally { recoveryRequests.delete(meeting.sessionId); await refresh(); }
   });
   panel.addEventListener("asterion:recovery-update", event => {
@@ -859,13 +862,13 @@ function showDeleteDialog(meeting, opener) {
     pendingDeletes.add(id); confirm.disabled = true; dialog.setAttribute("aria-busy", "true"); error.hidden = true;
     try {
       const result = await chrome.runtime.sendMessage({ type: "asterion:delete-session", sessionId: meeting.sessionId, folderName: meeting.folderName });
-      if (!result?.ok) throw new Error(result?.error ?? "Delete failed");
+      if (!result?.ok) throw Object.assign(new Error(result?.error ?? "Delete failed"), { code: result?.code });
       state.meetings = state.meetings.filter(item => meetingId(item) !== id);
       if (state.selectedMeetingId === id) { state.selectedMeetingId = null; state.selectedTab = null; }
       renderAllExceptDetail(); renderDetail();
       if (overlay.isConnected) close();
-    } catch {
-      if (overlay.isConnected) { error.textContent = t("history.deleteError"); error.hidden = false; }
+    } catch (cause) {
+      if (overlay.isConnected) { error.textContent = t(cause.code === BACKUP_BUSY ? "backup.busy" : "history.deleteError"); error.hidden = false; }
     } finally {
       pendingDeletes.delete(id); confirm.disabled = false; dialog.setAttribute("aria-busy", "false");
       document.querySelectorAll(".modal-confirm").forEach(button => { if (button.dataset.meetingId === id) button.disabled = false; });

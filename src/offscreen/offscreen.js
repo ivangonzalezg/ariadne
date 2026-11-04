@@ -61,6 +61,13 @@ async function restorePending() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.target === "asterion-offscreen" && message.type === "asterion:backup-status") {
+    const pending = restoration || openings.size || conversionQueue.running || processingQueue.running ||
+      conversionQueue.snapshot().length || processingQueue.snapshot().length;
+    const recording = [...sessions.values()].some(writer => writer.recordingStatus === "recording");
+    sendResponse({ reason: recording ? "recording" : pending ? "processing" : null });
+    return;
+  }
   if (message.target !== "asterion-offscreen" || !["asterion:recover-storage", "asterion:session-starting", "asterion:chunk", "asterion:caption-snapshot", "asterion:caption-event", "asterion:speaker-label", "asterion:session-checkpoint", "asterion:storage-status", "asterion:session-ended", "asterion:get-recovery-status", "asterion:retry-recovery", "asterion:delete-session"].includes(message.type)) return;
   const handle = async () => {
     await debugLoggingReady;

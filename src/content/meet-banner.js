@@ -58,6 +58,7 @@ function renderMeeting() {
         </div>
       </div>
     </div>
+    <p class="info-row backup-busy" role="status" hidden></p>
     <div class="details" id="capture-details" inert aria-hidden="true"><div class="details-inner">
       <div class="divider"></div>
       <div class="sources">
@@ -360,6 +361,9 @@ function render() {
   const specialState = noticeState || currentState === "error";
   const activeElement = contentEl.getRootNode().activeElement;
   meeting.hidden = specialState;
+  const backupNotice = meeting.querySelector(".backup-busy");
+  backupNotice.hidden = !currentMeta.backupBusy;
+  backupNotice.textContent = currentMeta.backupBusy ? t("backup.busy") : "";
   error.hidden = currentState !== "error";
   for (const panel of [meeting, finished, error]) setAccessible(panel, panel === pane);
   finished.hidden = !noticeState;
@@ -611,6 +615,8 @@ export async function showBanner({ onStart, onStop, onDismiss }) {
       .source-status .dot { background: currentColor; }
       button { transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 120ms cubic-bezier(0.23, 1, 0.32, 1); }
       button:active:not(:disabled), .meeting[data-recording="true"] .controls .icon-button:active { transform: scale(0.97); transition-delay: 0ms; }
+      .backup-busy { margin: 0 12px 8px; }
+      .backup-busy[hidden] { display: none; }
       button:focus-visible, .error-banner:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
       button:disabled { cursor: wait; opacity: 0.7; }
       @media (hover: hover) and (pointer: fine) {

@@ -1,3 +1,4 @@
+import { bindMeetingBackup } from "./meeting-backup-ui.js";
 // src/settings/settings.js
 import { icon } from "../shared/icons.js";
 import { initI18n } from "../shared/i18n/i18n.js";
@@ -79,3 +80,5 @@ bindPreference(minimumMeetingDurationInput, "minimumMeetingDurationSeconds", 0, 
 bindPreference(debugLoggingToggle, "debugLogging", false, () => debugLoggingToggle.getAttribute("aria-checked") !== "true", value => {
   debugLoggingToggle.setAttribute("aria-checked", String(Boolean(value)));
 });
+
+bindMeetingBackup(t);
