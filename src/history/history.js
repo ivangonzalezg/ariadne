@@ -4,6 +4,7 @@ import { icon } from "../shared/icons.js";
 import { formatSegmentTimestamp, transcriptToTxt, transcriptToMarkdown } from "../lib/transcript-export.js";
 import { meetingDownloadFilename } from "../lib/download-filename.js";
 import { initI18n } from "../shared/i18n/i18n.js";
+import { createMeetingSizes } from "./meeting-size.js";
 import { createTranscriptSearch } from "./transcript-search.js";
 import { createSplitButton } from "../shared/split-button.js";
 
@@ -18,6 +19,15 @@ const resultsCountEl = document.getElementById("results-count");
 const sortSelect = document.getElementById("sort-select");
 const meetingsListEl = document.getElementById("meetings-list");
 const detailPanelEl = document.getElementById("detail-panel");
+const meetingSizes = createMeetingSizes({
+  list: meetingsListEl,
+  measure: async ({ sessionId, folderName }) => {
+    const result = await chrome.runtime.sendMessage({ type: "asterion:measure-meeting-size", sessionId, folderName });
+    return result?.pending ? undefined : result?.bytes ?? null;
+  },
+  format: bytes => t("history.meetingSize", { size: formatFileSize(bytes) }),
+  unavailable: t("history.meetingSizeUnavailable"),
+});
 let linkedSessionId = new URLSearchParams(location.search).get("sessionId");
 let linkedSessionStatus = "waiting";
 let detailSession = null;
@@ -196,6 +206,7 @@ function renderKpis() {
 }
 
 function renderMeetings() {
+  meetingSizes.clearCards();
   closeOpenMoreMenu(false, true);
   const meetings = deriveVisibleMeetings(state); resultsCountEl.textContent = t("history.resultsCount", { count: meetings.length }); meetingsListEl.replaceChildren();
   const { pending, failed } = transcriptSearch.status();
@@ -280,7 +291,10 @@ function createMeetingCard(meeting) {
   });
   const detailsRow = document.createElement("div"); detailsRow.className = "details-row";
   const details = document.createElement("button"); details.type = "button"; details.className = "details-button"; details.textContent = t("history.viewDetails");
-  detailsRow.appendChild(details);
+  const size = document.createElement("span");
+  size.className = "meeting-size";
+  detailsRow.append(size, details);
+  meetingSizes.add(size, meeting);
   card.append(header, date, chips, detailsRow); return card;
 }
 
@@ -693,7 +707,9 @@ function syncDetail(session, meeting) {
   // Older recordings did not store a platform. Omit the label rather than
   // assigning Teams calls to Meet or guessing from a user-controlled title.
   session.metadata.textContent = [formatTimeRange(meeting), platformLabel].filter(Boolean).join(" · ");
-  session.recovery.dispatchEvent(new CustomEvent("asterion:recovery-update", { detail: meeting }));
+  if (JSON.stringify(previous.processing) !== JSON.stringify(meeting.processing)) {
+    session.recovery.dispatchEvent(new CustomEvent("asterion:recovery-update", { detail: meeting }));
+  }
   updateTranscriptActions(session);
   const available = availableTabs(meeting);
   const keys = available.map(([, key]) => key);
@@ -889,7 +905,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (!changes.meetingHistory && !changes.debugLogging) return;
   if (changes.debugLogging) debugLogging = changes.debugLogging.newValue === true;
-  if (changes.meetingHistory) state.meetings = Array.isArray(changes.meetingHistory.newValue) ? changes.meetingHistory.newValue : [];
+  if (changes.meetingHistory) {
+    meetingSizes.invalidate();
+    state.meetings = Array.isArray(changes.meetingHistory.newValue) ? changes.meetingHistory.newValue : [];
+  }
   const selected = state.meetings.find(meeting => meetingId(meeting) === state.selectedMeetingId);
   if (state.selectedMeetingId && !selected) state.selectedMeetingId = null;
   renderAllExceptDetail();

@@ -143,6 +143,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getBackupStatus().then(sendResponse).catch(() => sendResponse({ reason: "unavailable" }));
     return true;
   }
+  if (["asterion:meeting-size-measured", "asterion:invalidate-meeting-size"].includes(message.type)) {
+    if (sender.url !== chrome.runtime.getURL(OFFSCREEN_URL)) return;
+    withLibraryWrite(() => updateMeetingSize(message))
+      .then(sendResponse).catch(error => sendResponse({ error: error.message }));
+    return true;
+  }
+  if (message.type === "asterion:measure-meeting-size") {
+    withLibraryWrite(async () => {
+      const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
+      const entry = meetingHistory.find(item => item.sessionId === message.sessionId && item.folderName === message.folderName);
+      if (!entry || deletedSessions.get(entry.sessionId) === entry.folderName) return {};
+      if (entry.processing?.pending ||
+          [entry.audioConversionStatus, entry.videoConversionStatus, entry.transcriptExportStatus].includes("pending")) {
+        return { pending: true };
+      }
+      if (entry.diskSize && entry.diskSize.revision === (entry.processing?.revision ?? null)) return { bytes: entry.diskSize.bytes };
+      return forwardStorage({ ...message, recordingStatus: entry.recordingStatus, processing: entry.processing });
+    }).then(sendResponse).catch(error => sendResponse({ error: error.message }));
+    return true;
+  }
   if (STORAGE_TYPES.has(message.type)) {
     const operation = async () => {
       if (message.type === "asterion:session-starting") await registerActiveSession(message.sessionId, sender.tab?.id ?? null, message.meetingTitle);
@@ -221,6 +241,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+function updateMeetingSize(message) {
+  const operation = historyQueue.then(async () => {
+    const { meetingHistory, pendingSessionDeletions } = await chrome.storage.local.get({ meetingHistory: [], pendingSessionDeletions: {} });
+    const entry = meetingHistory.find(item => item.sessionId === message.sessionId && item.folderName === message.folderName);
+    if (!entry || deletedSessions.get(entry.sessionId) === entry.folderName || pendingSessionDeletions[entry.sessionId]) return {};
+    if (message.type === "asterion:invalidate-meeting-size") {
+      if (!entry.diskSize) return { ok: true };
+      delete entry.diskSize;
+    } else {
+      if (entry.processing?.pending || (entry.processing?.revision ?? null) !== message.revision ||
+          !Number.isSafeInteger(message.bytes) || message.bytes < 0) return {};
+      if (entry.diskSize?.revision === message.revision && entry.diskSize.bytes === message.bytes) return { ok: true };
+      entry.diskSize = { bytes: message.bytes, revision: message.revision };
+    }
+    await chrome.storage.local.set({ meetingHistory });
+    return { ok: true };
+  });
+  historyQueue = operation.catch(() => {});
+  return operation;
+}
+
 function appendToHistory(meta) {
   const operation = historyQueue.then(async () => {
     const { meetingHistory, pendingSessionDeletions } = await chrome.storage.local.get({ meetingHistory: [], pendingSessionDeletions: {} });
@@ -232,6 +273,8 @@ function appendToHistory(meta) {
     const { sessionId, folderName, meetingTitle, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing } = meta;
     const platform = meta.platform ?? existing?.platform ?? null;
     entries.push({ sessionId, folderName, meetingTitle, platform, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing });
+    if (existing?.diskSize && existing.folderName === folderName && !processing?.pending &&
+        existing.diskSize.revision === (processing?.revision ?? null)) entries.at(-1).diskSize = existing.diskSize;
     entries.sort((a, b) => b.startedAt - a.startedAt);
     await chrome.storage.local.set({ meetingHistory: entries });
   });

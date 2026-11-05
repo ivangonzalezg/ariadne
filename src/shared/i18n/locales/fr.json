@@ -71,6 +71,8 @@
   "history.resultsCount": "{{count}} résultats",
   "history.emptyState": "Aucune réunion ne correspond encore à ces filtres.",
   "history.moreOptionsAria": "Plus d'options",
+  "history.meetingSize": "{{size}} sur le disque",
+  "history.meetingSizeUnavailable": "Taille indisponible",
   "history.viewDetails": "Voir les détails",
   "history.playbackSpeed": "Vitesse de lecture",
   "history.seekAria": "Position de lecture",

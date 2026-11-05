@@ -116,6 +116,7 @@ async function library(root, { collectFiles = false, signal } = {}) {
         hasVideo: Boolean(indexed?.hasVideo || manifest?.hasVideo || files.has("video-reunion.webm") || files.has("video-reunion.mp4") ||
           [...files.keys()].some(path => path.startsWith("capture-records/video-"))),
       };
+      delete meta.diskSize;
       meta.durationMs = Math.max(0, (meta.endedAt ?? meta.startedAt) - meta.startedAt);
       validateMetadata(meta, id);
       if (state) validateCaptureState(state, { sessionId: id, meta });
@@ -355,7 +356,10 @@ export async function importMeetingBackup(root, file, { signal, onProgress } = {
         await extractFile(entry, path, directory, meeting, folderName, { ...progress.options, signal });
         progress.finish(size);
       }
-      if (directory) added.push({ ...meeting.meta, folderName });
+      if (directory) {
+        const { diskSize, ...metadata } = meeting.meta;
+        added.push({ ...metadata, folderName });
+      }
     }
     signal?.throwIfAborted();
     if (added.length) {

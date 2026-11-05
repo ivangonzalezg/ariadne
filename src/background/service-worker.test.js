@@ -204,8 +204,8 @@ describe("recovery and deletion RPCs", () => {
     chrome.runtime.onMessage.addListener = listener => listeners.push(listener);
     chrome.runtime.sendMessage = vi.fn().mockResolvedValue({ ok: true });
   });
-  const dispatch = message => new Promise(resolve => {
-    for (const listener of listeners) listener(message, {}, resolve);
+  const dispatch = (message, sender = {}) => new Promise(resolve => {
+    for (const listener of listeners) listener(message, sender, resolve);
   });
 
   it("rejects a folder/session mismatch before forwarding retry or deletion", async () => {
@@ -233,6 +233,28 @@ describe("recovery and deletion RPCs", () => {
     await dispatch({ type: "asterion:session-finalized", sessionId: "s", folderName: "correct" });
     expect(chrome.storage.__store.meetingHistory).toEqual([{ sessionId: "other", folderName: "other" }]);
     expect(chrome.storage.__store.pendingSessionDeletions).toEqual({});
+  });
+
+  it("stores a size only for the current settled revision and rejects a result arriving after deletion", async () => {
+    await import("./service-worker.js");
+    const saved = { bytes: 20, revision: 1 };
+    const entry = { sessionId: "s", folderName: "correct", processing: { revision: 2, pending: true } };
+    chrome.storage.__store.meetingHistory = [entry, { sessionId: "other", folderName: "other", diskSize: saved }];
+    const target = { sessionId: "s", folderName: "correct" };
+    const offscreen = { url: "src/offscreen/offscreen.html" };
+    const measure = revision => dispatch({ ...target, type: "asterion:meeting-size-measured", bytes: 12, revision }, offscreen);
+    expect(await dispatch({ ...target, type: "asterion:measure-meeting-size" })).toEqual({ pending: true });
+    expect(await measure(2)).toEqual({});
+    entry.processing.pending = false;
+    expect(await measure(1)).toEqual({});
+    expect(await measure(2)).toEqual({ ok: true });
+    expect(await dispatch({ ...target, type: "asterion:measure-meeting-size" })).toEqual({ bytes: 12 });
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+    await dispatch({ ...target, type: "asterion:invalidate-meeting-size" }, offscreen);
+    expect(entry.diskSize).toBeUndefined();
+    await dispatch({ ...target, type: "asterion:delete-session" });
+    expect(await measure(2)).toEqual({});
+    expect(chrome.storage.__store.meetingHistory).toEqual([{ sessionId: "other", folderName: "other", diskSize: saved }]);
   });
 
   it("preserves active capture after two temporary status transport failures", async () => {

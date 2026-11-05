@@ -85,11 +85,29 @@ try {
   assert.equal((await status()).sessionId, sessionId);
   await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "asterion:popup-stop" }), tabId);
   const history = () => worker.evaluate(async () => (await chrome.storage.local.get({ meetingHistory: [] })).meetingHistory);
-  const entries = await until(history, entries => entries.some(entry => entry.sessionId === sessionId), "session finalized");
+  const entries = await until(history, entries => entries.some(entry => entry.sessionId === sessionId && entry.diskSize), "session finalized with a persisted size");
   assert.equal(entries.length, 1);
   const entry = entries[0];
   const storagePage = await context.newPage();
   await storagePage.goto(`chrome-extension://${id}/src/history/history.html`);
+  const totals = await storagePage.evaluate(async ({ folderName, sessionId }) => {
+    const { directorySize } = await import("/src/storage/meeting-directory-size.js");
+    const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(folderName);
+    const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
+    return { actual: await directorySize(directory), saved: meetingHistory.find(entry => entry.sessionId === sessionId).diskSize.bytes };
+  }, { folderName: entries.find(entry => entry.sessionId === sessionId).folderName, sessionId });
+  assert.equal(totals.saved, totals.actual, "The saved total includes the last checkpoint");
+  await storagePage.addInitScript(() => {
+    const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+    window.measurementRequests = 0;
+    chrome.runtime.sendMessage = (message, ...args) => {
+      if (message.type === "asterion:measure-meeting-size") window.measurementRequests++;
+      return send(message, ...args);
+    };
+  });
+  await storagePage.reload();
+  await storagePage.waitForFunction(() => document.querySelector(".meeting-size")?.textContent.endsWith("on disk"));
+  assert.equal(await storagePage.evaluate(() => window.measurementRequests), 0);
   const transcript = await storagePage.evaluate(async folderName => {
     const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(folderName);
     return JSON.parse(await (await (await directory.getFileHandle("transcripcion.json")).getFile()).text());

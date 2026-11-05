@@ -1,3 +1,5 @@
+import { directorySize } from "../../src/storage/meeting-directory-size.js";
+
 const params = new URLSearchParams(location.search);
 Object.defineProperty(navigator, 'language', { value: params.get('locale') || 'en' });
 let historyChanged;
@@ -6,7 +8,11 @@ Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { wri
 const downloaded = [], preferences = { transcriptDownloadFormat: 'txt' };
 const entry = { sessionId: 'browser', folderName: 'browser-history', meetingTitle: 'A long meeting title '.repeat(8), startedAt: Date.now(), durationMs: 60000, hasTranscript: true, hasVideo: true };
 window.chrome = {
-  runtime: { getURL: path => '/' + path, sendMessage: async () => ({ ok: true }) },
+  runtime: { getURL: path => '/' + path, sendMessage: async message => {
+    if (message.type !== "asterion:measure-meeting-size") return { ok: true };
+    const root = await navigator.storage.getDirectory();
+    return { bytes: await directorySize(await root.getDirectoryHandle(message.folderName)) };
+  } },
   storage: { local: { get: (defaults, callback) => callback({ ...defaults, ...preferences, meetingHistory: [entry], debugLogging: true }), set: async values => { Object.assign(preferences, values); historyChanged({ transcriptDownloadFormat: { newValue: values.transcriptDownloadFormat } }, 'local'); } }, onChanged: { addListener: listener => { historyChanged = listener; } } },
   tabs: { async create(options) { openedAi.push(options); return { id: 100 }; } }, downloads: { download: options => downloaded.push(options), onChanged: { addListener() {}, removeListener() {} } },
 };
@@ -46,7 +52,58 @@ window.previewHistory = async (media = null) => {
     panel.querySelector('.media-play').click(); await until(() => !panel.querySelector(media).paused); await wait(250);
   }
 };
+async function verifyMeetingSize() {
+  const records = await folder.getDirectoryHandle("capture-records", { create: true });
+  const nested = await records.getDirectoryHandle("nested", { create: true });
+  const chunk = await (await nested.getFileHandle("chunk", { create: true })).createWritable();
+  await chunk.write(new Uint8Array(1024 * 1024)); await chunk.close();
+  await write("internal.extra", new Uint8Array(1024));
+  const bytes = 1024 * 1024 + (await Promise.all(
+    ["audio-reunion.webm", "video-reunion.webm", "transcripcion.json", "manifest.json", "internal.extra"]
+      .map(async name => (await (await folder.getFileHandle(name)).getFile()).size),
+  )).reduce((sum, size) => sum + size, 0);
+  const suffix = { en: "on disk", es: "en disco", fr: "sur le disque" }[navigator.language];
+  const label = `${(bytes / 1024 ** 2).toLocaleString(navigator.language, { maximumFractionDigits: 1 })} MB ${suffix}`;
+  for (const width of [491, 210]) {
+    historyChanged({ meetingHistory: { newValue: [entry] } }, "local");
+    const card = document.querySelector(".meeting-card");
+    card.style.width = `${width}px`;
+    const size = card.querySelector(".meeting-size");
+    const details = card.querySelector(".details-button");
+    const height = card.offsetHeight, before = details.getBoundingClientRect();
+    assert(size.textContent === "", "Pending size leaves its row empty");
+    await until(() => size.textContent === label);
+    const after = details.getBoundingClientRect();
+    assert(size.title === label && card.offsetHeight === height && before.x === after.x && before.y === after.y,
+      "Total size must not move View details or resize the card");
+  }
+  const empty = { ...entry, sessionId: "empty", folderName: "empty-meeting" };
+  const missing = { ...entry, sessionId: "missing", folderName: "missing-meeting" };
+  await (await navigator.storage.getDirectory()).getDirectoryHandle(empty.folderName, { create: true });
+  historyChanged({ meetingHistory: { newValue: [entry, missing, empty] } }, "local");
+  const sizeFor = id => document.querySelector(`[data-meeting-id="${id}"] .meeting-size`);
+  await until(() => sizeFor("empty").textContent === `0 B ${suffix}`);
+  const unavailable = { en: "Size unavailable", es: "Tamaño no disponible", fr: "Taille indisponible" }[navigator.language];
+  await until(() => sizeFor("missing").textContent === unavailable);
+  const getFile = FileSystemFileHandle.prototype.getFile;
+  try {
+    FileSystemFileHandle.prototype.getFile = function () {
+      if (this.name === "internal.extra") return Promise.reject(new DOMException("Unreadable file", "NotReadableError"));
+      return getFile.call(this);
+    };
+    historyChanged({ meetingHistory: { newValue: [entry, empty] } }, "local");
+    await until(() => sizeFor("browser").textContent === unavailable && sizeFor("empty").textContent === `0 B ${suffix}`);
+  } finally {
+    FileSystemFileHandle.prototype.getFile = getFile;
+  }
+  await write("internal.extra", new Uint8Array(1024 * 1024 + 1024));
+  historyChanged({ meetingHistory: { newValue: [entry] } }, "local");
+  const updated = `${(bytes / 1024 ** 2 + 1).toLocaleString(navigator.language, { maximumFractionDigits: 1 })} MB ${suffix}`;
+  await until(() => sizeFor("browser").textContent === updated);
+}
+
 window.runHistoryTest = async () => {
+  await verifyMeetingSize();
   const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
   assert(bg.toLowerCase() === (params.get('theme') === 'light' ? '#ffffff' : '#1a1d24'), 'Shared theme must match emulated appearance');
   document.querySelector('.meeting-card').click();

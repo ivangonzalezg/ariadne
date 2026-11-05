@@ -50,6 +50,7 @@ try {
       await put(meeting, "manifest.json", JSON.stringify(meta));
       await put(meeting, "transcripcion.json", JSON.stringify([{ speaker: "Ana", startTime: 0, endTime: 500,
         text: n === 200 ? "Unique meeting backup phrase" : `Transcript ${n}` }]));
+      if (n === 200) meta.diskSize = { bytes: 1, revision: null };
       if (n !== 0) history.push(meta);
     }
 
@@ -273,6 +274,7 @@ try {
       largeFileSize: (await (await folder.getFileHandle("video-segment-0.webm")).getFile()).size };
   });
   assert.equal(restored.count, 202);
+  assert.equal(restored.meta.diskSize, undefined);
   assert.equal(restored.autoStart, true);
   assert.equal(restored.first, "new");
   assert.equal(restored.recordingStatus, "incomplete");
@@ -282,6 +284,10 @@ try {
   const history = await context.newPage();
   await history.goto(`chrome-extension://${target}/src/history/history.html?sessionId=fixture-200`);
   await history.locator(".transcript-spoken").filter({ hasText: "Unique meeting backup phrase" }).waitFor();
+  await history.waitForFunction(async () => {
+    const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
+    return meetingHistory.find(entry => entry.sessionId === "fixture-200")?.diskSize?.bytes > 0;
+  });
   await history.getByRole("tab", { name: "Audio" }).click();
   await history.waitForFunction(() => document.querySelector("audio")?.readyState >= 1);
   await history.getByRole("tab", { name: "Video" }).click();
@@ -304,7 +310,7 @@ try {
   await history.waitForFunction(async () => {
     const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
     const restored = meetingHistory.find(entry => entry.sessionId === "fixture-200");
-    return restored?.hasAudioMp3 && !restored.processing?.pending;
+    return restored?.hasAudioMp3 && !restored.processing?.pending && restored.diskSize?.revision === restored.processing?.revision;
   });
   assert.equal((await currentLibrary()).ids.length, 202, "A recovery publication keeps all imported meetings");
 

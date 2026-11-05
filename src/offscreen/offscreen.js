@@ -1,3 +1,4 @@
+import { directorySize } from "../storage/meeting-directory-size.js";
 import { recoverySettled } from "../storage/session-recovery.js";
 import { SessionWriter } from "../storage/session-writer.js";
 import { CAPTURE_STATE_FILE, readJson } from "../storage/capture-journal.js";
@@ -12,6 +13,44 @@ const openings = new Map();
 const finalizations = new Map();
 const deletions = new Map();
 let restoration = null;
+const folderOperations = new Map();
+
+function withFolderOperation(folderName, operation) {
+  const result = (folderOperations.get(folderName) ?? Promise.resolve()).then(operation);
+  const tail = result.catch(() => {}).finally(() => {
+    if (folderOperations.get(folderName) === tail) folderOperations.delete(folderName);
+  });
+  folderOperations.set(folderName, tail);
+  return result;
+}
+
+async function measureMeetingSize({ sessionId, folderName, processing, recordingStatus }) {
+  return withFolderOperation(folderName, async () => {
+    if (deletions.has(sessionId)) return {};
+    if (processing?.pending || ["recording", "finalizing", "discarded"].includes(recordingStatus)) return { pending: true };
+    const revision = processing?.revision ?? null;
+    const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(folderName);
+    let state;
+    try { state = await readJson(directory, CAPTURE_STATE_FILE); }
+    catch (error) { if (error.name !== "NotFoundError") throw error; }
+    if (state) {
+      if (state.sessionId !== sessionId || state.deleted) return {};
+      if ((revision !== null && (state.recoveryRevision ?? 0) !== revision) || !(await recoverySettled(directory, state))) return { pending: true };
+    } else if (sessions.has(sessionId) || openings.has(sessionId)) {
+      return { pending: true };
+    }
+    const bytes = await directorySize(directory);
+    const result = await chrome.runtime.sendMessage({
+      type: "asterion:meeting-size-measured", sessionId, folderName, bytes, revision,
+    });
+    return result?.ok ? { bytes } : {};
+  });
+}
+
+async function invalidateMeetingSize({ sessionId, folderName }) {
+  const result = await chrome.runtime.sendMessage({ type: "asterion:invalidate-meeting-size", sessionId, folderName });
+  if (result?.error) throw new Error(result.error);
+}
 
 async function openSession(message) {
   if (deletions.has(message.sessionId)) throw Object.assign(new Error("Session deleted"), { retryable: false });
@@ -28,7 +67,11 @@ async function openSession(message) {
       const writer = message.folderName ? await SessionWriter.restore(message.folderName) : new SessionWriter(message);
       await writer.ready;
       if (writer.sessionId !== message.sessionId) throw Object.assign(new Error("Session mismatch"), { retryable: false });
-      writer.onRecoveryFinished = () => sessions.delete(writer.sessionId);
+      writer.onRecoveryFinished = async () => {
+        try { await measureMeetingSize(writer.getMetadata()); }
+        catch (error) { debugEvent("meeting-size-error", { sessionId: writer.sessionId, message: error.message }); }
+        if (sessions.get(writer.sessionId) === writer) sessions.delete(writer.sessionId);
+      };
       sessions.set(message.sessionId, writer);
       return writer;
     })().finally(() => openings.delete(message.sessionId));
@@ -42,25 +85,30 @@ async function restorePending() {
   for await (const directory of root.values()) {
     if (directory.kind !== "directory") continue;
     let state;
-    try { state = await readJson(directory, CAPTURE_STATE_FILE); } catch { continue; }
-    if (deletions.has(state.sessionId) || state.deleted) continue;
     try {
-      if (!sessions.has(state.sessionId) && await recoverySettled(directory, state)) continue;
-      const writer = await openSession({ ...state, folderName: directory.name });
-      if (!["recording", "discarded"].includes(state.recordingStatus)) {
+      await withFolderOperation(directory.name, async () => {
+        try { state = await readJson(directory, CAPTURE_STATE_FILE); } catch { return; }
+        if (deletions.has(state.sessionId) || state.deleted || await recoverySettled(directory, state)) return;
+        const writer = await openSession({ ...state, folderName: directory.name });
+        if (["recording", "discarded"].includes(state.recordingStatus)) return;
+        await invalidateMeetingSize(writer);
         if (state.recordingStatus === "finalizing") {
           await writer.finalize({ muteManifest: state.muteManifest, endedAt: state.endedAt,
             expectedSequences: state.expectedSequences, expectedCaptionEvents: state.expectedCaptionEvents,
             captionPersistenceErrors: state.captionPersistenceErrors, interruptionReason: state.interruptionReason });
         } else await writer.resumeRecovery();
-      }
+      });
     } catch (error) {
-      debugEvent("session-restore-error", { sessionId: state.sessionId, folderName: directory.name, message: error.message });
+      debugEvent("session-restore-error", { sessionId: state?.sessionId, folderName: directory.name, message: error.message });
     }
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.target === "asterion-offscreen" && message.type === "asterion:measure-meeting-size") {
+    measureMeetingSize(message).then(sendResponse).catch(error => sendResponse({ error: error.message }));
+    return true;
+  }
   if (message.target === "asterion-offscreen" && message.type === "asterion:backup-status") {
     const pending = restoration || openings.size || conversionQueue.running || processingQueue.running ||
       conversionQueue.snapshot().length || processingQueue.snapshot().length;
@@ -101,7 +149,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const writer = await openSession(message);
     if (message.type === "asterion:get-recovery-status") return { ...writer.getMetadata(), recovery: writer.recovery.snapshot() };
     if (message.type === "asterion:retry-recovery") {
-      await writer.resumeRecovery({ retry: true });
+      await withFolderOperation(writer.folderName, async () => {
+        await invalidateMeetingSize(writer);
+        await writer.resumeRecovery({ retry: true });
+      });
       return { ...writer.getMetadata(), recovery: writer.recovery.snapshot() };
     }
     if (message.type === "asterion:delete-session") {
