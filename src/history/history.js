@@ -47,6 +47,8 @@ searchInput.setAttribute("aria-label", t("history.searchPlaceholder"));
 document.getElementById("filters-label").textContent = t("history.filtersLabel");
 document.querySelector(".calendar").setAttribute("aria-label", t("history.calendarAria"));
 document.getElementById("kpis-label").textContent = t("history.summaryLabel");
+document.getElementById("settings-link-icon").innerHTML = icon("settings");
+document.getElementById("settings-link-label").textContent = t("settings.title");
 document.getElementById("meetings-title").textContent = t("history.meetingsTitle");
 sortSelect.setAttribute("aria-label", t("history.sortAria"));
 sortSelect.querySelector('option[value="newest"]').textContent = t("history.sortNewest");

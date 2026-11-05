@@ -2,10 +2,10 @@ import { LIBRARY_LOCK } from "../storage/library-lock.js";
 
 const BACKUP_MODULE = "../../dist/meeting-backup.bundle.js";
 
-function suggestedName() {
+function suggestedName(prefix) {
   const date = new Date();
   const pad = value => String(value).padStart(2, "0");
-  return `ariadne-respaldo-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}.zip`;
+  return `${prefix}-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}.zip`;
 }
 
 export function bindMeetingBackup(t) {
@@ -95,7 +95,7 @@ export function bindMeetingBackup(t) {
     void run(async signal => {
       if (!window.showSaveFilePicker) throw Object.assign(new Error(), { code: "pickerUnavailable" });
       const handle = await window.showSaveFilePicker({
-        suggestedName: suggestedName(), types: [{ description: "ZIP", accept: { "application/zip": [".zip"] } }],
+        suggestedName: suggestedName(t("backup.filenamePrefix")), types: [{ description: "ZIP", accept: { "application/zip": [".zip"] } }],
       });
       const { withBackupLibrary, exportMeetingBackup } = await import(BACKUP_MODULE);
       const result = await withBackupLibrary(async () => {

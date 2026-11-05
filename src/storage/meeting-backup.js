@@ -5,7 +5,7 @@ import { LIBRARY_LOCK, PENDING_IMPORT, rollbackPendingImport } from "./library-l
 
 const INDEX = "ariadne-backup.json";
 const FORMAT = "ariadne-meeting-backup";
-const VERSION = 1;
+const VERSION = 2;
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
 const ZIP_OPTIONS = { useWebWorkers: false };
 const ROOT_FILES = new Set([
@@ -19,6 +19,27 @@ const validId = value => typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]
   !Object.hasOwn(Object.prototype, value);
 const validFolder = value => typeof value === "string" && value.length > 0 && !/[\\/\u0000-\u001f:]/.test(value) &&
   value !== "." && value !== "..";
+const forbiddenArchiveCharacters = /[<>:"/\\|?*\u0000-\u001f\u007f]/;
+const reservedArchiveName = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
+const archiveFolderIdentity = name => name.normalize("NFC").toUpperCase();
+
+function validArchiveFolder(name) {
+  return validFolder(name) && !forbiddenArchiveCharacters.test(name) &&
+    name === name.trim() && !name.endsWith(".") && !reservedArchiveName.test(name) &&
+    new TextEncoder().encode(name).byteLength <= 255;
+}
+
+function archiveFolderName(title, usedNames) {
+  const safeTitle = title.normalize("NFC").replace(new RegExp(forbiddenArchiveCharacters.source, "g"), "-");
+  // Leave room for a duplicate suffix even when the title uses four-byte characters.
+  let base = [...safeTitle.trim()].slice(0, 60).join("").replace(/[.\s]+$/u, "");
+  if (!base) base = "Meeting";
+  if (reservedArchiveName.test(base)) base = "_" + base;
+  let name = base;
+  for (let suffix = 2; usedNames.has(archiveFolderIdentity(name)); suffix++) name = `${base} (${suffix})`;
+  return name;
+}
+
 const validSize = value => Number.isSafeInteger(value) && value >= 0;
 const supportedPath = path => !/[\u0000-\u001f\\]/.test(path) && (ROOT_FILES.has(path) || /^(?:meeting|video)-segment-\d+\.webm$/.test(path) ||
   /^capture-records\/(?:meeting|video)-\d+-\d+\.chunk$/.test(path) || /^caption-records\/\d+\.json$/.test(path));
@@ -108,7 +129,7 @@ async function library(root, { collectFiles = false, signal } = {}) {
         sessionId: id, folderName: directory.name,
         startedAt: state?.startedAt ?? indexed?.startedAt ?? manifest?.startedAt,
         endedAt: state?.endedAt ?? indexed?.endedAt ?? manifest?.endedAt ?? null,
-        meetingTitle: state?.meetingTitle ?? indexed?.meetingTitle ?? manifest?.meetingTitle ?? null,
+        meetingTitle: indexed?.meetingTitle ?? state?.meetingTitle ?? manifest?.meetingTitle ?? null,
         platform: state?.platform ?? indexed?.platform ?? manifest?.platform ?? null,
         recordingStatus: state?.recordingStatus ?? indexed?.recordingStatus ?? manifest?.recordingStatus ?? "complete",
         hasTranscript: files.has("transcripcion.json"),
@@ -192,8 +213,9 @@ export async function exportMeetingBackup(root, writable, { signal, onProgress }
   });
   try {
     const zip = new ZipWriter(stream, { ...ZIP_OPTIONS, level: 0, zip64: true, preventClose: true });
+    const usedNames = new Set();
     for (const { meta, files } of meetings) {
-      const key = String(index.meetings.length + 1);
+      const key = archiveFolderName(meta.meetingTitle || meta.folderName, usedNames);
       const meetingOffset = bytesWritten;
       const saved = [];
       let remainingBytes = [...files.values()].reduce((sum, file) => sum + file.size, 0);
@@ -207,6 +229,7 @@ export async function exportMeetingBackup(root, writable, { signal, onProgress }
           progress.finish(file.size);
         }
         index.meetings.push({ key, sessionId: meta.sessionId, meta, files: saved });
+        usedNames.add(archiveFolderIdentity(key));
       } catch (cause) {
         signal?.throwIfAborted();
         if (outputFailed || cause.name === "AbortError") throw cause;
@@ -249,16 +272,19 @@ async function readBackup(file, signal) {
     if (!indexEntry || indexEntry.uncompressedSize > MAX_JSON_BYTES) throw error("invalid");
     const index = JSON.parse(await indexEntry.getData(new TextWriter(), { signal }));
     if (index?.format !== FORMAT) throw error("invalid");
-    if (index.version !== VERSION) throw error("version");
+    if (![1, VERSION].includes(index.version)) throw error("version");
     if (!Array.isArray(index.meetings) || !index.meetings.length || !Number.isFinite(Date.parse(index.createdAt))) {
       throw error("invalid");
     }
-    const ids = new Set(), paths = new Set([INDEX]);
+    const ids = new Set(), folders = new Set(), paths = new Set([INDEX]);
     for (const [position, meeting] of index.meetings.entries()) {
       const id = meeting?.sessionId;
-      if (!validId(id) || ids.has(id) || meeting.key !== String(position + 1) ||
+      const key = meeting?.key;
+      const validKey = index.version === 1 ? key === String(position + 1) : validArchiveFolder(key);
+      if (!validId(id) || ids.has(id) || !validKey || folders.has(archiveFolderIdentity(key)) ||
           !Array.isArray(meeting.files) || !meeting.files.length) throw error("invalid");
       ids.add(id);
+      folders.add(archiveFolderIdentity(key));
       validateMetadata(meeting.meta, id);
       for (const item of meeting.files) {
         if (typeof item?.path !== "string" || !supportedPath(item.path) || !validSize(item.size)) throw error("invalid");

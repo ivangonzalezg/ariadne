@@ -152,6 +152,7 @@
   "history.transcriptCopyError": "Impossible de copier la transcription.",
   "history.aiTabOpened": "Onglet IA ouvert",
   "history.aiOpenError": "Impossible d’ouvrir l’onglet IA. Vous pouvez copier la transcription.",
+  "backup.filenamePrefix": "ariadne-sauvegarde",
   "backup.title": "Sauvegarde des réunions",
   "backup.helper": "Enregistrez une copie avant la désinstallation. Le ZIP contient les enregistrements et les transcriptions sans mot de passe.",
   "backup.export": "Tout exporter",

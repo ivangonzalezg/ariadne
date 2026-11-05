@@ -152,6 +152,7 @@
   "history.transcriptCopyError": "No se pudo copiar la transcripción.",
   "history.aiTabOpened": "Pestaña de IA abierta",
   "history.aiOpenError": "No se pudo abrir la pestaña de IA. Puedes copiar la transcripción.",
+  "backup.filenamePrefix": "ariadne-respaldo",
   "backup.title": "Respaldo de reuniones",
   "backup.helper": "Guarda una copia antes de desinstalar. El ZIP incluye grabaciones y transcripciones sin contraseña.",
   "backup.export": "Exportar todas",

@@ -46,7 +46,7 @@ try {
       const sessionId = `fixture-${n}`, folderName = `meeting-${n}`;
       const meeting = await root.getDirectoryHandle(folderName, { create: true });
       const meta = { sessionId, folderName, startedAt: n + 1, endedAt: n + 1000,
-        durationMs: 999, meetingTitle: `Meeting ${n}`, platform: "meet", recordingStatus: "complete", hasTranscript: true };
+        durationMs: 999, meetingTitle: n === 2 || n === 3 ? "Revisión / Diseño" : `Meeting ${n}`, platform: "meet", recordingStatus: "complete", hasTranscript: true };
       await put(meeting, "manifest.json", JSON.stringify(meta));
       await put(meeting, "transcripcion.json", JSON.stringify([{ speaker: "Ana", startTime: 0, endTime: 500,
         text: n === 200 ? "Unique meeting backup phrase" : `Transcript ${n}` }]));
@@ -209,9 +209,29 @@ try {
   await to.locator("#backup-cancel").click();
 
   const zip = new ZipReader(new BlobReader(new Blob([bytes])), { useWebWorkers: false });
-  const indexEntry = (await zip.getEntries()).find(entry => entry.filename === "ariadne-backup.json");
+  const zipEntries = await zip.getEntries();
+  const indexEntry = zipEntries.find(entry => entry.filename === "ariadne-backup.json");
   const index = JSON.parse(await indexEntry.getData(new TextWriter()));
   await zip.close();
+  assert.equal(index.version, 2);
+  assert(zipEntries.some(entry => entry.filename === "meetings/Meeting 200/transcripcion.json"));
+  assert(zipEntries.some(entry => entry.filename === "meetings/Revisión - Diseño/transcripcion.json"));
+  assert(zipEntries.some(entry => entry.filename === "meetings/Revisión - Diseño (2)/transcripcion.json"));
+
+  const legacy = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false, level: 0 });
+  await legacy.add("meetings/1/transcripcion.json", new TextReader("[]"));
+  await legacy.add("ariadne-backup.json", new TextReader(JSON.stringify({
+    ...index, version: 1, meetings: [{
+      key: "1", sessionId: "new",
+      meta: { sessionId: "new", folderName: "new", startedAt: 5000, recordingStatus: "complete" },
+      files: [{ path: "transcripcion.json", size: 2 }],
+    }],
+  })));
+  await choose(Buffer.from(await legacy.close()));
+  await waitStatus("Meetings to add: 0. Already in this library: 1.");
+  await to.locator("#backup-confirm").click();
+  await waitStatus("Meetings restored: 0. Already in this library: 1.");
+
   index.version = 999;
   const incompatible = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false, level: 0 });
   await incompatible.add("ariadne-backup.json", new TextReader(JSON.stringify(index)));
@@ -219,7 +239,7 @@ try {
   await waitStatus("This backup version is unsupported.");
 
   const invalidPath = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false, level: 0 });
-  index.version = 1;
+  index.version = 2;
   index.meetings[0].files[0].path = "../manifest.json";
   await invalidPath.add("ariadne-backup.json", new TextReader(JSON.stringify(index)));
   await choose(Buffer.from(await invalidPath.close()));

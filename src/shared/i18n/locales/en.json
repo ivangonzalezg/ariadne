@@ -152,6 +152,7 @@
   "history.transcriptCopyError": "Could not copy the transcript.",
   "history.aiTabOpened": "AI tab opened",
   "history.aiOpenError": "Could not open the AI tab. You can copy the transcript.",
+  "backup.filenamePrefix": "ariadne-backup",
   "backup.title": "Meeting backup",
   "backup.helper": "Save a copy before uninstalling. The ZIP includes recordings and transcripts without password protection.",
   "backup.export": "Export all",

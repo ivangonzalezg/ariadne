@@ -9,6 +9,7 @@ document.body.innerHTML = `
     <section aria-labelledby="filters-label" hidden><span id="filters-label" class="section-label"></span><div id="filter-chips" class="filter-chips"></div></section>
     <section class="calendar" aria-label="Calendario"><div id="calendar"></div></section>
     <section aria-labelledby="kpis-label"><span id="kpis-label" class="section-label"></span><div id="kpis" class="kpis"></div></section>
+    <a href="../settings/settings.html"><span id="settings-link-icon" aria-hidden="true"></span><span id="settings-link-label"></span></a>
   </aside>
   <section class="meetings-panel" aria-labelledby="meetings-title">
     <header class="meetings-header"><div><h2 id="meetings-title" class="meetings-title"></h2><p id="results-count" class="results-count"></p></div><label class="sort-control"><select id="sort-select"><option value="newest">Newest</option><option value="oldest">Oldest</option></select><span id="sort-chevron" class="sort-chevron" aria-hidden="true"></span></label></header>
