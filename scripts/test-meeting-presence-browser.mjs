@@ -83,11 +83,59 @@ try {
   await page.evaluate(() => { document.querySelector("i").hidden = false; });
   await new Promise(resolve => setTimeout(resolve, 3200));
   assert.equal((await status()).sessionId, sessionId);
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "asterion:popup-stop" }), tabId);
+  await page.evaluate(() => {
+    const icon = [...document.querySelectorAll("i")].find(icon => icon.textContent === "call_end");
+    const hangup = document.createElement("button");
+    hangup.id = "fixture-hangup";
+    icon.replaceWith(hangup);
+    hangup.append(icon);
+    let hideOnNextClick = true;
+    hangup.addEventListener("click", event => {
+      if (!event.isTrusted) {
+        hangup.remove();
+        setTimeout(() => document.body.append(hangup), 500);
+        return;
+      }
+      if (hideOnNextClick) {
+        hideOnNextClick = false;
+        hangup.hidden = true;
+        setTimeout(() => { hangup.hidden = false; }, 500);
+        return;
+      }
+      const dialog = document.createElement("dialog");
+      dialog.innerHTML = '<button id="fixture-cancel-leave">Cancel</button><button id="fixture-confirm-leave">Leave</button>';
+      document.body.append(dialog);
+      dialog.showModal();
+      hangup.remove();
+      dialog.querySelector("#fixture-cancel-leave").onclick = () => {
+        document.body.append(hangup);
+        dialog.remove();
+      };
+      dialog.querySelector("#fixture-confirm-leave").onclick = () => {
+        window.confirmedLeaveAt = Date.now();
+        dialog.remove();
+      };
+    });
+    hangup.click();
+  });
+  await page.locator("#fixture-hangup i").click();
+  await page.locator("#fixture-hangup i").waitFor();
+  assert.equal((await status()).sessionId, sessionId, "A visibility-only change after a trusted click keeps recording");
+  await page.locator("#fixture-hangup i").click();
+  await new Promise(resolve => setTimeout(resolve, 3400));
+  assert.equal((await status()).sessionId, sessionId, "The confirmation dialog preserves the recording");
+  assert.equal((await status()).state, "video-enabled");
+  await page.locator("#fixture-cancel-leave").click();
+  assert.equal((await status()).sessionId, sessionId, "Cancel retains the same session");
+  await page.locator("#fixture-hangup").press("Enter");
+  await new Promise(resolve => setTimeout(resolve, 3400));
+  await page.locator("#fixture-confirm-leave").click();
   const history = () => worker.evaluate(async () => (await chrome.storage.local.get({ meetingHistory: [] })).meetingHistory);
   const entries = await until(history, entries => entries.some(entry => entry.sessionId === sessionId && entry.diskSize), "session finalized with a persisted size");
   assert.equal(entries.length, 1);
   const entry = entries[0];
+  const confirmedAt = await page.evaluate(() => window.confirmedLeaveAt);
+  assert(entry.endedAt >= confirmedAt && entry.endedAt - confirmedAt < 3000, "A confirmed hangup bypasses the absence timer");
   const storagePage = await context.newPage();
   await storagePage.goto(`chrome-extension://${id}/src/history/history.html`);
   const totals = await storagePage.evaluate(async ({ folderName, sessionId }) => {
@@ -115,7 +163,7 @@ try {
   assert.deepEqual(transcript.map(segment => segment.text), ["Modal 0", "Modal 1"]);
   assert.equal(entry.recordingStatus, "complete");
   assert.equal(entry.hasVideo, true);
-  console.log(JSON.stringify({ meetingPresence: { ok: true, sessionId, checks: ["prolonged repeated modals", "durable audio and video", "captions during modal", "brief control absence", "one history entry"] } }, null, 2));
+  console.log(JSON.stringify({ meetingPresence: { ok: true, sessionId, checks: ["prolonged repeated modals", "durable audio and video", "captions during modal", "brief control absence", "synthetic click", "trusted click and keyboard", "long confirmation and cancellation", "one history entry"] } }, null, 2));
 } finally {
   await context?.close();
   await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

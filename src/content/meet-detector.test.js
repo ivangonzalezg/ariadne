@@ -19,8 +19,8 @@ const listeners = [];
 let presenceStop;
 vi.mock("./meeting-presence.js", async importOriginal => {
   const original = await importOriginal();
-  return { ...original, observeMeetingPresence(callback) {
-    presenceStop = original.observeMeetingPresence(callback);
+  return { ...original, observeMeetingPresence(callback, options) {
+    presenceStop = original.observeMeetingPresence(callback, options);
     return presenceStop;
   } };
 });

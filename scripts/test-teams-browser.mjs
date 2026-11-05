@@ -110,8 +110,15 @@ try {
   const second = await until(status, state => state.sessionId && state.sessionId !== firstSession && state.state === "recording", "second call in same tab");
   await page.evaluate(() => fixture.speak("María", "Nueva llamada", "3"));
   await until(status, state => state.hasTranscript, "second call captions");
-  await page.locator("#hangup-button").click();
-  await until(history, entries => entries.some(entry => entry.sessionId === second.sessionId), "automatic stop on leave");
+  await page.evaluate(() => document.getElementById("hangup-button").addEventListener("click", () => {
+    window.hangupClickedAt = Date.now();
+  }, { capture: true, once: true }));
+  await page.locator("#hangup-button").press("Enter");
+  const afterLeave = await until(history, entries => entries.some(entry => entry.sessionId === second.sessionId), "automatic stop on leave");
+  const endedAt = afterLeave.find(entry => entry.sessionId === second.sessionId).endedAt;
+  const clickedAt = await page.evaluate(() => window.hangupClickedAt);
+  assert(endedAt >= clickedAt && endedAt - clickedAt < 3000, "Keyboard hangup bypasses the absence timer");
+  assert.equal(afterLeave.filter(entry => entry.sessionId === second.sessionId).length, 1);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, platform: "teams", captions: saved.transcript, decodedAudio: decoded,
     checks: ["real manifest and recorder", "DOM enforced for hybrid preference", "trusted CC pause/resume", "panel replacement without duplicates", "final revision flushed", "OPFS transcript and MP3", "remote/local audio and mute", "popup stop", "second call without reload", "automatic stop on leave"] }, null, 2));

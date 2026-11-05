@@ -486,4 +486,6 @@ async function onMeetingPresence(active) {
   }
 }
 
-debugLoggingReady.then(() => observeMeetingPresence(active => { void onMeetingPresence(active); }, { isActive: isInActiveMeeting }));
+debugLoggingReady.then(() => observeMeetingPresence(active => { void onMeetingPresence(active); }, {
+  isActive: isInActiveMeeting, isHangupControl: platform.isHangupControl,
+}));
