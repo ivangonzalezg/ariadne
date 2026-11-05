@@ -1,3 +1,5 @@
+import { meetingCleanupChecked } from "../storage/meeting-cleanup-state.js";
+
 export function createMeetingSizes({ list, measure, format, unavailable }) {
   let cache = new Map();
   let running = false;
@@ -45,7 +47,7 @@ export function createMeetingSizes({ list, measure, format, unavailable }) {
     add(element, meeting) {
       const folder = meeting.folderName;
       if (meeting.processing?.pending) return;
-      if (Number.isSafeInteger(meeting.diskSize?.bytes) && meeting.diskSize.bytes >= 0 &&
+      if (meetingCleanupChecked(meeting) && Number.isSafeInteger(meeting.diskSize?.bytes) && meeting.diskSize.bytes >= 0 &&
           meeting.diskSize.revision === (meeting.processing?.revision ?? null)) {
         show(element, meeting.diskSize.bytes);
       } else if (!folder) {

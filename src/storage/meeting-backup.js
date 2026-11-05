@@ -1,3 +1,4 @@
+import { MEETING_CLEANUP_VERSION } from "./meeting-cleanup-state.js";
 import { BlobReader, TextReader, TextWriter, ZipReader, ZipWriter } from "@zip.js/zip.js";
 import { CAPTURE_FORMAT_VERSION, CAPTURE_STATE_FILE, readJson, writeFile } from "./capture-journal.js";
 import { LIBRARY_LOCK, PENDING_IMPORT, rollbackPendingImport } from "./library-lock.js";
@@ -117,6 +118,7 @@ async function library(root, { collectFiles = false, signal } = {}) {
           [...files.keys()].some(path => path.startsWith("capture-records/video-"))),
       };
       delete meta.diskSize;
+      delete meta.cleanup;
       meta.durationMs = Math.max(0, (meta.endedAt ?? meta.startedAt) - meta.startedAt);
       validateMetadata(meta, id);
       if (state) validateCaptureState(state, { sessionId: id, meta });
@@ -290,6 +292,8 @@ function validateCaptureState(state, meeting) {
       !["complete", "incomplete"].includes(state.recordingStatus) || state.startedAt !== meeting.meta.startedAt) {
     throw error("invalid");
   }
+  if (state.cleanup != null && (state.cleanup.version !== MEETING_CLEANUP_VERSION ||
+      !["pending", "complete"].includes(state.cleanup.status))) throw error("invalid");
   for (const key of ["conversions", "recoveryTasks", "captionSnapshots", "speakerLabels", "persistenceErrors", "captureSegments"]) {
     if (state[key] != null && (!Array.isArray(state[key]) || state[key].some(item => !item || typeof item !== "object"))) {
       throw error("invalid");
@@ -357,7 +361,7 @@ export async function importMeetingBackup(root, file, { signal, onProgress } = {
         progress.finish(size);
       }
       if (directory) {
-        const { diskSize, ...metadata } = meeting.meta;
+        const { diskSize, cleanup, ...metadata } = meeting.meta;
         added.push({ ...metadata, folderName });
       }
     }

@@ -50,6 +50,22 @@ try {
       await put(meeting, "manifest.json", JSON.stringify(meta));
       await put(meeting, "transcripcion.json", JSON.stringify([{ speaker: "Ana", startTime: 0, endTime: 500,
         text: n === 200 ? "Unique meeting backup phrase" : `Transcript ${n}` }]));
+      if (n === 198 || n === 199) {
+        const done = stream => ({ stream, state: "succeeded", published: true });
+        await put(meeting, "audio-reunion.mp3", new Uint8Array([1]));
+        if (n === 199) {
+          await put(meeting, "audio-reunion.webm", new Uint8Array(1024));
+          const records = await meeting.getDirectoryHandle("capture-records", { create: true });
+          await put(records, "meeting-0-1.chunk", new Uint8Array(1024));
+        }
+        await put(meeting, "capture-state.json", JSON.stringify({
+          ...meta, version: 1, historyPublished: true, recoveryVersion: 2,
+          recoveryRevision: 1, publishedRevision: 1, transcriptStatus: "complete",
+          transcriptExported: true, conversions: [done("meeting")],
+          recoveryTasks: [done("transcript"), done("publication")],
+          ...(n === 198 ? { cleanup: { version: 1, status: "complete" } } : {}),
+        }));
+      }
       if (n === 200) meta.diskSize = { bytes: 1, revision: null };
       if (n !== 0) history.push(meta);
     }
@@ -281,12 +297,54 @@ try {
   assert.deepEqual(restored.gaps, [2]);
   assert.equal(restored.largeFileSize, 8 * 1024 * 1024);
 
+  await to.evaluate(async () => {
+    const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
+    const old = meetingHistory.find(entry => entry.sessionId === "fixture-199");
+    old.diskSize = { bytes: 99999, revision: null };
+    await chrome.storage.local.set({ meetingHistory });
+    const clean = meetingHistory.find(entry => entry.sessionId === "fixture-198");
+    await chrome.runtime.sendMessage({ type: "asterion:get-recovery-status", sessionId: clean.sessionId, folderName: clean.folderName });
+    const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(clean.folderName);
+    for await (const file of directory.values()) {
+      if (file.kind === "directory" && file.name.endsWith("-records")) throw new Error("Restore recreated a retired journal");
+    }
+    const { readJson } = await import("/src/storage/capture-journal.js");
+    if ((await readJson(directory, "capture-state.json")).cleanup.status !== "complete") throw new Error("Restore lost cleanup marker");
+  });
+
   const history = await context.newPage();
+  async function waitForStoredMeeting(sessionId, predicate) {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const entry = await history.evaluate(async id => {
+        const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
+        return meetingHistory.find(item => item.sessionId === id);
+      }, sessionId);
+      if (predicate(entry)) return entry;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for stored meeting ${sessionId}`);
+  }
   await history.goto(`chrome-extension://${target}/src/history/history.html?sessionId=fixture-200`);
   await history.locator(".transcript-spoken").filter({ hasText: "Unique meeting backup phrase" }).waitFor();
-  await history.waitForFunction(async () => {
+  await waitForStoredMeeting("fixture-200", entry => entry?.diskSize?.bytes > 0 && entry.cleanup?.status === "retained");
+  await history.locator("#search-input").fill("Meeting 199");
+  await waitForStoredMeeting("fixture-199", old => old?.cleanup?.status === "complete" &&
+    old.diskSize?.bytes > 0 && old.diskSize.bytes < 99999);
+  await history.evaluate(async () => {
     const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
-    return meetingHistory.find(entry => entry.sessionId === "fixture-200")?.diskSize?.bytes > 0;
+    const old = meetingHistory.find(entry => entry.sessionId === "fixture-199");
+    const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(old.folderName);
+    const { directorySize } = await import("/src/storage/meeting-directory-size.js");
+    const actual = await directorySize(directory);
+    if (actual !== old.diskSize.bytes) {
+      const files = [];
+      for await (const file of directory.values()) files.push([file.name, file.kind === "file" ? (await file.getFile()).size : file.kind]);
+      throw new Error(`Stale size after cleanup: ${JSON.stringify({ actual, saved: old.diskSize, files })}`);
+    }
+    for await (const file of directory.values()) {
+      if (["capture-records", "audio-reunion.webm"].includes(file.name)) throw new Error("Intermediate file survived cleanup");
+    }
   });
   await history.getByRole("tab", { name: "Audio" }).click();
   await history.waitForFunction(() => document.querySelector("audio")?.readyState >= 1);
@@ -307,11 +365,8 @@ try {
   assert.equal(await history.evaluate(() => window.restoredDownload.filename), "meeting-200-video.webm");
 
   await history.locator(".recovery-retry").click();
-  await history.waitForFunction(async () => {
-    const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
-    const restored = meetingHistory.find(entry => entry.sessionId === "fixture-200");
-    return restored?.hasAudioMp3 && !restored.processing?.pending && restored.diskSize?.revision === restored.processing?.revision;
-  });
+  await waitForStoredMeeting("fixture-200", entry => entry?.hasAudioMp3 && !entry.processing?.pending &&
+    entry.diskSize?.bytes > 0 && entry.diskSize.revision === entry.processing?.revision && entry.cleanup?.status === "retained");
   assert.equal((await currentLibrary()).ids.length, 202, "A recovery publication keeps all imported meetings");
 
   const other = await settings(target);
@@ -329,7 +384,7 @@ try {
   assert.equal(busyStart.code, "BACKUP_BUSY");
   await to.evaluate(async () => { window.unlockLibrary(); await window.libraryLock; });
   await other.locator("#backup-export:enabled").waitFor();
-  console.log("Backup verified across extension IDs: 201 meetings, ZIP64, CRC rollback, invalid paths and versions, full disk, cancellation, interrupted import cleanup, duplicates, audio and video, downloads, recovery and library lock.");
+  console.log("Backup verified across extension IDs: 201 meetings, ZIP64, CRC rollback, invalid paths and versions, full disk, cancellation, interrupted import cleanup, duplicates, audio and video, downloads, recovery, cleanup of existing meetings, restored cleanup state and library lock.");
 } finally {
   await context?.close();
   await rm(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

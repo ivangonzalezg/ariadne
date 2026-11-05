@@ -1,3 +1,4 @@
+import { meetingCleanupChecked } from "../storage/meeting-cleanup-state.js";
 import { rollbackPendingImport, withLibraryWrite } from "../storage/library-lock.js";
 
 // src/background/service-worker.js
@@ -158,7 +159,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           [entry.audioConversionStatus, entry.videoConversionStatus, entry.transcriptExportStatus].includes("pending")) {
         return { pending: true };
       }
-      if (entry.diskSize && entry.diskSize.revision === (entry.processing?.revision ?? null)) return { bytes: entry.diskSize.bytes };
+      if (meetingCleanupChecked(entry) && entry.diskSize && entry.diskSize.revision === (entry.processing?.revision ?? null)) return { bytes: entry.diskSize.bytes };
       return forwardStorage({ ...message, recordingStatus: entry.recordingStatus, processing: entry.processing });
     }).then(sendResponse).catch(error => sendResponse({ error: error.message }));
     return true;
@@ -247,12 +248,16 @@ function updateMeetingSize(message) {
     const entry = meetingHistory.find(item => item.sessionId === message.sessionId && item.folderName === message.folderName);
     if (!entry || deletedSessions.get(entry.sessionId) === entry.folderName || pendingSessionDeletions[entry.sessionId]) return {};
     if (message.type === "asterion:invalidate-meeting-size") {
-      if (!entry.diskSize) return { ok: true };
+      if (!entry.diskSize && !entry.cleanup) return { ok: true };
       delete entry.diskSize;
+      delete entry.cleanup;
     } else {
       if (entry.processing?.pending || (entry.processing?.revision ?? null) !== message.revision ||
           !Number.isSafeInteger(message.bytes) || message.bytes < 0) return {};
-      if (entry.diskSize?.revision === message.revision && entry.diskSize.bytes === message.bytes) return { ok: true };
+      const sameCleanup = entry.cleanup?.version === message.cleanup?.version &&
+        entry.cleanup?.revision === message.cleanup?.revision && entry.cleanup?.status === message.cleanup?.status;
+      if (sameCleanup && entry.diskSize?.revision === message.revision && entry.diskSize.bytes === message.bytes) return { ok: true };
+      if (message.cleanup) entry.cleanup = message.cleanup;
       entry.diskSize = { bytes: message.bytes, revision: message.revision };
     }
     await chrome.storage.local.set({ meetingHistory });
@@ -274,7 +279,10 @@ function appendToHistory(meta) {
     const platform = meta.platform ?? existing?.platform ?? null;
     entries.push({ sessionId, folderName, meetingTitle, platform, startedAt, endedAt, durationMs, hasTranscript, transcriptStatus, hasVideo, recordingStatus, interruptionReason, transcriptExportStatus, audioConversionStatus, videoConversionStatus, hasAudioMp3, hasVideoMp4, processing });
     if (existing?.diskSize && existing.folderName === folderName && !processing?.pending &&
-        existing.diskSize.revision === (processing?.revision ?? null)) entries.at(-1).diskSize = existing.diskSize;
+        existing.diskSize.revision === (processing?.revision ?? null)) {
+      entries.at(-1).diskSize = existing.diskSize;
+      if (existing.cleanup) entries.at(-1).cleanup = existing.cleanup;
+    }
     entries.sort((a, b) => b.startedAt - a.startedAt);
     await chrome.storage.local.set({ meetingHistory: entries });
   });

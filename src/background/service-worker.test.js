@@ -242,7 +242,7 @@ describe("recovery and deletion RPCs", () => {
     chrome.storage.__store.meetingHistory = [entry, { sessionId: "other", folderName: "other", diskSize: saved }];
     const target = { sessionId: "s", folderName: "correct" };
     const offscreen = { url: "src/offscreen/offscreen.html" };
-    const measure = revision => dispatch({ ...target, type: "asterion:meeting-size-measured", bytes: 12, revision }, offscreen);
+    const measure = revision => dispatch({ ...target, type: "asterion:meeting-size-measured", bytes: 12, revision, cleanup: { version: 1, status: "retained", revision } }, offscreen);
     expect(await dispatch({ ...target, type: "asterion:measure-meeting-size" })).toEqual({ pending: true });
     expect(await measure(2)).toEqual({});
     entry.processing.pending = false;

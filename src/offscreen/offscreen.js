@@ -1,3 +1,5 @@
+import { cleanMeeting } from "../storage/meeting-cleanup.js";
+import { MEETING_CLEANUP_VERSION } from "../storage/meeting-cleanup-state.js";
 import { directorySize } from "../storage/meeting-directory-size.js";
 import { recoverySettled } from "../storage/session-recovery.js";
 import { SessionWriter } from "../storage/session-writer.js";
@@ -14,6 +16,7 @@ const finalizations = new Map();
 const deletions = new Map();
 let restoration = null;
 const folderOperations = new Map();
+const compactingSessions = new Set();
 
 function withFolderOperation(folderName, operation) {
   const result = (folderOperations.get(folderName) ?? Promise.resolve()).then(operation);
@@ -39,9 +42,25 @@ async function measureMeetingSize({ sessionId, folderName, processing, recording
     } else if (sessions.has(sessionId) || openings.has(sessionId)) {
       return { pending: true };
     }
+    let status;
+    try {
+      status = await cleanMeeting(directory, state, async () => {
+        const invalidated = await invalidateMeetingSize({ sessionId, folderName });
+        if (!invalidated?.ok || deletions.has(sessionId)) return false;
+        compactingSessions.add(sessionId);
+        // Finish any journal opening that started before the cleanup gate closed.
+        await openings.get(sessionId);
+        sessions.delete(sessionId);
+        return !deletions.has(sessionId);
+      });
+    } finally {
+      compactingSessions.delete(sessionId);
+    }
+    if (status === "pending") return { pending: true };
     const bytes = await directorySize(directory);
     const result = await chrome.runtime.sendMessage({
       type: "asterion:meeting-size-measured", sessionId, folderName, bytes, revision,
+      cleanup: { version: MEETING_CLEANUP_VERSION, status, revision },
     });
     return result?.ok ? { bytes } : {};
   });
@@ -50,10 +69,12 @@ async function measureMeetingSize({ sessionId, folderName, processing, recording
 async function invalidateMeetingSize({ sessionId, folderName }) {
   const result = await chrome.runtime.sendMessage({ type: "asterion:invalidate-meeting-size", sessionId, folderName });
   if (result?.error) throw new Error(result.error);
+  return result;
 }
 
 async function openSession(message) {
   if (deletions.has(message.sessionId)) throw Object.assign(new Error("Session deleted"), { retryable: false });
+  if (compactingSessions.has(message.sessionId)) throw Object.assign(new Error("Meeting already finalized"), { retryable: false });
   if (sessions.has(message.sessionId)) {
     const writer = sessions.get(message.sessionId);
     if (message.folderName && writer.folderName !== message.folderName) throw Object.assign(new Error("Session mismatch"), { retryable: false });
@@ -88,7 +109,7 @@ async function restorePending() {
     try {
       await withFolderOperation(directory.name, async () => {
         try { state = await readJson(directory, CAPTURE_STATE_FILE); } catch { return; }
-        if (deletions.has(state.sessionId) || state.deleted || await recoverySettled(directory, state)) return;
+        if (deletions.has(state.sessionId) || state.deleted || state.cleanup || await recoverySettled(directory, state)) return;
         const writer = await openSession({ ...state, folderName: directory.name });
         if (["recording", "discarded"].includes(state.recordingStatus)) return;
         await invalidateMeetingSize(writer);
@@ -130,26 +151,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .map(writer => writer.getMetadata());
       return { pending: conversionQueue.snapshot().length > 0 || processingQueue.snapshot().length > 0 || recordings.length > 0 || discarded.length > 0, recordings, unpublished, discarded };
     }
-    if (message.type === "asterion:delete-session" && deletions.has(message.sessionId)) return deletions.get(message.sessionId);
-    if (message.type === "asterion:delete-session" && !sessions.has(message.sessionId)) {
-      const root = await navigator.storage.getDirectory();
-      let directory;
-      try { directory = await root.getDirectoryHandle(message.folderName); }
-      catch (error) { if (error.name === "NotFoundError") return { ok: true }; throw error; }
-      let state;
-      try { state = await readJson(directory, CAPTURE_STATE_FILE); } catch {}
-      if (!state) {
-        // The worker has validated this legacy folder against meetingHistory.
+    if (deletions.has(message.sessionId)) {
+      if (message.type === "asterion:delete-session") return deletions.get(message.sessionId);
+      throw Object.assign(new Error("Session deleted"), { retryable: false });
+    }
+    const current = sessions.get(message.sessionId);
+    if (current && message.folderName && current.folderName !== message.folderName) throw new Error("Session mismatch");
+    if (["asterion:get-recovery-status", "asterion:retry-recovery", "asterion:delete-session"].includes(message.type)) {
+      const direct = await withFolderOperation(message.folderName, async () => {
+        const root = await navigator.storage.getDirectory();
+        let directory;
+        try { directory = await root.getDirectoryHandle(message.folderName); }
+        catch (error) {
+          if (error.name === "NotFoundError" && message.type === "asterion:delete-session") return { ok: true };
+          throw error;
+        }
+        let state;
+        try { state = await readJson(directory, CAPTURE_STATE_FILE); }
+        catch (error) { if (error.name !== "NotFoundError") throw error; }
+        if (state && state.sessionId !== message.sessionId) throw new Error("Session mismatch");
+        if (state && !state.cleanup) return null;
         const manifest = await readJson(directory, "manifest.json").catch(() => null);
-        if (manifest?.sessionId && manifest.sessionId !== message.sessionId) throw Object.assign(new Error("Session mismatch"), { retryable: false });
-        await root.removeEntry(message.folderName, { recursive: true });
-        return { ok: true };
-      }
+        if (manifest?.sessionId && manifest.sessionId !== message.sessionId) throw new Error("Session mismatch");
+        if (message.type === "asterion:delete-session") {
+          await root.removeEntry(message.folderName, { recursive: true });
+          sessions.delete(message.sessionId);
+          finalizations.delete(message.sessionId);
+          return { ok: true };
+        }
+        return { recovery: { supported: false, pending: false, canRetry: false, tasks: [] } };
+      });
+      if (direct) return direct;
     }
     const writer = await openSession(message);
     if (message.type === "asterion:get-recovery-status") return { ...writer.getMetadata(), recovery: writer.recovery.snapshot() };
     if (message.type === "asterion:retry-recovery") {
       await withFolderOperation(writer.folderName, async () => {
+        const state = await readJson(writer.meetingHandle, CAPTURE_STATE_FILE);
+        if (state.cleanup) return;
         await invalidateMeetingSize(writer);
         await writer.resumeRecovery({ retry: true });
       });
@@ -165,9 +204,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await Promise.all([conversionQueue.cancelSession(writer.sessionId), processingQueue.cancelSession(writer.sessionId)]);
         await writer.recovery.queue;
         await writer.journal.queue;
-        await writer.journal.checkpoint({ deleted: true });
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(writer.folderName, { recursive: true });
+        await withFolderOperation(writer.folderName, async () => {
+          await writer.journal.checkpoint({ deleted: true });
+          const root = await navigator.storage.getDirectory();
+          await root.removeEntry(writer.folderName, { recursive: true });
+        });
         sessions.delete(writer.sessionId); finalizations.delete(writer.sessionId);
         return { ok: true };
       })();

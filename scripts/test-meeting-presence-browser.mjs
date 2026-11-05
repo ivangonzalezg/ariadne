@@ -134,6 +134,7 @@ try {
   const entries = await until(history, entries => entries.some(entry => entry.sessionId === sessionId && entry.diskSize), "session finalized with a persisted size");
   assert.equal(entries.length, 1);
   const entry = entries[0];
+  assert.equal(entry.cleanup?.status, "complete", "A complete recording is compacted automatically");
   const confirmedAt = await page.evaluate(() => window.confirmedLeaveAt);
   assert(entry.endedAt >= confirmedAt && entry.endedAt - confirmedAt < 3000, "A confirmed hangup bypasses the absence timer");
   const storagePage = await context.newPage();
@@ -142,9 +143,15 @@ try {
     const { directorySize } = await import("/src/storage/meeting-directory-size.js");
     const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(folderName);
     const { meetingHistory } = await chrome.storage.local.get({ meetingHistory: [] });
-    return { actual: await directorySize(directory), saved: meetingHistory.find(entry => entry.sessionId === sessionId).diskSize.bytes };
+    const files = [];
+    for await (const item of directory.values()) files.push(item.name);
+    return { actual: await directorySize(directory), saved: meetingHistory.find(entry => entry.sessionId === sessionId).diskSize.bytes, files };
   }, { folderName: entries.find(entry => entry.sessionId === sessionId).folderName, sessionId });
   assert.equal(totals.saved, totals.actual, "The saved total includes the last checkpoint");
+  for (const name of ["audio-reunion.mp3", "video-reunion.mp4", "transcripcion.json", "manifest.json", "capture-state.json"]) {
+    assert(totals.files.includes(name), `Final artifact retained: ${name}`);
+  }
+  assert(!totals.files.some(name => /-records$|\.webm$/.test(name)), "Temporary journals and duplicate WebM files are gone");
   await storagePage.addInitScript(() => {
     const send = chrome.runtime.sendMessage.bind(chrome.runtime);
     window.measurementRequests = 0;
@@ -163,6 +170,24 @@ try {
   assert.deepEqual(transcript.map(segment => segment.text), ["Modal 0", "Modal 1"]);
   assert.equal(entry.recordingStatus, "complete");
   assert.equal(entry.hasVideo, true);
+  await storagePage.locator(".meeting-card").click();
+  await storagePage.getByRole("tab", { name: "Audio" }).click();
+  await storagePage.waitForFunction(() => document.querySelector("audio")?.readyState >= 1);
+  await storagePage.getByRole("tab", { name: "Video" }).click();
+  await storagePage.waitForFunction(() => document.querySelector("video")?.readyState >= 1);
+  await storagePage.evaluate(() => {
+    chrome.downloads.download = async ({ filename, url }, callback) => {
+      const file = await (await fetch(url)).blob();
+      window.cleanedDownload = { filename, size: file.size };
+      callback(123);
+    };
+  });
+  await storagePage.getByRole("button", { name: "Download", exact: true }).click();
+  await storagePage.waitForFunction(() => window.cleanedDownload?.filename.endsWith(".mp4") && window.cleanedDownload.size > 0);
+  await storagePage.locator("#search-input").fill("Modal 1");
+  await storagePage.waitForFunction(() => document.querySelectorAll(".meeting-card").length === 1 &&
+    document.querySelector("#meetings-list").getAttribute("aria-busy") === "false");
+
   console.log(JSON.stringify({ meetingPresence: { ok: true, sessionId, checks: ["prolonged repeated modals", "durable audio and video", "captions during modal", "brief control absence", "synthetic click", "trusted click and keyboard", "long confirmation and cancellation", "one history entry"] } }, null, 2));
 } finally {
   await context?.close();

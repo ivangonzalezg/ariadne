@@ -101,6 +101,7 @@ export class SessionWriter {
     const root = await navigator.storage.getDirectory();
     const directory = await root.getDirectoryHandle(folderName);
     const state = await readJson(directory, CAPTURE_STATE_FILE);
+    if (state.cleanup) throw Object.assign(new Error("Meeting already finalized"), { retryable: false });
     const writer = new SessionWriter({ ...state, folderName, restore: true });
     await writer.ready;
     return writer;
