@@ -313,7 +313,11 @@ async function openMeetingDirectory(meeting) { const root = await navigator.stor
 async function readJsonFile(directory) { const file = await (await directory.getFileHandle("manifest.json")).getFile(); return { file, value: JSON.parse(await file.text()) }; }
 async function readActiveFile(meeting, tab) {
   const directory = await openMeetingDirectory(meeting);
-  if (tab === "transcript") { const file = await (await directory.getFileHandle("transcripcion.json")).getFile(); return { file, name: "transcripcion.json", value: JSON.parse(await file.text()) }; }
+  if (tab === "transcript") {
+    const file = await (await directory.getFileHandle("transcripcion.json")).getFile();
+    const text = await file.text();
+    return { file, name: "transcripcion.json", value: JSON.parse(text), text };
+  }
   if (tab === "manifest") { const { file, value } = await readJsonFile(directory); return { file, name: "manifest.json", value }; }
   const preferred = tab === "video" ? "video-reunion.mp4" : "audio-reunion.mp3";
   const fallback = tab === "video" ? "video-reunion.webm" : "audio-reunion.webm";
@@ -350,35 +354,91 @@ function createFileFooter(activeFile, meeting, tab) {
   const actions = document.createElement("div"); actions.className = "detail-file-actions";
   const feedback = document.createElement("p"); feedback.className = "download-feedback"; feedback.setAttribute("role", "status");
   let prepared = activeFile, revision = null, request = 0;
+  const isTranscript = tab === "transcript";
   function prepareTranscript(format) {
     if (format === "json") return activeFile;
-    return { file: new Blob([format === "md" ? transcriptToMarkdown(activeFile.value, titleFor(currentMeeting())) : transcriptToTxt(activeFile.value)],
-      { type: format === "md" ? "text/markdown" : "text/plain" }), name: `transcript.${format}` };
+    const text = format === "md" ? transcriptToMarkdown(activeFile.value, titleFor(currentMeeting())) : transcriptToTxt(activeFile.value);
+    return { text, file: new Blob([text], { type: format === "md" ? "text/markdown" : "text/plain" }), name: `transcript.${format}` };
   }
   function updateMetadata() {
     name.textContent = downloadName(prepared.name.split(".").pop()); size.textContent = formatFileSize(prepared.file.size);
   }
-  async function download(format = transcriptDownloadFormat) {
-    button.setDisabled(true); feedback.textContent = "";
+  async function download() {
+    setDownloadDisabled(true);
+    if (!isTranscript) feedback.textContent = "";
+    downloadStatus.textContent = "";
     try {
-      const target = tab === "transcript" ? prepareTranscript(format) : ["audio", "video"].includes(tab) ? await readActiveFile(currentMeeting(), tab) : activeFile;
+      const target = isTranscript ? prepared : ["audio", "video"].includes(tab) ? await readActiveFile(currentMeeting(), tab) : activeFile;
       if (detailSession?.meetingId !== meetingId(meeting) || !state.meetings.some(item => meetingId(item) === meetingId(meeting))) return;
       prepared = target; updateMetadata();
       downloadFile(target.file, downloadName(target.name.split(".").pop()));
-    } catch { if (footer.isConnected) feedback.textContent = t("history.downloadFileError"); }
-    finally { button.setDisabled(false); }
+    } catch { if (footer.isConnected) downloadStatus.textContent = t("history.downloadFileError"); }
+    finally { setDownloadDisabled(false); }
   }
-  const button = createSplitButton({ label: t("common.download"), iconHtml: icon("download", { size: 12, color: "currentColor" }),
-    menuLabel: t("history.downloadFormats"), value: transcriptDownloadFormat,
-    options: tab === "transcript" ? ["txt", "md", "json"].map(value => ({ value, label: t(`history.downloadOption.${value}`) })) : [],
-    onOpen: () => closeOpenMoreMenu(false, true), onAction: () => void download(),
-    onSelect: format => { rememberDownloadFormat(format); void download(format); } });
-  footer.downloadButton = button;
+  let setDownloadDisabled, formatPicker;
+  const downloadStatus = isTranscript ? document.createElement("p") : feedback;
+  if (isTranscript) {
+    formatPicker = document.createElement("select");
+    formatPicker.className = "detail-action transcript-format";
+    formatPicker.setAttribute("aria-label", t("history.transcriptFormat"));
+    for (const [value, label] of [["txt", "TXT"], ["md", "Markdown"], ["json", "JSON"]]) {
+      formatPicker.add(new Option(label, value));
+    }
+    formatPicker.addEventListener("change", () => rememberDownloadFormat(formatPicker.value));
+
+    const downloadButton = createMediaButton("detail-action transcript-download", t("history.downloadTranscript"), "download", 14);
+    setDownloadDisabled = disabled => { downloadButton.disabled = disabled; };
+    downloadButton.addEventListener("click", download);
+
+    const copyButton = createMediaButton("detail-action transcript-copy", t("history.copyTranscript"), "copy", 14);
+    const copyStatus = document.createElement("p");
+    copyStatus.className = "download-feedback transcript-copy-status";
+    downloadStatus.className = "download-feedback";
+    copyStatus.setAttribute("role", "status");
+    downloadStatus.setAttribute("role", "status");
+    let copyPending = false, copyTimer, disposed = false;
+    const resetCopy = () => {
+      clearTimeout(copyTimer);
+      copyButton.innerHTML = icon("copy", { size: 14, color: "currentColor" });
+      copyStatus.classList.remove("is-success");
+      copyStatus.textContent = "";
+    };
+    footer.dispose = () => { disposed = true; clearTimeout(copyTimer); };
+    copyButton.addEventListener("click", async () => {
+      if (copyPending) return;
+      copyPending = true;
+      resetCopy();
+      try {
+        await navigator.clipboard.writeText(prepared.text);
+        if (disposed) return;
+        copyButton.innerHTML = icon("check", { size: 14, color: "var(--accent-green)" });
+        copyStatus.classList.add("is-success");
+        copyStatus.textContent = t("history.transcriptCopied");
+        copyTimer = setTimeout(resetCopy, 2000);
+      } catch {
+        if (!disposed) copyStatus.textContent = t("history.transcriptCopyError");
+      } finally {
+        copyPending = false;
+      }
+    });
+    fileRow.classList.add("transcript-file-row");
+    actions.append(formatPicker, downloadButton, copyButton);
+    fileRow.append(metadata, actions);
+    footer.append(fileRow, feedback, downloadStatus, copyStatus);
+  } else {
+    const button = createSplitButton({ label: t("common.download"), iconHtml: icon("download", { size: 12, color: "currentColor" }),
+      onAction: download });
+    setDownloadDisabled = button.setDisabled;
+    footer.downloadButton = button;
+    actions.append(button.element);
+    fileRow.append(metadata, actions);
+    footer.append(fileRow, feedback);
+  }
   footer.updateDownload = () => {
-    if (tab === "transcript") {
+    if (isTranscript) {
       prepared = prepareTranscript(transcriptDownloadFormat);
-      button.setLabel(t("history.downloadSelectedFormat", { format: transcriptDownloadFormat.toUpperCase() }));
-      button.setValue(transcriptDownloadFormat); feedback.textContent = formatSaveError;
+      formatPicker.value = transcriptDownloadFormat;
+      feedback.textContent = formatSaveError;
     } else if (["audio", "video"].includes(tab)) {
       const nextRevision = `${currentMeeting().folderName}:${fileRevision(currentMeeting(), tab)}`;
       if (nextRevision !== revision) {
@@ -391,11 +451,11 @@ function createFileFooter(activeFile, meeting, tab) {
     }
     updateMetadata();
   };
-  actions.append(button.element); fileRow.append(metadata, actions); footer.append(fileRow, feedback);
   footer.updateDownload(); return footer;
 }
 
 function disposePage(page) {
+  page.footer?.dispose?.();
   page.footer?.downloadButton?.destroy();
   page.tabMotion?.forEach(animation => animation.cancel());
   page.markerMotion?.cancel();

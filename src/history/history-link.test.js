@@ -44,7 +44,7 @@ describe("history session links", () => {
     Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => root } });
     await setup({ entries: [{ ...meeting('target'), hasTranscript: true }], format: 'md' });
     await flush();
-    expect(document.querySelector('.detail-footer .split-primary').textContent).toContain('MD');
+    expect(document.querySelector('.detail-footer .transcript-format').value).toBe('md');
     expect(document.querySelector('.detail-file-name').textContent).toBe('meeting-target-transcript.md');
   });
   it("selects and opens the requested recording instead of the newest", async () => {

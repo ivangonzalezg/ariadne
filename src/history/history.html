@@ -52,6 +52,16 @@
       .audio-player-settings { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
       .media-speed-control { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
       .media-speed { min-height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; font-variant-numeric: tabular-nums; }
+      .transcript-file-row { flex-wrap: wrap; }
+      .transcript-file-row .detail-file-actions { margin-left: auto; max-width: 100%; }
+      .transcript-file-row .detail-action { box-sizing: border-box; min-height: 32px; background: var(--bg-button); }
+      .transcript-file-row button.detail-action { width: 32px; padding: 0; justify-content: center; }
+      .transcript-file-row .detail-action:hover { color: var(--text-primary); }
+      /* Keep focus rings inside the controls at the clipped edge of the pager. */
+      .transcript-file-row .detail-action:focus-visible { outline-offset: -2px; }
+      .transcript-copy-status:empty, .transcript-copy-status.is-success {
+        display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+      }
       .detail-file-actions { flex-wrap: wrap; justify-content: flex-end; }
       .recovery-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
       .recovery-panel[hidden] { display: none; }

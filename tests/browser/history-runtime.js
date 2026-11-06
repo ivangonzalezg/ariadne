@@ -111,27 +111,27 @@ window.runHistoryTest = async () => {
   const select = key => document.querySelector(`[role="tab"][id$="-${key}-tab"]`).click();
   await until(() => page('transcript').querySelector('.transcript-list'));
   const transcriptFooter = page('transcript').querySelector('.detail-footer');
-  assert(transcriptFooter.querySelectorAll('button').length === 2, 'Transcript must have only the download action and its menu trigger');
-  assert(transcriptFooter.querySelector('.split-primary').textContent.includes('TXT'), 'Transcript default must be TXT');
-  transcriptFooter.querySelector('.split-primary').click();
-  assert(downloaded.at(-1).filename.endsWith('.txt') && downloaded.at(-1).saveAs, 'Primary action must request a TXT download with the save dialog');
-  const txt = await (await fetch(downloaded.at(-1).url)).text(); assert(txt.includes('[00:00] [Ana]'), 'TXT download must contain the formatted transcript');
-  const trigger = transcriptFooter.querySelector('.split-trigger');
-  trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
-  const popup = document.querySelector('.split-menu'), popupRect = popup.getBoundingClientRect();
-  assert(popup.parentElement === document.body && popupRect.top >= 8 && popupRect.bottom <= innerHeight - 8, 'Download menu must escape clipping and fit the viewport');
-  const enterMenu = popup.getAnimations()[0]; assert(enterMenu?.effect.getTiming().duration === 160, 'Download menu must animate entry');
-  for (const keyframe of enterMenu.effect.getKeyframes()) if (matchMedia('(prefers-reduced-motion: reduce)').matches) assert(!keyframe.transform, 'Reduced menu motion must use opacity only');
-  [...popup.querySelectorAll('button')].find(item => item.textContent.includes('.md')).click();
-  await until(() => preferences.transcriptDownloadFormat === 'md');
-  assert(downloaded.at(-1).filename.endsWith('.md'), 'Menu selection must download and remember Markdown');
-  assert((await (await fetch(downloaded.at(-1).url)).text()).startsWith('# A long meeting title'), 'Markdown download must contain the meeting title');
-  trigger.click(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-  assert(document.activeElement.textContent.includes('.json'), 'End must focus JSON');
-  document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert(document.activeElement === trigger && trigger.getAttribute('aria-expanded') === 'false', 'Escape must close the menu and restore trigger focus');
+  const picker = transcriptFooter.querySelector('.transcript-format');
+  const download = transcriptFooter.querySelector('.transcript-download');
+  const copy = transcriptFooter.querySelector('.transcript-copy');
+  assert(picker.value === 'txt', 'Transcript default must be TXT');
+  for (const format of ['txt', 'md', 'json']) {
+    const previousDownloads = downloaded.length;
+    const previousCopies = copiedTranscripts.length;
+    picker.value = format;
+    picker.dispatchEvent(new Event('change', { bubbles: true }));
+    await until(() => preferences.transcriptDownloadFormat === format);
+    assert(downloaded.length === previousDownloads && copiedTranscripts.length === previousCopies, 'Selection must only save the format');
+    download.click();
+    assert(downloaded.at(-1).filename.endsWith(`.${format}`) && downloaded.at(-1).saveAs, 'Download must use the selected format');
+    copy.click();
+    const text = await (await fetch(downloaded.at(-1).url)).text();
+    assert(copiedTranscripts.at(-1) === text, 'Copy must match the downloaded file');
+    if (format === 'txt') assert(text.includes('[00:00] [Ana]'), 'TXT must include speaker and timestamp');
+    if (format === 'md') assert(text.startsWith('# A long meeting title'), 'Markdown must include the meeting title');
+  }
   historyChanged({ transcriptDownloadFormat: { newValue: 'txt' } }, 'local');
-  await until(() => !document.querySelector('.split-menu'));
+  assert(picker.value === 'txt', 'Picker must synchronize with storage');
   for (const key of ['transcript', 'audio', 'video', 'manifest']) {
     const tab = document.querySelector(`[role="tab"][id$="-${key}-tab"]`);
     const trailingSpace = tab.getBoundingClientRect().right - tab.querySelector('span').getBoundingClientRect().right;

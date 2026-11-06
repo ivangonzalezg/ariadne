@@ -165,13 +165,19 @@ it("does not show incompleteness notices for legacy recovered meetings", async (
   expect(document.querySelector(".recovery-message").textContent).toBe("");
 });
 
-async function openFixture(id = 'pager') {
+function chooseTranscriptFormat(panel, format) {
+  const picker = panel.querySelector('.transcript-format');
+  picker.value = format;
+  picker.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+async function openFixture(id = 'pager', transcript = JSON.stringify([{ startTime: 0, speaker: 'Ana', text: 'Persistent transcript' }])) {
   const { MemoryDirectoryHandle } = await import('../../tests/helpers/memory-opfs.js');
   const root = new MemoryDirectoryHandle('root');
   for (const folderName of [id, `${id}-other`]) {
     const folder = await root.getDirectoryHandle(folderName, { create: true });
     for (const [name, value] of Object.entries({
-      'transcripcion.json': JSON.stringify([{ startTime: 0, speaker: 'Ana', text: 'Persistent transcript' }]),
+      'transcripcion.json': transcript,
       'manifest.json': JSON.stringify({ folderName }),
       'audio-reunion.webm': 'audio', 'video-reunion.webm': 'video',
     })) {
@@ -222,8 +228,8 @@ it('names every download using the meeting title, file type and actual extension
     expect(page(tab).querySelector('[aria-label="Open"]')).toBeNull();
     for (const extension of extensions) {
       if (tab === 'transcript') {
-        page(tab).querySelector('.split-trigger').click();
-        [...document.querySelectorAll('[role="menuitemradio"]')].find(item => item.textContent.includes(`.${extension}`)).click();
+        chooseTranscriptFormat(page(tab), extension);
+        page(tab).querySelector('.transcript-download').click();
       } else page(tab).querySelector('.split-primary').click();
       await vi.waitFor(() => expect(chrome.downloads.download).toHaveBeenLastCalledWith(
         expect.objectContaining({ filename: `reunion-sobre-algo-${type}.${extension}` }), expect.any(Function)));
@@ -243,26 +249,67 @@ it('names every download using the meeting title, file type and actual extension
   }
 });
 
-it('remembers formats, synchronizes them and downloads even when preference persistence fails', async () => {
+it('remembers formats, synchronizes them and exports even when preference persistence fails', async () => {
   const { page } = await openFixture('format-preference');
+  const panel = page('transcript');
+  const picker = panel.querySelector('.transcript-format');
   historyChanged({ transcriptDownloadFormat: { newValue: 'invalid' } }, 'local');
-  expect(page('transcript').querySelector('.split-primary').textContent).toContain('TXT');
+  expect(picker.value).toBe('txt');
   chrome.storage.local.set = vi.fn().mockRejectedValue(new Error('Cannot save'));
   chrome.downloads.download = vi.fn();
-  page('transcript').querySelector('.split-trigger').click();
-  [...document.querySelectorAll('[role="menuitemradio"]')].find(item => item.textContent.includes('.md')).click();
-  await vi.waitFor(() => expect(page('transcript').querySelector('.download-feedback').textContent).toContain('could not be remembered'));
+  const writeText = vi.fn();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  chooseTranscriptFormat(panel, 'md');
+  await vi.waitFor(() => expect(panel.querySelector('.download-feedback').textContent).toContain('could not be remembered'));
   expect(chrome.storage.local.set).toHaveBeenCalledWith({ transcriptDownloadFormat: 'md' });
+  expect(chrome.downloads.download).not.toHaveBeenCalled();
+  expect(writeText).not.toHaveBeenCalled();
+  expect(picker.value).toBe('md');
+  expect(panel.querySelector('.detail-file-name').textContent).toBe('weekly-sync-transcript.md');
+  panel.querySelector('.transcript-download').click();
   expect(chrome.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ filename: 'weekly-sync-transcript.md' }), expect.any(Function));
-  expect(page('transcript').querySelector('.split-primary').textContent).toContain('MD');
+  expect(panel.querySelector('.download-feedback').textContent).toContain('could not be remembered');
   const exported = URL.createObjectURL.mock.calls.at(-1)[0];
-  const content = exported.text ? await exported.text() : await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(exported); });
-  expect(content).toContain('# Weekly sync'); expect(content).toContain('Persistent transcript');
-  expect(page('transcript').querySelector('.detail-file-size').textContent).toBe(`${exported.size} B`);
+  expect(panel.querySelector('.detail-file-size').textContent).toBe(`${exported.size} B`);
   historyChanged({ transcriptDownloadFormat: { newValue: 'json' } }, 'local');
-  expect(page('transcript').querySelector('.split-primary').textContent).toContain('JSON');
-  expect(page('transcript').querySelector('.download-feedback').textContent).toBe('');
+  expect(picker.value).toBe('json');
+  expect(panel.querySelector('.download-feedback').textContent).toBe('');
   chrome.storage.local.set = vi.fn().mockResolvedValue(undefined);
+  historyChanged({ transcriptDownloadFormat: { newValue: 'txt' } }, 'local');
+});
+
+it('copies the complete download content in all formats and can retry a clipboard error', async () => {
+  const segments = [
+    { startTime: 0, speaker: 'Ana', text: 'First segment' },
+    { startTime: 4500, speaker: 'Luis', text: 'Second segment' },
+  ];
+  const original = JSON.stringify(segments, null, 4) + '\n';
+  const { page } = await openFixture('copy-transcript', original);
+  const panel = page('transcript');
+  const copy = panel.querySelector('.transcript-copy');
+  const status = panel.querySelector('.transcript-copy-status');
+  const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard unavailable')).mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  copy.click();
+  await vi.waitFor(() => expect(status.textContent).toBe(en['history.transcriptCopyError']));
+  for (const format of ['txt', 'md', 'json']) {
+    chooseTranscriptFormat(panel, format);
+    copy.click();
+    await vi.waitFor(() => expect(status.textContent).toBe(en['history.transcriptCopied']));
+    expect(copy.innerHTML).toContain('m5 12 4 4L19 6');
+    panel.querySelector('.transcript-download').click();
+    const file = URL.createObjectURL.mock.calls.at(-1)[0];
+    const text = file.text ? await file.text() : await new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsText(file);
+    });
+    expect(writeText).toHaveBeenLastCalledWith(text);
+    expect(text).toContain('First segment');
+    expect(text).toContain('Second segment');
+    if (format === 'md') expect(text).toContain('# Weekly sync');
+    if (format === 'json') expect(text).toBe(original);
+  }
   historyChanged({ transcriptDownloadFormat: { newValue: 'txt' } }, 'local');
 });
 
@@ -305,8 +352,8 @@ it('keeps mounted pages, independent scroll, media state and file-specific actio
   chrome.downloads.download = vi.fn();
   page('audio').querySelector('.split-primary').click();
   await vi.waitFor(() => expect(chrome.downloads.download.mock.calls[0][0].filename).toBe('weekly-sync-audio.webm'));
-  expect(transcript.querySelectorAll('.split-primary')).toHaveLength(1);
-  expect(transcript.querySelectorAll('.detail-action')).toHaveLength(0);
+  expect(transcript.querySelectorAll('.transcript-download')).toHaveLength(1);
+  expect(transcript.querySelectorAll('.detail-action')).toHaveLength(3);
   document.querySelector('.meeting-card.is-selected').click();
   expect(page('audio').querySelector('audio')).toBe(audio); expect(audio.paused).toBe(false);
 });
@@ -462,7 +509,7 @@ describe('disabled transcript AI integration', () => {
     select(key);
     await vi.waitFor(() => expect(page(key).querySelector('.detail-footer')).toBeTruthy());
     expect(page(key).getAttribute('aria-hidden')).toBe('false');
-    expect(page(key).querySelector('.detail-footer .split-primary').disabled).toBe(false);
+    expect(page(key).querySelector(key === 'transcript' ? '.transcript-download' : '.detail-footer .split-primary').disabled).toBe(false);
     expect(document.querySelector('.transcript-actions')).toBeNull();
     expect(document.querySelector('.detail-navigation .split-trigger')).toBeNull();
     if (key === 'transcript') expect(page(key).textContent).toContain('Persistent transcript');
