@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 // Real manifest, MAIN/ISOLATED worlds, recorder, OPFS and FFmpeg, with a local
 // Teams DOM/media fixture served under a supported origin. No Microsoft login.
 const root = fileURLToPath(new URL("../", import.meta.url));
+const extensionDir = resolve(process.env.ARIADNE_EXTENSION_DIR ?? root);
 const profile = await mkdtemp(join(tmpdir(), "ariadne-teams-"));
 const url = "https://teams.cloud.microsoft/v2/ariadne-fixture";
 const executablePath = process.env.CHROME_BIN ?? (process.platform === "darwin"
@@ -17,10 +18,10 @@ let context;
 try {
   context = await chromium.launchPersistentContext(profile, {
     executablePath, headless: true, ignoreDefaultArgs: ["--disable-extensions"],
-    args: ["--enable-unsafe-extension-debugging", "--autoplay-policy=no-user-gesture-required"],
+    args: ["--enable-unsafe-extension-debugging", "--autoplay-policy=no-user-gesture-required", "--host-resolver-rules=MAP unpkg.com ~NOTFOUND"],
   });
   const browserSession = await context.browser().newBrowserCDPSession();
-  const { id } = await browserSession.send("Extensions.loadUnpacked", { path: resolve(root) });
+  const { id } = await browserSession.send("Extensions.loadUnpacked", { path: extensionDir });
   const worker = context.serviceWorkers().find(worker => worker.url().startsWith(`chrome-extension://${id}/`))
     ?? await context.waitForEvent("serviceworker");
   await worker.evaluate(() => chrome.storage.local.set({ autoStart: true, captionMode: "hybrid" }));

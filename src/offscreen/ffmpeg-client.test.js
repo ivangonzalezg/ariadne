@@ -90,8 +90,6 @@ describe("runFfmpegJob", () => {
     expect(ffmpegState.maximumConcurrentExecutions).toBe(1);
     expect(ffmpegState.loadConfig).toEqual({
       classWorkerURL: "dist/ffmpeg/ffmpeg-worker.js",
-      coreURL: "dist/ffmpeg/ffmpeg-core.js",
-      wasmURL: "dist/ffmpeg/ffmpeg-core.wasm",
     });
   });
 

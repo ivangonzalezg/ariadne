@@ -42,8 +42,6 @@ async function runAttempt({ signal, inputBytes, inputs = inputBytes ? [inputByte
     try {
       await ffmpeg.load({
         classWorkerURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-worker.js"),
-        coreURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-core.js"),
-        wasmURL: chrome.runtime.getURL("dist/ffmpeg/ffmpeg-core.wasm"),
       });
     } catch (error) {
       const message = String(error?.message ?? error);
